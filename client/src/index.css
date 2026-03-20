@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:wght@700;800&display=swap');
 
 @custom-variant dark (&:is(.dark *));
 
@@ -43,39 +44,41 @@
 }
 
 :root {
-  --primary: var(--color-blue-700);
-  --primary-foreground: var(--color-blue-50);
-  --sidebar-primary: var(--color-blue-600);
-  --sidebar-primary-foreground: var(--color-blue-50);
-  --chart-1: var(--color-blue-300);
-  --chart-2: var(--color-blue-500);
-  --chart-3: var(--color-blue-600);
-  --chart-4: var(--color-blue-700);
-  --chart-5: var(--color-blue-800);
-  --radius: 0.65rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.235 0.015 65);
+  /* Deep navy primary — WCAG AA compliant */
+  --primary: oklch(0.28 0.09 255);
+  --primary-foreground: oklch(0.98 0.005 240);
+  /* Gold accent */
+  --secondary: oklch(0.72 0.15 75);
+  --secondary-foreground: oklch(0.13 0.02 240);
+  --sidebar-primary: oklch(0.28 0.09 255);
+  --sidebar-primary-foreground: oklch(0.98 0.005 240);
+  --chart-1: oklch(0.28 0.09 255);
+  --chart-2: oklch(0.45 0.12 255);
+  --chart-3: oklch(0.60 0.14 255);
+  --chart-4: oklch(0.72 0.15 75);
+  --chart-5: oklch(0.55 0.18 75);
+  --radius: 0.5rem;
+  --background: oklch(0.98 0.005 240);
+  --foreground: oklch(0.13 0.02 240);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.235 0.015 65);
+  --card-foreground: oklch(0.13 0.02 240);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.235 0.015 65);
-  --secondary: oklch(0.98 0.001 286.375);
-  --secondary-foreground: oklch(0.4 0.015 65);
-  --muted: oklch(0.967 0.001 286.375);
-  --muted-foreground: oklch(0.552 0.016 285.938);
-  --accent: oklch(0.967 0.001 286.375);
-  --accent-foreground: oklch(0.141 0.005 285.823);
-  --destructive: oklch(0.577 0.245 27.325);
+  --popover-foreground: oklch(0.13 0.02 240);
+  --muted: oklch(0.94 0.01 240);
+  --muted-foreground: oklch(0.45 0.02 240);
+  --accent: oklch(0.94 0.04 75);
+  --accent-foreground: oklch(0.28 0.09 255);
+  --destructive: oklch(0.55 0.22 25);
   --destructive-foreground: oklch(0.985 0 0);
-  --border: oklch(0.92 0.004 286.32);
-  --input: oklch(0.92 0.004 286.32);
-  --ring: oklch(0.623 0.214 259.815);
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.235 0.015 65);
-  --sidebar-accent: oklch(0.967 0.001 286.375);
-  --sidebar-accent-foreground: oklch(0.141 0.005 285.823);
-  --sidebar-border: oklch(0.92 0.004 286.32);
-  --sidebar-ring: oklch(0.623 0.214 259.815);
+  --border: oklch(0.88 0.01 240);
+  --input: oklch(0.88 0.01 240);
+  --ring: oklch(0.28 0.09 255);
+  --sidebar: oklch(0.98 0.005 240);
+  --sidebar-foreground: oklch(0.13 0.02 240);
+  --sidebar-accent: oklch(0.94 0.04 75);
+  --sidebar-accent-foreground: oklch(0.28 0.09 255);
+  --sidebar-border: oklch(0.88 0.01 240);
+  --sidebar-ring: oklch(0.28 0.09 255);
 }
 
 .dark {
@@ -119,7 +122,24 @@
   }
   body {
     @apply bg-background text-foreground;
+    font-family: 'Inter', system-ui, sans-serif;
   }
+  h1, h2, h3 {
+    font-family: 'Playfair Display', Georgia, serif;
+  }
+  /* WCAG: Skip navigation */
+  .skip-nav {
+    @apply sr-only;
+  }
+  .skip-nav:focus {
+    @apply not-sr-only fixed top-4 left-4 z-50 px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium;
+  }
+  /* Grade color badges */
+  .grade-badge-1 { @apply bg-blue-100 text-blue-900 border border-blue-300; }
+  .grade-badge-2 { @apply bg-emerald-100 text-emerald-900 border border-emerald-300; }
+  .grade-badge-3 { @apply bg-amber-100 text-amber-900 border border-amber-300; }
+  .grade-badge-4 { @apply bg-orange-100 text-orange-900 border border-orange-300; }
+  .grade-badge-5 { @apply bg-purple-100 text-purple-900 border border-purple-300; }
   button:not(:disabled),
   [role="button"]:not([aria-disabled="true"]),
   [type="button"]:not(:disabled),
