@@ -5,7 +5,7 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import { getLoginUrl } from "@/const";
 import { Button } from "@/components/ui/button";
 import { trpc } from "@/lib/trpc";
-import { Menu, X, Music, Globe } from "lucide-react";
+import { Menu, X, Music } from "lucide-react";
 
 export default function Header() {
   const { t, language, setLanguage } = useLanguage();
@@ -58,15 +58,45 @@ export default function Header() {
 
           {/* Right side: Language + Auth */}
           <div className="hidden lg:flex items-center gap-2">
-            {/* Language Toggle */}
-            <button
-              onClick={() => setLanguage(language === "pt" ? "en" : "pt")}
-              className="flex items-center gap-1 px-3 py-1.5 rounded-md text-sm font-medium text-primary-foreground/80 hover:text-primary-foreground hover:bg-primary-foreground/10 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-foreground"
-              aria-label={language === "pt" ? "Switch to English" : "Mudar para Português"}
-            >
-              <Globe className="w-4 h-4" aria-hidden="true" />
-              <span>{language === "pt" ? "EN" : "PT"}</span>
-            </button>
+            {/* Language Toggle - Trilingual */}
+            <div className="flex gap-1 bg-primary-foreground/10 rounded-md p-1">
+              <button
+                onClick={() => setLanguage("pt")}
+                className={`px-2 py-1 rounded text-xs font-medium transition ${
+                  language === "pt"
+                    ? "bg-primary-foreground/30 text-primary-foreground"
+                    : "text-primary-foreground/70 hover:text-primary-foreground"
+                }`}
+                aria-label="Português"
+                aria-current={language === "pt" ? "page" : undefined}
+              >
+                PT
+              </button>
+              <button
+                onClick={() => setLanguage("en")}
+                className={`px-2 py-1 rounded text-xs font-medium transition ${
+                  language === "en"
+                    ? "bg-primary-foreground/30 text-primary-foreground"
+                    : "text-primary-foreground/70 hover:text-primary-foreground"
+                }`}
+                aria-label="English"
+                aria-current={language === "en" ? "page" : undefined}
+              >
+                EN
+              </button>
+              <button
+                onClick={() => setLanguage("es")}
+                className={`px-2 py-1 rounded text-xs font-medium transition ${
+                  language === "es"
+                    ? "bg-primary-foreground/30 text-primary-foreground"
+                    : "text-primary-foreground/70 hover:text-primary-foreground"
+                }`}
+                aria-label="Español"
+                aria-current={language === "es" ? "page" : undefined}
+              >
+                ES
+              </button>
+            </div>
 
             {/* Auth */}
             {isAuthenticated ? (
@@ -132,14 +162,45 @@ export default function Header() {
                 {link.label}
               </Link>
             ))}
-            <div className="flex items-center gap-2 pt-2 border-t border-primary-foreground/20 mt-2">
-              <button
-                onClick={() => { setLanguage(language === "pt" ? "en" : "pt"); setMobileOpen(false); }}
-                className="flex items-center gap-1 px-3 py-1.5 rounded-md text-sm font-medium text-primary-foreground/80 hover:text-primary-foreground hover:bg-primary-foreground/10 transition-colors"
-              >
-                <Globe className="w-4 h-4" aria-hidden="true" />
-                <span>{language === "pt" ? "Switch to English" : "Mudar para Português"}</span>
-              </button>
+            <div className="flex flex-col gap-2 pt-2 border-t border-primary-foreground/20 mt-2">
+              <div className="flex gap-1 bg-primary-foreground/10 rounded-md p-1">
+                <button
+                  onClick={() => { setLanguage("pt"); setMobileOpen(false); }}
+                  className={`px-2 py-1 rounded text-xs font-medium transition ${
+                    language === "pt"
+                      ? "bg-primary-foreground/30 text-primary-foreground"
+                      : "text-primary-foreground/70 hover:text-primary-foreground"
+                  }`}
+                  aria-label="Português"
+                  aria-current={language === "pt" ? "page" : undefined}
+                >
+                  PT
+                </button>
+                <button
+                  onClick={() => { setLanguage("en"); setMobileOpen(false); }}
+                  className={`px-2 py-1 rounded text-xs font-medium transition ${
+                    language === "en"
+                      ? "bg-primary-foreground/30 text-primary-foreground"
+                      : "text-primary-foreground/70 hover:text-primary-foreground"
+                  }`}
+                  aria-label="English"
+                  aria-current={language === "en" ? "page" : undefined}
+                >
+                  EN
+                </button>
+                <button
+                  onClick={() => { setLanguage("es"); setMobileOpen(false); }}
+                  className={`px-2 py-1 rounded text-xs font-medium transition ${
+                    language === "es"
+                      ? "bg-primary-foreground/30 text-primary-foreground"
+                      : "text-primary-foreground/70 hover:text-primary-foreground"
+                  }`}
+                  aria-label="Español"
+                  aria-current={language === "es" ? "page" : undefined}
+                >
+                  ES
+                </button>
+              </div>
               {isAuthenticated ? (
                 <Button
                   variant="outline"

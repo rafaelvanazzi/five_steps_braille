@@ -42,3 +42,8 @@
 - [x] Vitest: materials router (list, upload, delete, download)
 - [x] Vitest: contact router (send, list admin)
 - [x] Vitest: auth logout (existente)
+
+## Melhorias Futuras
+- [x] Add Spanish language support (trilingual PT/EN/ES)
+- [x] Translate all pages to Spanish
+- [x] Update language selector in Header to include ES button

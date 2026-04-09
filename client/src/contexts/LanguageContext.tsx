@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState } from "react";
 
-export type Language = "pt" | "en";
+export type Language = "pt" | "en" | "es";
 
 type Translations = {
   // Navigation
@@ -450,6 +450,152 @@ const en: Translations = {
   common_skip_nav: "Skip to main content",
 };
 
+const es: Translations = {
+  nav_home: "Inicio",
+  nav_about: "Sobre el Método",
+  nav_institutions: "Para Instituciones",
+  nav_musicians_dv: "Para Músicos con DV",
+  nav_musicians_nodv: "Para Músicos sin DV",
+  nav_library: "Biblioteca",
+  nav_contact: "Contacto",
+  nav_login: "Iniciar Sesión",
+  nav_logout: "Cerrar Sesión",
+  nav_admin: "Administración",
+
+  home_hero_title: "Five Steps",
+  home_hero_subtitle: "Una arquitectura pedagógica global para la alfabetización musical en Braille",
+  home_hero_cta: "Explorar la Biblioteca",
+  home_hero_cta2: "Conocer el Método",
+  home_what_title: "¿Qué es Five Steps?",
+  home_what_desc: "Five Steps es un marco metodológico desarrollado a partir de investigación de maestría en UNICAMP, que organiza la musicografía Braille en 5 Grados de Dificultad y 23 etapas progresivas. Fundamentado en la psicología cognitiva de John Sloboda, el método mapea paso a paso lo que el lector Braille necesita comprender para leer diferentes partituras con excelencia.",
+  home_grades_title: "Los 5 Grados de Dificultad",
+  home_grade1_title: "Grado 1 — Notas y Alturas",
+  home_grade1_desc: "2 etapas. Fundamentos de la lectura de notas y sus alturas en la musicografía Braille.",
+  home_grade2_title: "Grado 2 — Tiempo",
+  home_grade2_desc: "5 etapas. Comprensión de las figuras rítmicas y organización temporal de la música.",
+  home_grade3_title: "Grado 3 — Intervalos Diatónicos y Octavas",
+  home_grade3_desc: "5 etapas. Lectura de intervalos y navegación entre octavas en la partitura Braille.",
+  home_grade4_title: "Grado 4 — Intervalos Cromáticos e Inversiones",
+  home_grade4_desc: "3 etapas. Dominio de accidentales, cromatismo e inversiones de intervalos.",
+  home_grade5_title: "Grado 5 — Tópicos Diversos",
+  home_grade5_desc: "8 etapas. Percepción bidimensional, contrapunto, poliritmia, armonía y solfeo.",
+  home_who_title: "¿Para quién es Five Steps?",
+  home_who_dv: "Músicos con Deficiencia Visual",
+  home_who_dv_desc: "Un camino estructurado para lograr excelencia en la lectura de partituras en Braille.",
+  home_who_nodv: "Músicos sin Deficiencia Visual",
+  home_who_nodv_desc: "Contribuye generando y organizando material didáctico que beneficia a toda la comunidad.",
+  home_who_inst: "Instituciones",
+  home_who_inst_desc: "Universidades, escuelas de música y casas de cultura que desean ofrecer formación musical inclusiva.",
+  home_cta_title: "Únete a esta comunidad global",
+  home_cta_desc: "Accede a la biblioteca de materiales organizados por las 23 etapas o ponte en contacto para una asociación.",
+  home_cta_library: "Acceder a la Biblioteca",
+  home_cta_contact: "Contáctanos",
+
+  about_title: "Sobre el Método Five Steps",
+  about_subtitle: "Una taxonomía completa para la enseñanza de la musicografía Braille",
+  about_origin_title: "El Origen del Método",
+  about_origin_desc: "Five Steps nació de la observación de una injusticia: al transcribirse a la musicografía Braille, los exámenes de acceso a la universidad en música se volvían artificialmente más difíciles para candidatos con deficiencia visual, ya que incluían conceptos que podrían evitarse o introducirse gradualmente. Este hallazgo motivó una investigación de maestría en UNICAMP (Universidad Estatal de Campinas, Brasil) que resultó en un mapa completo de lo que el lector Braille necesita dominar para leer partituras con excelencia.",
+  about_sloboda_title: "Fundamentación Científica",
+  about_sloboda_desc: "El método se fundamenta en la psicología cognitiva del musicólogo británico John Sloboda, especialmente en su trabajo sobre cómo los músicos procesan y leen partituras. Aplicando estos conceptos al contexto táctil de la musicografía Braille, Five Steps mapea los procesos cognitivos célula por célula, asegurando que cada etapa prepare al estudiante para la siguiente.",
+  about_grades_title: "Los 5 Grados y sus Etapas",
+  about_complementary_title: "Contenidos Complementarios",
+  about_complementary_desc: "Además de los 5 Grados, el método incluye una matriz de Contenidos Complementarios que deben abordarse a lo largo de todos los grados, según sea necesario para el estudiante. Estos contenidos varían según el instrumento (piano, flauta, violín, etc.) e incluyen: matices, ligaduras, digitaciones, dinámicas, ornamentación, repeticiones, abreviación de secuencias y duplicación de símbolos.",
+  about_platform_title: "La Visión de la Plataforma Global",
+  about_platform_desc: "Five Steps aspira a convertirse en un centro mundial donde profesores de musicografía Braille de todo el mundo puedan compartir y organizar actividades didácticas por las 23 etapas. Al completar todas las etapas, el estudiante debe alcanzar un nivel intermedio/avanzado de lectura musical en Braille, equivalente al de un músico profesional.",
+
+  inst_title: "Para Instituciones",
+  inst_subtitle: "Ofrece educación musical inclusiva con el método Five Steps",
+  inst_why_title: "¿Por qué ofrecer Five Steps?",
+  inst_why_desc: "La musicografía Braille es un área de conocimiento especializado y escaso. Al adoptar el método Five Steps, tu institución comienza a ofrecer formación estructurada, basada en investigación académica, que beneficia tanto a estudiantes con deficiencia visual como a profesores de música que desean ampliar su práctica.",
+  inst_offer_title: "Lo que ofrecemos",
+  inst_offer_1: "Clases y talleres de musicografía Braille para estudiantes con deficiencia visual",
+  inst_offer_2: "Formación de profesores para la aplicación del método Five Steps",
+  inst_offer_3: "Consultoría para la adaptación de materiales didácticos musicales",
+  inst_offer_4: "Conferencias y talleres sobre inclusión musical",
+  inst_types_title: "Tipos de Instituciones",
+  inst_type_univ: "Universidades y Conservatorios",
+  inst_type_school: "Escuelas de Música",
+  inst_type_culture: "Casas de Cultura y Centros Culturales",
+  inst_type_ngo: "ONGs e Institutos de Inclusión",
+  inst_cta: "Ponerse en Contacto",
+
+  dv_title: "Para Músicos con Deficiencia Visual",
+  dv_subtitle: "Un camino estructurado hacia la excelencia musical",
+  dv_what_title: "¿Qué es la musicografía Braille?",
+  dv_what_desc: "La musicografía Braille es el sistema de notación musical adaptado para personas con deficiencia visual, basado en el código Braille. Permite que los músicos ciegos lean y escriban partituras con la misma riqueza de información que la notación musical convencional. Five Steps organiza el aprendizaje de este sistema de forma progresiva y científicamente fundamentada.",
+  dv_benefits_title: "Cómo Five Steps ayuda",
+  dv_benefit_1: "Progresión clara: cada etapa prepara para la siguiente, sin lagunas de aprendizaje",
+  dv_benefit_2: "Fundamentación cognitiva: basado en cómo el cerebro procesa la música",
+  dv_benefit_3: "Independencia: al completar las 23 etapas, el músico lee cualquier partitura",
+  dv_benefit_4: "Acceso a la biblioteca: materiales organizados por grado para práctica autónoma",
+  dv_journey_title: "El Viaje de Aprendizaje",
+  dv_cta: "Acceder a la Biblioteca de Materiales",
+
+  nodv_title: "Para Músicos sin Deficiencia Visual",
+  nodv_subtitle: "Contribuye a una comunidad musical más inclusiva",
+  nodv_why_title: "¿Por qué aprender musicografía Braille?",
+  nodv_why_desc: "Los músicos sin deficiencia visual que aprenden musicografía Braille amplían su capacidad de enseñar y colaborar con músicos ciegos. Además, al crear y organizar materiales didácticos de acuerdo con el método Five Steps, contribuyen directamente a la construcción de una biblioteca global que beneficia a toda la comunidad.",
+  nodv_how_title: "Cómo puedes contribuir",
+  nodv_how_1: "Aprende a leer y escribir en musicografía Braille con el método Five Steps",
+  nodv_how_2: "Crea ejercicios y materiales didácticos organizados por las 23 etapas",
+  nodv_how_3: "Comparte materiales en la biblioteca colaborativa de la plataforma",
+  nodv_impact_title: "El Impacto de tu Contribución",
+  nodv_impact_desc: "Cada material que creas y organices de acuerdo con las etapas de Five Steps puede ser utilizado por profesores y estudiantes en todo el mundo. Tu contribución ayuda a construir la biblioteca colaborativa de musicografía Braille más grande jamás creada.",
+  nodv_cta: "Comenzar a Contribuir",
+
+  lib_title: "Biblioteca de Materiales",
+  lib_subtitle: "Materiales didácticos organizados por los 5 Grados y 23 etapas del método",
+  lib_login_required: "Inicia sesión para acceder a la biblioteca completa y descargar materiales.",
+  lib_login_cta: "Inicia Sesión para Acceder",
+  lib_grade_label: "Grado",
+  lib_stage_label: "Etapa",
+  lib_download: "Descargar",
+  lib_upload: "Enviar Material",
+  lib_no_materials: "Ningún material disponible en este grado aún.",
+  lib_filter_all: "Todos los Grados",
+  lib_file_size: "Tamaño",
+  lib_language: "Idioma",
+  lib_lang_pt: "Portugués",
+  lib_lang_en: "Inglés",
+  lib_lang_both: "Bilingüe",
+  library_title: "Biblioteca de Materiales",
+  library_subtitle: "Materiales didácticos organizados por los 5 Grados y 23 etapas del método Five Steps",
+  library_login_required: "Inicia sesión para descargar este material.",
+  library_login_banner: "Regístrate gratuitamente para acceder y descargar todos los materiales de la biblioteca.",
+  library_login: "Inicia Sesión / Registrarse",
+  library_download: "Descargar",
+  library_all: "Todos los Grados",
+  library_grade: "Grado",
+  library_empty: "Ningún material disponible aún.",
+  library_empty_desc: "Pronto se añadirán nuevos materiales a la biblioteca.",
+
+  contact_title: "Contacto",
+  contact_subtitle: "Ponte en contacto para asociaciones, información o para recibir clases",
+  contact_name: "Nombre completo",
+  contact_email: "Correo Electrónico",
+  contact_institution: "Institución (opcional)",
+  contact_subject: "Asunto",
+  contact_message: "Mensaje",
+  contact_type: "Tipo de interés",
+  contact_type_inst: "Asociación Institucional",
+  contact_type_dv: "Músico con Deficiencia Visual",
+  contact_type_nodv: "Músico sin Deficiencia Visual",
+  contact_type_general: "Información General",
+  contact_submit: "Enviar Mensaje",
+  contact_success: "¡Mensaje enviado exitosamente! Nos comunicaremos pronto.",
+  contact_error: "Error al enviar el mensaje. Por favor, intenta de nuevo.",
+
+  footer_desc: "Five Steps es una metodología de enseñanza de musicografía Braille desarrollada por Rafael Moreira Vanazzi de Souza, Maestro en Música por UNICAMP (Brasil).",
+  footer_links: "Enlaces",
+  footer_rights: "Todos los derechos reservados.",
+
+  common_loading: "Cargando...",
+  common_error: "Ocurrió un error. Por favor, intenta de nuevo.",
+  common_back: "Atrás",
+  common_read_more: "Saber más",
+  common_skip_nav: "Saltar al contenido principal",
+};
+
 type LanguageContextType = {
   language: Language;
   setLanguage: (lang: Language) => void;
@@ -469,7 +615,7 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem("five_steps_lang", lang);
   };
 
-  const t = language === "pt" ? pt : en;
+  const t = language === "pt" ? pt : language === "en" ? en : es;
 
   return (
     <LanguageContext.Provider value={{ language, setLanguage: handleSetLanguage, t }}>
