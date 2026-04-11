@@ -1,4 +1,4 @@
-import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, bigint } from "drizzle-orm/mysql-core";
+import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, bigint, uniqueIndex } from "drizzle-orm/mysql-core";
 
 export const users = mysqlTable("users", {
   id: int("id").autoincrement().primaryKey(),
@@ -51,3 +51,42 @@ export const contactMessages = mysqlTable("contact_messages", {
 
 export type ContactMessage = typeof contactMessages.$inferSelect;
 export type InsertContactMessage = typeof contactMessages.$inferInsert;
+
+// ─── Ratings (stars) for materials ──────────────────────────────────────────
+export const materialRatings = mysqlTable("material_ratings", {
+  id: int("id").autoincrement().primaryKey(),
+  materialId: int("materialId").notNull(),
+  userId: int("userId").notNull(),
+  rating: int("rating").notNull(), // 1-5 stars
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => [
+  uniqueIndex("unique_user_material").on(table.userId, table.materialId),
+]);
+
+export type MaterialRating = typeof materialRatings.$inferSelect;
+export type InsertMaterialRating = typeof materialRatings.$inferInsert;
+
+// ─── Comments for materials ─────────────────────────────────────────────────
+export const materialComments = mysqlTable("material_comments", {
+  id: int("id").autoincrement().primaryKey(),
+  materialId: int("materialId").notNull(),
+  userId: int("userId").notNull(),
+  content: text("content").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type MaterialComment = typeof materialComments.$inferSelect;
+export type InsertMaterialComment = typeof materialComments.$inferInsert;
+
+// ─── Download logs ──────────────────────────────────────────────────────────
+export const downloadLogs = mysqlTable("download_logs", {
+  id: int("id").autoincrement().primaryKey(),
+  materialId: int("materialId").notNull(),
+  userId: int("userId").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type DownloadLog = typeof downloadLogs.$inferSelect;
+export type InsertDownloadLog = typeof downloadLogs.$inferInsert;

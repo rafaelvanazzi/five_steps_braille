@@ -1,6 +1,11 @@
-import { eq, desc, asc } from "drizzle-orm";
+import { eq, desc, asc, sql, and, count } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { InsertUser, users, materials, contactMessages, InsertMaterial, InsertContactMessage } from "../drizzle/schema";
+import {
+  InsertUser, users, materials, contactMessages,
+  materialRatings, materialComments, downloadLogs,
+  InsertMaterial, InsertContactMessage,
+  InsertMaterialRating, InsertMaterialComment, InsertDownloadLog,
+} from "../drizzle/schema";
 import { ENV } from './_core/env';
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -92,4 +97,220 @@ export async function getContactMessages() {
   const db = await getDb();
   if (!db) return [];
   return db.select().from(contactMessages).orderBy(desc(contactMessages.createdAt));
+}
+
+// ─── Ratings ──────────────────────────────────────────────────────────────────
+
+export async function upsertRating(data: InsertMaterialRating) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.insert(materialRatings).values(data).onDuplicateKeyUpdate({
+    set: { rating: data.rating },
+  });
+}
+
+export async function getRatingsForMaterial(materialId: number) {
+  const db = await getDb();
+  if (!db) return { average: 0, count: 0, ratings: [] as { userId: number; rating: number }[] };
+  const rows = await db.select().from(materialRatings).where(eq(materialRatings.materialId, materialId));
+  const total = rows.reduce((sum, r) => sum + r.rating, 0);
+  return {
+    average: rows.length > 0 ? total / rows.length : 0,
+    count: rows.length,
+    ratings: rows.map(r => ({ userId: r.userId, rating: r.rating })),
+  };
+}
+
+export async function getUserRating(materialId: number, userId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(materialRatings)
+    .where(and(eq(materialRatings.materialId, materialId), eq(materialRatings.userId, userId)))
+    .limit(1);
+  return result[0] ?? null;
+}
+
+// ─── Comments ─────────────────────────────────────────────────────────────────
+
+export async function insertComment(data: InsertMaterialComment) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.insert(materialComments).values(data);
+}
+
+export async function getCommentsForMaterial(materialId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db.select({
+    id: materialComments.id,
+    materialId: materialComments.materialId,
+    userId: materialComments.userId,
+    content: materialComments.content,
+    createdAt: materialComments.createdAt,
+    userName: users.name,
+  })
+    .from(materialComments)
+    .leftJoin(users, eq(materialComments.userId, users.id))
+    .where(eq(materialComments.materialId, materialId))
+    .orderBy(desc(materialComments.createdAt));
+  return rows;
+}
+
+export async function deleteComment(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(materialComments).where(eq(materialComments.id, id));
+}
+
+export async function getCommentById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(materialComments).where(eq(materialComments.id, id)).limit(1);
+  return result[0];
+}
+
+// ─── Download Logs ────────────────────────────────────────────────────────────
+
+export async function insertDownloadLog(data: InsertDownloadLog) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.insert(downloadLogs).values(data);
+}
+
+export async function getDownloadCountByMaterial() {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db.select({
+    materialId: downloadLogs.materialId,
+    downloadCount: count(downloadLogs.id),
+  })
+    .from(downloadLogs)
+    .groupBy(downloadLogs.materialId)
+    .orderBy(desc(count(downloadLogs.id)));
+  return rows;
+}
+
+export async function getTotalDownloads() {
+  const db = await getDb();
+  if (!db) return 0;
+  const result = await db.select({ total: count(downloadLogs.id) }).from(downloadLogs);
+  return result[0]?.total ?? 0;
+}
+
+// ─── Admin Queries ────────────────────────────────────────────────────────────
+
+export async function getAllUsers() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select({
+    id: users.id,
+    name: users.name,
+    email: users.email,
+    role: users.role,
+    loginMethod: users.loginMethod,
+    createdAt: users.createdAt,
+    lastSignedIn: users.lastSignedIn,
+  }).from(users).orderBy(desc(users.createdAt));
+}
+
+export async function getTotalUsers() {
+  const db = await getDb();
+  if (!db) return 0;
+  const result = await db.select({ total: count(users.id) }).from(users);
+  return result[0]?.total ?? 0;
+}
+
+export async function getTotalMaterials() {
+  const db = await getDb();
+  if (!db) return 0;
+  const result = await db.select({ total: count(materials.id) }).from(materials);
+  return result[0]?.total ?? 0;
+}
+
+export async function getTotalMessages() {
+  const db = await getDb();
+  if (!db) return 0;
+  const result = await db.select({ total: count(contactMessages.id) }).from(contactMessages);
+  return result[0]?.total ?? 0;
+}
+
+export async function getMaterialsWithUploader() {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db.select({
+    id: materials.id,
+    title: materials.title,
+    description: materials.description,
+    grade: materials.grade,
+    stage: materials.stage,
+    fileName: materials.fileName,
+    fileSize: materials.fileSize,
+    mimeType: materials.mimeType,
+    language: materials.language,
+    uploadedBy: materials.uploadedBy,
+    createdAt: materials.createdAt,
+    uploaderName: users.name,
+    uploaderEmail: users.email,
+  })
+    .from(materials)
+    .leftJoin(users, eq(materials.uploadedBy, users.id))
+    .orderBy(desc(materials.createdAt));
+  return rows;
+}
+
+export async function getRecentComments(limit: number = 20) {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db.select({
+    id: materialComments.id,
+    materialId: materialComments.materialId,
+    content: materialComments.content,
+    createdAt: materialComments.createdAt,
+    userName: users.name,
+    userEmail: users.email,
+    materialTitle: materials.title,
+  })
+    .from(materialComments)
+    .leftJoin(users, eq(materialComments.userId, users.id))
+    .leftJoin(materials, eq(materialComments.materialId, materials.id))
+    .orderBy(desc(materialComments.createdAt))
+    .limit(limit);
+  return rows;
+}
+
+export async function getRecentDownloads(limit: number = 20) {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db.select({
+    id: downloadLogs.id,
+    createdAt: downloadLogs.createdAt,
+    userName: users.name,
+    userEmail: users.email,
+    materialTitle: materials.title,
+    materialGrade: materials.grade,
+  })
+    .from(downloadLogs)
+    .leftJoin(users, eq(downloadLogs.userId, users.id))
+    .leftJoin(materials, eq(downloadLogs.materialId, materials.id))
+    .orderBy(desc(downloadLogs.createdAt))
+    .limit(limit);
+  return rows;
+}
+
+export async function getAllRatingsWithDetails() {
+  const db = await getDb();
+  if (!db) return [];
+  // Get average rating per material
+  const rows = await db.select({
+    materialId: materialRatings.materialId,
+    avgRating: sql<number>`AVG(${materialRatings.rating})`,
+    ratingCount: count(materialRatings.id),
+    materialTitle: materials.title,
+    materialGrade: materials.grade,
+  })
+    .from(materialRatings)
+    .leftJoin(materials, eq(materialRatings.materialId, materials.id))
+    .groupBy(materialRatings.materialId, materials.title, materials.grade)
+    .orderBy(desc(sql`AVG(${materialRatings.rating})`));
+  return rows;
 }

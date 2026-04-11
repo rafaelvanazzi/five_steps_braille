@@ -15,6 +15,13 @@
       "when": 1773926922814,
       "tag": "0001_old_rhodey",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1775925131259,
+      "tag": "0002_faithful_katie_power",
+      "breakpoints": true
     }
   ]
 }

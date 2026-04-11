@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useLanguage } from "@/contexts/LanguageContext";
 import SiteLayout from "@/components/SiteLayout";
 import { trpc } from "@/lib/trpc";
@@ -8,7 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { FileDown, Lock, BookOpen, FileText, Music } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
+import { FileDown, Lock, BookOpen, FileText, Music, Star, MessageSquare, Send, Trash2, ChevronDown, ChevronUp } from "lucide-react";
 import { toast } from "sonner";
 
 const gradeLabels: Record<number, { pt: string; en: string; badge: string }> = {
@@ -32,6 +33,182 @@ function formatSize(bytes?: number | null) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+// ─── Star Rating Component ──────────────────────────────────────────────────
+function StarRating({ materialId, isAuthenticated }: { materialId: number; isAuthenticated: boolean }) {
+  const [hoverStar, setHoverStar] = useState(0);
+  const utils = trpc.useUtils();
+
+  const { data: ratingData } = trpc.ratings.getForMaterial.useQuery({ materialId });
+  const { data: userRating } = trpc.ratings.getUserRating.useQuery(
+    { materialId },
+    { enabled: isAuthenticated }
+  );
+
+  const rateMutation = trpc.ratings.rate.useMutation({
+    onSuccess: () => {
+      utils.ratings.getForMaterial.invalidate({ materialId });
+      utils.ratings.getUserRating.invalidate({ materialId });
+      toast.success("Avaliação registrada!");
+    },
+    onError: () => toast.error("Erro ao avaliar."),
+  });
+
+  const handleRate = (rating: number) => {
+    if (!isAuthenticated) {
+      toast.error("Faça login para avaliar.");
+      return;
+    }
+    rateMutation.mutate({ materialId, rating });
+  };
+
+  const currentUserRating = userRating?.rating ?? 0;
+  const average = ratingData?.average ?? 0;
+  const count = ratingData?.count ?? 0;
+
+  return (
+    <div className="flex items-center gap-2 flex-wrap">
+      <div className="flex items-center gap-0.5" role="group" aria-label="Avaliação por estrelas">
+        {[1, 2, 3, 4, 5].map((s) => (
+          <button
+            key={s}
+            onClick={() => handleRate(s)}
+            onMouseEnter={() => isAuthenticated && setHoverStar(s)}
+            onMouseLeave={() => setHoverStar(0)}
+            disabled={!isAuthenticated || rateMutation.isPending}
+            className="p-0.5 focus-visible:outline-2 focus-visible:outline-primary rounded disabled:cursor-default"
+            aria-label={`${s} estrela${s > 1 ? "s" : ""}`}
+          >
+            <Star
+              className={`w-4 h-4 transition-colors ${
+                (hoverStar > 0 ? s <= hoverStar : s <= currentUserRating)
+                  ? "text-yellow-500 fill-yellow-500"
+                  : s <= Math.round(average)
+                    ? "text-yellow-400 fill-yellow-400/50"
+                    : "text-gray-300"
+              }`}
+            />
+          </button>
+        ))}
+      </div>
+      <span className="text-xs text-muted-foreground">
+        {count > 0 ? `${average.toFixed(1)} (${count})` : "Sem avaliações"}
+      </span>
+    </div>
+  );
+}
+
+// ─── Comments Section ───────────────────────────────────────────────────────
+function CommentsSection({ materialId, isAuthenticated }: { materialId: number; isAuthenticated: boolean }) {
+  const [showComments, setShowComments] = useState(false);
+  const [newComment, setNewComment] = useState("");
+  const { user } = useAuth();
+  const utils = trpc.useUtils();
+
+  const { data: comments = [], isLoading } = trpc.comments.getForMaterial.useQuery(
+    { materialId },
+    { enabled: showComments }
+  );
+
+  const addMutation = trpc.comments.add.useMutation({
+    onSuccess: () => {
+      setNewComment("");
+      utils.comments.getForMaterial.invalidate({ materialId });
+      toast.success("Comentário adicionado!");
+    },
+    onError: () => toast.error("Erro ao comentar."),
+  });
+
+  const deleteMutation = trpc.comments.delete.useMutation({
+    onSuccess: () => {
+      utils.comments.getForMaterial.invalidate({ materialId });
+      toast.success("Comentário removido.");
+    },
+    onError: () => toast.error("Erro ao remover."),
+  });
+
+  const handleSubmit = () => {
+    if (!newComment.trim()) return;
+    addMutation.mutate({ materialId, content: newComment.trim() });
+  };
+
+  return (
+    <div className="mt-3 pt-3 border-t border-border/50">
+      <button
+        onClick={() => setShowComments(!showComments)}
+        className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+      >
+        <MessageSquare className="w-3.5 h-3.5" />
+        {showComments ? "Ocultar comentários" : "Ver comentários"}
+        {showComments ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+      </button>
+
+      {showComments && (
+        <div className="mt-3 space-y-3">
+          {/* Comment list */}
+          {isLoading ? (
+            <div className="h-8 bg-muted rounded animate-pulse" />
+          ) : comments.length === 0 ? (
+            <p className="text-xs text-muted-foreground italic">Nenhum comentário ainda. Seja o primeiro!</p>
+          ) : (
+            <div className="space-y-2 max-h-60 overflow-y-auto">
+              {comments.map((c) => (
+                <div key={c.id} className="bg-muted/50 rounded-lg p-3">
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <span className="text-xs font-medium text-foreground">{c.userName ?? "Anônimo"}</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-muted-foreground">
+                        {new Date(c.createdAt).toLocaleDateString("pt-BR")}
+                      </span>
+                      {(user?.id === c.userId || user?.role === "admin") && (
+                        <button
+                          onClick={() => { if (confirm("Remover este comentário?")) deleteMutation.mutate({ id: c.id }); }}
+                          className="text-muted-foreground hover:text-destructive transition-colors"
+                          aria-label="Remover comentário"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <p className="text-sm text-muted-foreground leading-relaxed">{c.content}</p>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Add comment form */}
+          {isAuthenticated ? (
+            <div className="flex gap-2">
+              <Textarea
+                value={newComment}
+                onChange={(e) => setNewComment(e.target.value)}
+                placeholder="Escreva um comentário..."
+                rows={2}
+                className="text-sm resize-none flex-1"
+                maxLength={2000}
+              />
+              <Button
+                size="sm"
+                onClick={handleSubmit}
+                disabled={!newComment.trim() || addMutation.isPending}
+                className="self-end gap-1"
+              >
+                <Send className="w-3.5 h-3.5" />
+                {addMutation.isPending ? "..." : "Enviar"}
+              </Button>
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              <a href={getLoginUrl()} className="text-primary hover:underline">Faça login</a> para comentar.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Material Card ──────────────────────────────────────────────────────────
 function MaterialCard({ material, isAuthenticated, language }: {
   material: { id: number; title: string; description?: string | null; grade: number; stage?: number | null; fileName: string; fileSize?: number | null; mimeType?: string | null; language: string };
   isAuthenticated: boolean;
@@ -83,7 +260,13 @@ function MaterialCard({ material, isAuthenticated, language }: {
             {material.description && (
               <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2 mb-2">{material.description}</p>
             )}
-            <p className="text-xs text-muted-foreground">{material.fileName} {formatSize(material.fileSize) && `· ${formatSize(material.fileSize)}`}</p>
+            <p className="text-xs text-muted-foreground mb-2">{material.fileName} {formatSize(material.fileSize) && `· ${formatSize(material.fileSize)}`}</p>
+
+            {/* Star Rating */}
+            <StarRating materialId={material.id} isAuthenticated={isAuthenticated} />
+
+            {/* Comments */}
+            <CommentsSection materialId={material.id} isAuthenticated={isAuthenticated} />
           </div>
           <div className="flex-shrink-0">
             {isAuthenticated ? (
@@ -118,6 +301,7 @@ function MaterialCard({ material, isAuthenticated, language }: {
   );
 }
 
+// ─── Library Page ───────────────────────────────────────────────────────────
 export default function Library() {
   const { t, language } = useLanguage();
   const { isAuthenticated } = useAuth();

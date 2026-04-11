@@ -11,6 +11,24 @@ import {
   deleteMaterial,
   insertContactMessage,
   getContactMessages,
+  upsertRating,
+  getRatingsForMaterial,
+  getUserRating,
+  insertComment,
+  getCommentsForMaterial,
+  deleteComment,
+  getCommentById,
+  insertDownloadLog,
+  getDownloadCountByMaterial,
+  getTotalDownloads,
+  getAllUsers,
+  getTotalUsers,
+  getTotalMaterials,
+  getTotalMessages,
+  getMaterialsWithUploader,
+  getRecentComments,
+  getRecentDownloads,
+  getAllRatingsWithDetails,
 } from "./db";
 import { storagePut } from "./storage";
 import { notifyOwner } from "./_core/notification";
@@ -42,12 +60,18 @@ export const appRouter = router({
       .input(z.object({ grade: z.number().min(1).max(5).optional() }))
       .query(({ input }) => getMaterials(input.grade)),
 
-    // Protected: get download URL for a specific material
+    // Protected: get download URL for a specific material (also logs the download)
     getDownloadUrl: protectedProcedure
       .input(z.object({ id: z.number() }))
-      .query(async ({ input }) => {
+      .query(async ({ input, ctx }) => {
         const material = await getMaterialById(input.id);
         if (!material) throw new TRPCError({ code: "NOT_FOUND" });
+        // Log the download
+        try {
+          await insertDownloadLog({ materialId: input.id, userId: ctx.user.id });
+        } catch (e) {
+          console.warn("[Download Log] Failed to log download:", e);
+        }
         return { url: material.fileUrl, fileName: material.fileName };
       }),
 
@@ -96,6 +120,70 @@ export const appRouter = router({
       }),
   }),
 
+  // ─── Ratings ──────────────────────────────────────────────────────────────
+  ratings: router({
+    // Public: get ratings for a material
+    getForMaterial: publicProcedure
+      .input(z.object({ materialId: z.number() }))
+      .query(({ input }) => getRatingsForMaterial(input.materialId)),
+
+    // Protected: get current user's rating for a material
+    getUserRating: protectedProcedure
+      .input(z.object({ materialId: z.number() }))
+      .query(({ input, ctx }) => getUserRating(input.materialId, ctx.user.id)),
+
+    // Protected: set/update rating
+    rate: protectedProcedure
+      .input(z.object({
+        materialId: z.number(),
+        rating: z.number().min(1).max(5),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        await upsertRating({
+          materialId: input.materialId,
+          userId: ctx.user.id,
+          rating: input.rating,
+        });
+        return { success: true };
+      }),
+  }),
+
+  // ─── Comments ─────────────────────────────────────────────────────────────
+  comments: router({
+    // Public: get comments for a material
+    getForMaterial: publicProcedure
+      .input(z.object({ materialId: z.number() }))
+      .query(({ input }) => getCommentsForMaterial(input.materialId)),
+
+    // Protected: add a comment
+    add: protectedProcedure
+      .input(z.object({
+        materialId: z.number(),
+        content: z.string().min(1).max(2000),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        await insertComment({
+          materialId: input.materialId,
+          userId: ctx.user.id,
+          content: input.content,
+        });
+        return { success: true };
+      }),
+
+    // Protected: delete own comment (or admin can delete any)
+    delete: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const comment = await getCommentById(input.id);
+        if (!comment) throw new TRPCError({ code: "NOT_FOUND" });
+        if (comment.userId !== ctx.user.id && ctx.user.role !== "admin") {
+          throw new TRPCError({ code: "FORBIDDEN" });
+        }
+        await deleteComment(input.id);
+        return { success: true };
+      }),
+  }),
+
   // ─── Contact ─────────────────────────────────────────────────────────────
   contact: router({
     send: publicProcedure
@@ -120,6 +208,50 @@ export const appRouter = router({
 
     // Admin: list all contact messages
     list: adminProcedure.query(() => getContactMessages()),
+  }),
+
+  // ─── Admin Dashboard ──────────────────────────────────────────────────────
+  admin: router({
+    // Get dashboard stats
+    stats: adminProcedure.query(async () => {
+      const [totalUsers, totalMaterials, totalDownloads, totalMessages] = await Promise.all([
+        getTotalUsers(),
+        getTotalMaterials(),
+        getTotalDownloads(),
+        getTotalMessages(),
+      ]);
+      return { totalUsers, totalMaterials, totalDownloads, totalMessages };
+    }),
+
+    // Get all users with emails
+    users: adminProcedure.query(() => getAllUsers()),
+
+    // Get materials with uploader info
+    materialsWithUploader: adminProcedure.query(() => getMaterialsWithUploader()),
+
+    // Get download counts per material (most downloaded)
+    downloadRanking: adminProcedure.query(() => getDownloadCountByMaterial()),
+
+    // Get recent comments
+    recentComments: adminProcedure
+      .input(z.object({ limit: z.number().min(1).max(100).default(20) }).optional())
+      .query(({ input }) => getRecentComments(input?.limit ?? 20)),
+
+    // Get recent downloads
+    recentDownloads: adminProcedure
+      .input(z.object({ limit: z.number().min(1).max(100).default(20) }).optional())
+      .query(({ input }) => getRecentDownloads(input?.limit ?? 20)),
+
+    // Get all ratings with details
+    ratingsOverview: adminProcedure.query(() => getAllRatingsWithDetails()),
+
+    // Delete a comment (admin)
+    deleteComment: adminProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input }) => {
+        await deleteComment(input.id);
+        return { success: true };
+      }),
   }),
 });
 

@@ -47,3 +47,22 @@
 - [x] Add Spanish language support (trilingual PT/EN/ES)
 - [x] Translate all pages to Spanish
 - [x] Update language selector in Header to include ES button
+
+## Painel de Administração
+- [x] Schema: tabela activity_ratings (estrelas por atividade/usuário)
+- [x] Schema: tabela activity_comments (comentários por atividade/usuário)
+- [x] Schema: tabela download_logs (registro de cada download com timestamp)
+- [x] DB helpers para ratings, comments, download_logs
+- [x] tRPC router: admin (listar usuários, estatísticas, atividades mais baixadas)
+- [x] tRPC router: ratings (criar/atualizar rating, listar ratings)
+- [x] tRPC router: comments (criar, listar, deletar comentário)
+- [x] Frontend: página /admin com painel completo
+- [x] Admin: listagem de todos os usuários com emails
+- [x] Admin: listagem de atividades com quem enviou cada uma
+- [x] Admin: ranking de atividades mais baixadas
+- [x] Admin: estatísticas gerais (total usuários, downloads, materiais)
+- [x] Admin: listagem de comentários recentes
+- [x] Frontend: sistema de estrelas (1-5) visível para todos nas atividades
+- [x] Frontend: sistema de comentários visível para todos nas atividades
+- [x] Proteção do painel admin (apenas role=admin)
+- [x] Testes vitest para novos routers
