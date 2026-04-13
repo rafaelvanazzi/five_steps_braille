@@ -3,7 +3,7 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import SiteLayout from "@/components/SiteLayout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { ArrowRight, BookOpen, Users, Building2, Music2 } from "lucide-react";
+import { ArrowRight, BookOpen, Users, Building2, Music2, GraduationCap, Mic, FileMusic, Landmark, Globe } from "lucide-react";
 
 const gradeColors = [
   "from-blue-600 to-blue-800",
@@ -224,6 +224,76 @@ export default function Home() {
                 </Card>
               </Link>
             ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Services Section */}
+      <section className="py-16 bg-muted/50" aria-labelledby="services-heading">
+        <div className="container">
+          <div className="text-center mb-10">
+            <h2 id="services-heading" className="text-3xl md:text-4xl font-bold text-foreground mb-3">
+              {t.home_services_title}
+            </h2>
+            <p className="text-muted-foreground text-lg">
+              {t.home_services_subtitle}
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+            {[
+              {
+                icon: <GraduationCap className="w-7 h-7" aria-hidden="true" />,
+                title: t.home_services_lessons,
+                desc: t.home_services_lessons_desc,
+                color: "text-blue-700",
+                bg: "bg-blue-50",
+              },
+              {
+                icon: <Mic className="w-7 h-7" aria-hidden="true" />,
+                title: t.home_services_workshops,
+                desc: t.home_services_workshops_desc,
+                color: "text-emerald-700",
+                bg: "bg-emerald-50",
+              },
+              {
+                icon: <FileMusic className="w-7 h-7" aria-hidden="true" />,
+                title: t.home_services_transcription,
+                desc: t.home_services_transcription_desc,
+                color: "text-amber-700",
+                bg: "bg-amber-50",
+              },
+              {
+                icon: <Landmark className="w-7 h-7" aria-hidden="true" />,
+                title: t.home_services_consulting,
+                desc: t.home_services_consulting_desc,
+                color: "text-purple-700",
+                bg: "bg-purple-50",
+              },
+            ].map((service) => (
+              <Card key={service.title} className="border border-border shadow-sm hover:shadow-md transition-shadow">
+                <CardContent className="p-5">
+                  <div className={`${service.bg} ${service.color} w-12 h-12 rounded-lg flex items-center justify-center mb-4`}>
+                    {service.icon}
+                  </div>
+                  <h3 className="font-bold text-foreground mb-2">{service.title}</h3>
+                  <p className="text-sm text-muted-foreground leading-relaxed">{service.desc}</p>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+
+          <div className="text-center mt-8 space-y-3">
+            <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
+              <Globe className="w-4 h-4" aria-hidden="true" />
+              <span>{t.home_services_languages}</span>
+            </div>
+            <Button asChild size="lg" className="font-semibold">
+              <Link href="/contato">
+                {t.home_services_cta}
+                <ArrowRight className="w-4 h-4 ml-2" aria-hidden="true" />
+              </Link>
+            </Button>
           </div>
         </div>
       </section>

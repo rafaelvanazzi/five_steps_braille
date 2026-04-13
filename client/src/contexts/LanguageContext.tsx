@@ -156,6 +156,20 @@ type Translations = {
   common_back: string;
   common_read_more: string;
   common_skip_nav: string;
+
+  // Services
+  home_services_title: string;
+  home_services_subtitle: string;
+  home_services_lessons: string;
+  home_services_lessons_desc: string;
+  home_services_workshops: string;
+  home_services_workshops_desc: string;
+  home_services_transcription: string;
+  home_services_transcription_desc: string;
+  home_services_consulting: string;
+  home_services_consulting_desc: string;
+  home_services_languages: string;
+  home_services_cta: string;
 };
 
 const pt: Translations = {
@@ -302,6 +316,19 @@ const pt: Translations = {
   common_back: "Voltar",
   common_read_more: "Saiba mais",
   common_skip_nav: "Pular para o conteúdo principal",
+
+  home_services_title: "Serviços Especializados",
+  home_services_subtitle: "Formação, consultoria e transcrição em musicografia braille",
+  home_services_lessons: "Aulas Particulares",
+  home_services_lessons_desc: "Aulas individuais ou em grupo (online) de musicografia braille para músicos com DV e educadores.",
+  home_services_workshops: "Workshops e Palestras",
+  home_services_workshops_desc: "Formações presenciais ou online para universidades, conservatórios e eventos.",
+  home_services_transcription: "Transcrição de Partituras",
+  home_services_transcription_desc: "Transcrição profissional de partituras em tinta para musicografia braille, qualquer complexidade.",
+  home_services_consulting: "Consultoria Institucional",
+  home_services_consulting_desc: "Diagnóstico e capacitação em acessibilidade musical para escolas, conservatórios e universidades.",
+  home_services_languages: "Disponível em português e espanhol",
+  home_services_cta: "Solicitar Orçamento",
 };
 
 const en: Translations = {
@@ -448,6 +475,19 @@ const en: Translations = {
   common_back: "Back",
   common_read_more: "Learn more",
   common_skip_nav: "Skip to main content",
+
+  home_services_title: "Specialized Services",
+  home_services_subtitle: "Training, consulting, and transcription in braille music notation",
+  home_services_lessons: "Private Lessons",
+  home_services_lessons_desc: "Individual or group lessons (online) in braille music notation for musicians with VI and educators.",
+  home_services_workshops: "Workshops & Lectures",
+  home_services_workshops_desc: "In-person or online training for universities, conservatories, and events.",
+  home_services_transcription: "Score Transcription",
+  home_services_transcription_desc: "Professional transcription of print scores to braille music notation, any complexity level.",
+  home_services_consulting: "Institutional Consulting",
+  home_services_consulting_desc: "Accessibility assessment and training in braille music for schools, conservatories, and universities.",
+  home_services_languages: "Available in Portuguese and Spanish",
+  home_services_cta: "Request a Quote",
 };
 
 const es: Translations = {
@@ -594,6 +634,19 @@ const es: Translations = {
   common_back: "Atrás",
   common_read_more: "Saber más",
   common_skip_nav: "Saltar al contenido principal",
+
+  home_services_title: "Servicios Especializados",
+  home_services_subtitle: "Formación, consultoría y transcripción en musicografía braille",
+  home_services_lessons: "Clases Particulares",
+  home_services_lessons_desc: "Clases individuales o grupales (online) de musicografía braille para músicos con DV y educadores.",
+  home_services_workshops: "Talleres y Conferencias",
+  home_services_workshops_desc: "Formaciones presenciales u online para universidades, conservatorios y eventos.",
+  home_services_transcription: "Transcripción de Partituras",
+  home_services_transcription_desc: "Transcripción profesional de partituras en tinta a musicografía braille, cualquier complejidad.",
+  home_services_consulting: "Consultoría Institucional",
+  home_services_consulting_desc: "Diagnóstico y capacitación en accesibilidad musical para escuelas, conservatorios y universidades.",
+  home_services_languages: "Disponible en portugués y español",
+  home_services_cta: "Solicitar Presupuesto",
 };
 
 type LanguageContextType = {

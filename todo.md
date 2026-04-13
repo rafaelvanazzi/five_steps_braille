@@ -66,3 +66,7 @@
 - [x] Frontend: sistema de comentários visível para todos nas atividades
 - [x] Proteção do painel admin (apenas role=admin)
 - [x] Testes vitest para novos routers
+
+## Seção de Serviços na Página Início
+- [x] Adicionar seção "Serviços Especializados" na Home com 4 cards (Aulas, Workshops, Transcrição, Consultoria)
+- [x] Indicar idiomas disponíveis (PT/ES) e botão para contato/orçamento
