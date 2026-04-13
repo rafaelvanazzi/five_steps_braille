@@ -70,3 +70,11 @@
 ## Seção de Serviços na Página Início
 - [x] Adicionar seção "Serviços Especializados" na Home com 4 cards (Aulas, Workshops, Transcrição, Consultoria)
 - [x] Indicar idiomas disponíveis (PT/ES) e botão para contato/orçamento
+
+## Envio de E-mail no Formulário de Contato
+- [x] Instalar biblioteca de envio de e-mail (Resend)
+- [x] Configurar credencial RESEND_API_KEY
+- [x] Criar helper de envio de e-mail no servidor
+- [x] Integrar envio para acervo.musicografia@gmail.com e rafaelvanazzi@gmail.com no router de contato
+- [x] Manter notificação Manus e armazenamento no banco de dados intactos
+- [x] Testar envio de e-mail

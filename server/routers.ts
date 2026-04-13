@@ -32,6 +32,7 @@ import {
 } from "./db";
 import { storagePut } from "./storage";
 import { notifyOwner } from "./_core/notification";
+import { sendContactEmail } from "./email";
 
 // Admin-only guard
 const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
@@ -203,6 +204,10 @@ export const appRouter = router({
           title: `Nova mensagem: ${input.subject}`,
           content: `De: ${input.name} (${input.email})\nInstituição: ${input.institution ?? "—"}\n\n${input.message}`,
         });
+        // Send email notification to Rafael (non-blocking — DB + Manus notification already done)
+        sendContactEmail(input).catch((err) =>
+          console.error("[contact] email send failed:", err)
+        );
         return { success: true };
       }),
 
