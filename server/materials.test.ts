@@ -149,16 +149,50 @@ describe("materials.getDownloadUrl", () => {
 });
 
 describe("materials.upload", () => {
-  it("allows admin to upload material", async () => {
+  it("allows admin to upload material with new fields", async () => {
     const caller = appRouter.createCaller(createAdminContext());
     const result = await caller.materials.upload({
       title: "Novo Material",
       grade: 2,
       language: "pt",
+      materialType: "partitura",
+      creatorVision: "vidente",
+      creatorName: "Rafael Vanazzi",
       fileBase64: Buffer.from("test content").toString("base64"),
       fileName: "material.pdf",
       mimeType: "application/pdf",
       fileSize: 1024,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("allows admin to upload atividade from PDV", async () => {
+    const caller = appRouter.createCaller(createAdminContext());
+    const result = await caller.materials.upload({
+      title: "Atividade de Musicalização",
+      grade: 1,
+      language: "pt",
+      materialType: "atividade",
+      creatorVision: "pdv",
+      creatorName: "Professor DV",
+      fileBase64: Buffer.from("test content").toString("base64"),
+      fileName: "atividade.pdf",
+      mimeType: "application/pdf",
+      fileSize: 512,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("uses default values when materialType and creatorVision not provided", async () => {
+    const caller = appRouter.createCaller(createAdminContext());
+    const result = await caller.materials.upload({
+      title: "Material Sem Tipo",
+      grade: 3,
+      language: "en",
+      fileBase64: Buffer.from("test").toString("base64"),
+      fileName: "material.pdf",
+      mimeType: "application/pdf",
+      fileSize: 256,
     });
     expect(result.success).toBe(true);
   });

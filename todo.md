@@ -78,3 +78,14 @@
 - [x] Integrar envio para acervo.musicografia@gmail.com e rafaelvanazzi@gmail.com no router de contato
 - [x] Manter notificação Manus e armazenamento no banco de dados intactos
 - [x] Testar envio de e-mail
+
+## Etiquetas e Nome do Criador no Acervo
+- [x] Schema: adicionar campo material_type (partitura/atividade_musicalizacao) na tabela materials
+- [x] Schema: adicionar campo creator_vision (vidente/pdv) na tabela materials
+- [x] Schema: adicionar campo creator_name na tabela materials
+- [x] Backend: atualizar routers e db helpers para os novos campos
+- [x] Frontend: atualizar formulário de upload com os novos campos
+- [x] Frontend: exibir etiquetas e nome do criador nos cards do acervo
+- [x] Frontend: adicionar filtros por tipo de material e tipo de criador
+- [x] Traduções: adicionar chaves PT/EN/ES para os novos campos
+- [x] Testes: atualizar testes vitest

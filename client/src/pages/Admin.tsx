@@ -57,6 +57,9 @@ export default function Admin() {
   const [form, setForm] = useState({
     title: "", description: "", grade: 1, stage: undefined as number | undefined,
     language: "pt" as "pt" | "en" | "both",
+    materialType: "atividade" as "partitura" | "atividade",
+    creatorVision: "vidente" as "vidente" | "pdv",
+    creatorName: "",
   });
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [activeTab, setActiveTab] = useState<AdminTab>("dashboard");
@@ -79,7 +82,7 @@ export default function Admin() {
   const uploadMutation = trpc.materials.upload.useMutation({
     onSuccess: () => {
       toast.success("Material enviado com sucesso!");
-      setForm({ title: "", description: "", grade: 1, stage: undefined, language: "pt" });
+      setForm({ title: "", description: "", grade: 1, stage: undefined, language: "pt", materialType: "atividade", creatorVision: "vidente", creatorName: "" });
       setSelectedFile(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
       utils.materials.list.invalidate();
@@ -138,6 +141,7 @@ export default function Admin() {
       const base64 = (reader.result as string).split(",")[1];
       uploadMutation.mutate({
         ...form,
+        creatorName: form.creatorName.trim() || undefined,
         fileBase64: base64,
         fileName: selectedFile.name,
         mimeType: selectedFile.type,
@@ -653,6 +657,32 @@ export default function Admin() {
                       <SelectItem value="both">Bilíngue</SelectItem>
                     </SelectContent>
                   </Select>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="mat-type">Tipo de Material <span className="text-destructive">*</span></Label>
+                    <Select value={form.materialType} onValueChange={(v) => setForm({ ...form, materialType: v as typeof form.materialType })}>
+                      <SelectTrigger id="mat-type"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="atividade">Atividade de Musicalização</SelectItem>
+                        <SelectItem value="partitura">Partitura</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="mat-vision">Criador <span className="text-destructive">*</span></Label>
+                    <Select value={form.creatorVision} onValueChange={(v) => setForm({ ...form, creatorVision: v as typeof form.creatorVision })}>
+                      <SelectTrigger id="mat-vision"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="vidente">Vidente</SelectItem>
+                        <SelectItem value="pdv">Pessoa com DV (PDV)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="mat-creator">Nome do Criador</Label>
+                  <Input id="mat-creator" value={form.creatorName} onChange={(e) => setForm({ ...form, creatorName: e.target.value })} placeholder="Ex: Rafael Vanazzi" />
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="mat-file">Arquivo <span className="text-destructive">*</span></Label>

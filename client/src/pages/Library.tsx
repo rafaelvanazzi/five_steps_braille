@@ -9,7 +9,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { FileDown, Lock, BookOpen, FileText, Music, Star, MessageSquare, Send, Trash2, ChevronDown, ChevronUp } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { FileDown, Lock, BookOpen, FileText, Music, Star, MessageSquare, Send, Trash2, ChevronDown, ChevronUp, Eye, EyeOff, User } from "lucide-react";
 import { toast } from "sonner";
 
 const gradeLabels: Record<number, { pt: string; en: string; badge: string }> = {
@@ -144,7 +145,6 @@ function CommentsSection({ materialId, isAuthenticated }: { materialId: number; 
 
       {showComments && (
         <div className="mt-3 space-y-3">
-          {/* Comment list */}
           {isLoading ? (
             <div className="h-8 bg-muted rounded animate-pulse" />
           ) : comments.length === 0 ? (
@@ -176,7 +176,6 @@ function CommentsSection({ materialId, isAuthenticated }: { materialId: number; 
             </div>
           )}
 
-          {/* Add comment form */}
           {isAuthenticated ? (
             <div className="flex gap-2">
               <Textarea
@@ -209,10 +208,14 @@ function CommentsSection({ materialId, isAuthenticated }: { materialId: number; 
 }
 
 // ─── Material Card ──────────────────────────────────────────────────────────
-function MaterialCard({ material, isAuthenticated, language }: {
-  material: { id: number; title: string; description?: string | null; grade: number; stage?: number | null; fileName: string; fileSize?: number | null; mimeType?: string | null; language: string };
+function MaterialCard({ material, isAuthenticated }: {
+  material: {
+    id: number; title: string; description?: string | null; grade: number;
+    stage?: number | null; fileName: string; fileSize?: number | null;
+    mimeType?: string | null; language: string;
+    materialType: string; creatorVision: string; creatorName?: string | null;
+  };
   isAuthenticated: boolean;
-  language: string;
 }) {
   const { t } = useLanguage();
   const getDownload = trpc.materials.getDownloadUrl.useQuery(
@@ -237,6 +240,8 @@ function MaterialCard({ material, isAuthenticated, language }: {
   };
 
   const gradeInfo = gradeLabels[material.grade];
+  const isPartitura = material.materialType === "partitura";
+  const isPDV = material.creatorVision === "pdv";
 
   return (
     <Card className="border border-border shadow-sm hover:shadow-md transition-shadow">
@@ -246,17 +251,50 @@ function MaterialCard({ material, isAuthenticated, language }: {
             <FileIcon mimeType={material.mimeType} />
           </div>
           <div className="flex-1 min-w-0">
-            <div className="flex flex-wrap items-center gap-2 mb-1">
+            {/* Badges row */}
+            <div className="flex flex-wrap items-center gap-1.5 mb-2">
+              {/* Grade badge */}
               <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold ${gradeInfo?.badge ?? ""}`}>
                 Grau {material.grade}{material.stage ? ` · Etapa ${material.stage}` : ""}
               </span>
+              {/* Material type badge */}
+              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${
+                isPartitura
+                  ? "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300"
+                  : "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300"
+              }`}>
+                {isPartitura ? <FileText className="w-3 h-3" /> : <Music className="w-3 h-3" />}
+                {isPartitura ? t.library_type_partitura : t.library_type_atividade}
+              </span>
+              {/* Creator vision badge */}
+              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${
+                isPDV
+                  ? "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300"
+                  : "bg-gray-100 text-gray-700 dark:bg-gray-800/50 dark:text-gray-300"
+              }`}>
+                {isPDV ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                {isPDV ? t.library_creator_pdv : t.library_creator_vidente}
+              </span>
+              {/* Language badge */}
               {material.language !== "both" && (
                 <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-muted text-muted-foreground border border-border">
                   {material.language.toUpperCase()}
                 </span>
               )}
             </div>
+
+            {/* Title */}
             <h3 className="font-semibold text-foreground text-sm leading-tight mb-1 truncate">{material.title}</h3>
+
+            {/* Creator name */}
+            {material.creatorName && (
+              <p className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
+                <User className="w-3 h-3" aria-hidden="true" />
+                {t.library_creator_by}: <span className="font-medium text-foreground/80">{material.creatorName}</span>
+              </p>
+            )}
+
+            {/* Description */}
             {material.description && (
               <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2 mb-2">{material.description}</p>
             )}
@@ -306,10 +344,24 @@ export default function Library() {
   const { t, language } = useLanguage();
   const { isAuthenticated } = useAuth();
   const [activeGrade, setActiveGrade] = useState<string>("all");
+  const [filterType, setFilterType] = useState<string>("all");
+  const [filterCreator, setFilterCreator] = useState<string>("all");
 
   const { data: materials = [], isLoading } = trpc.materials.list.useQuery(
     { grade: activeGrade !== "all" ? parseInt(activeGrade) : undefined }
   );
+
+  // Apply client-side filters for type and creator
+  const filteredMaterials = useMemo(() => {
+    let result = materials;
+    if (filterType !== "all") {
+      result = result.filter((m: any) => m.materialType === filterType);
+    }
+    if (filterCreator !== "all") {
+      result = result.filter((m: any) => m.creatorVision === filterCreator);
+    }
+    return result;
+  }, [materials, filterType, filterCreator]);
 
   return (
     <SiteLayout>
@@ -341,6 +393,49 @@ export default function Library() {
         <div className="container">
           <h2 id="materials-heading" className="sr-only">Materiais do Acervo</h2>
 
+          {/* Filters row */}
+          <div className="flex flex-wrap items-end gap-4 mb-6">
+            {/* Type filter */}
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-muted-foreground">{t.library_filter_type}</label>
+              <Select value={filterType} onValueChange={setFilterType}>
+                <SelectTrigger className="w-[200px] h-9 text-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">{t.library_filter_all_types}</SelectItem>
+                  <SelectItem value="partitura">{t.library_type_partitura}</SelectItem>
+                  <SelectItem value="atividade">{t.library_type_atividade}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {/* Creator filter */}
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-muted-foreground">{t.library_filter_creator}</label>
+              <Select value={filterCreator} onValueChange={setFilterCreator}>
+                <SelectTrigger className="w-[200px] h-9 text-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">{t.library_filter_all_creators}</SelectItem>
+                  <SelectItem value="vidente">{t.library_creator_vidente}</SelectItem>
+                  <SelectItem value="pdv">{t.library_creator_pdv}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {/* Active filters indicator */}
+            {(filterType !== "all" || filterCreator !== "all") && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => { setFilterType("all"); setFilterCreator("all"); }}
+                className="text-xs text-muted-foreground hover:text-foreground"
+              >
+                Limpar filtros
+              </Button>
+            )}
+          </div>
+
           <Tabs value={activeGrade} onValueChange={setActiveGrade}>
             <TabsList className="mb-8 flex flex-wrap h-auto gap-1 bg-muted p-1 rounded-lg" aria-label="Filtrar por grau">
               <TabsTrigger value="all" className="text-sm">{t.library_all}</TabsTrigger>
@@ -359,7 +454,7 @@ export default function Library() {
                       <div key={i} className="h-24 bg-muted rounded-xl animate-pulse" aria-hidden="true" />
                     ))}
                   </div>
-                ) : materials.length === 0 ? (
+                ) : filteredMaterials.length === 0 ? (
                   <div className="text-center py-16">
                     <BookOpen className="w-12 h-12 text-muted-foreground mx-auto mb-4" aria-hidden="true" />
                     <p className="text-muted-foreground text-lg">{t.library_empty}</p>
@@ -367,12 +462,11 @@ export default function Library() {
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {materials.map((m) => (
+                    {filteredMaterials.map((m: any) => (
                       <MaterialCard
                         key={m.id}
                         material={m}
                         isAuthenticated={isAuthenticated}
-                        language={language}
                       />
                     ))}
                   </div>

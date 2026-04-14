@@ -127,6 +127,15 @@ type Translations = {
   library_grade: string;
   library_empty: string;
   library_empty_desc: string;
+  library_type_partitura: string;
+  library_type_atividade: string;
+  library_creator_vidente: string;
+  library_creator_pdv: string;
+  library_creator_by: string;
+  library_filter_type: string;
+  library_filter_creator: string;
+  library_filter_all_types: string;
+  library_filter_all_creators: string;
 
   // Contact
   contact_title: string;
@@ -290,6 +299,15 @@ const pt: Translations = {
   library_grade: "Grau",
   library_empty: "Nenhum material disponível ainda.",
   library_empty_desc: "Em breve novos materiais serão adicionados ao acervo.",
+  library_type_partitura: "Partitura",
+  library_type_atividade: "Atividade de Musicalização",
+  library_creator_vidente: "Vidente",
+  library_creator_pdv: "Pessoa com DV",
+  library_creator_by: "Por",
+  library_filter_type: "Tipo de Material",
+  library_filter_creator: "Tipo de Criador",
+  library_filter_all_types: "Todos os Tipos",
+  library_filter_all_creators: "Todos os Criadores",
 
   contact_title: "Contato",
   contact_subtitle: "Entre em contato para parcerias, informações ou para receber aulas",
@@ -449,6 +467,15 @@ const en: Translations = {
   library_grade: "Grade",
   library_empty: "No materials available yet.",
   library_empty_desc: "New materials will be added to the library soon.",
+  library_type_partitura: "Score",
+  library_type_atividade: "Music Activity",
+  library_creator_vidente: "Sighted",
+  library_creator_pdv: "Person with VI",
+  library_creator_by: "By",
+  library_filter_type: "Material Type",
+  library_filter_creator: "Creator Type",
+  library_filter_all_types: "All Types",
+  library_filter_all_creators: "All Creators",
 
   contact_title: "Contact",
   contact_subtitle: "Get in touch for partnerships, information, or to receive classes",
@@ -608,6 +635,15 @@ const es: Translations = {
   library_grade: "Grado",
   library_empty: "Ningún material disponible aún.",
   library_empty_desc: "Pronto se añadirán nuevos materiales a la biblioteca.",
+  library_type_partitura: "Partitura",
+  library_type_atividade: "Actividad de Musicalización",
+  library_creator_vidente: "Vidente",
+  library_creator_pdv: "Persona con DV",
+  library_creator_by: "Por",
+  library_filter_type: "Tipo de Material",
+  library_filter_creator: "Tipo de Creador",
+  library_filter_all_types: "Todos los Tipos",
+  library_filter_all_creators: "Todos los Creadores",
 
   contact_title: "Contacto",
   contact_subtitle: "Ponte en contacto para asociaciones, información o para recibir clases",

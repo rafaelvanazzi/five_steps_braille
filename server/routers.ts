@@ -85,6 +85,9 @@ export const appRouter = router({
           grade: z.number().min(1).max(5),
           stage: z.number().min(1).max(8).optional(),
           language: z.enum(["pt", "en", "both"]).default("pt"),
+          materialType: z.enum(["partitura", "atividade"]).default("atividade"),
+          creatorVision: z.enum(["vidente", "pdv"]).default("vidente"),
+          creatorName: z.string().max(255).optional(),
           fileBase64: z.string(),
           fileName: z.string(),
           mimeType: z.string(),
@@ -107,6 +110,9 @@ export const appRouter = router({
           fileSize: input.fileSize,
           mimeType: input.mimeType,
           language: input.language,
+          materialType: input.materialType,
+          creatorVision: input.creatorVision,
+          creatorName: input.creatorName ?? null,
           uploadedBy: ctx.user.id,
         });
         return { success: true };
