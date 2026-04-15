@@ -134,6 +134,19 @@
   .skip-nav:focus {
     @apply not-sr-only fixed top-4 left-4 z-50 px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium;
   }
+  /* WCAG: Enhanced focus styles for keyboard navigation */
+  *:focus-visible {
+    @apply outline-2 outline-offset-2 outline-ring;
+  }
+  /* WCAG: Reduced motion preference */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
   /* Grade color badges */
   .grade-badge-1 { @apply bg-blue-100 text-blue-900 border border-blue-300; }
   .grade-badge-2 { @apply bg-emerald-100 text-emerald-900 border border-emerald-300; }

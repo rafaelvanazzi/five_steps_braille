@@ -83,7 +83,7 @@ export default function Contact() {
             {/* Form */}
             <div className="lg:col-span-2">
               {submitted ? (
-                <div className="flex flex-col items-center justify-center py-16 text-center">
+                <div className="flex flex-col items-center justify-center py-16 text-center" role="status" aria-live="polite">
                   <CheckCircle2 className="w-16 h-16 text-emerald-600 mb-4" aria-hidden="true" />
                   <h2 className="text-2xl font-bold text-foreground mb-2">{t.contact_success}</h2>
                   <Button onClick={() => setSubmitted(false)} variant="outline" className="mt-4">
@@ -91,7 +91,8 @@ export default function Contact() {
                   </Button>
                 </div>
               ) : (
-                <form onSubmit={handleSubmit} noValidate aria-label="Formulário de contato">
+                <form onSubmit={handleSubmit} noValidate aria-label="Formulário de contato" aria-describedby="form-required-note">
+                  <p id="form-required-note" className="sr-only">Campos marcados com asterisco são obrigatórios</p>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
                     <div className="space-y-1.5">
                       <Label htmlFor="contact-name">{t.contact_name} <span aria-label="obrigatório" className="text-destructive">*</span></Label>
@@ -99,6 +100,7 @@ export default function Contact() {
                         id="contact-name"
                         type="text"
                         required
+                        aria-required="true"
                         autoComplete="name"
                         value={form.name}
                         onChange={(e) => setForm({ ...form, name: e.target.value })}
@@ -111,6 +113,7 @@ export default function Contact() {
                         id="contact-email"
                         type="email"
                         required
+                        aria-required="true"
                         autoComplete="email"
                         value={form.email}
                         onChange={(e) => setForm({ ...form, email: e.target.value })}
@@ -151,6 +154,7 @@ export default function Contact() {
                         id="contact-subject"
                         type="text"
                         required
+                        aria-required="true"
                         value={form.subject}
                         onChange={(e) => setForm({ ...form, subject: e.target.value })}
                         placeholder="Parceria institucional, informações sobre aulas..."
@@ -161,6 +165,7 @@ export default function Contact() {
                       <Textarea
                         id="contact-message"
                         required
+                        aria-required="true"
                         rows={6}
                         value={form.message}
                         onChange={(e) => setForm({ ...form, message: e.target.value })}

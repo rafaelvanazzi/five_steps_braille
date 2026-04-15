@@ -35,14 +35,14 @@ function formatSize(bytes?: number | null) {
 
 function StatCard({ icon: Icon, label, value, color }: { icon: React.ElementType; label: string; value: number | string; color: string }) {
   return (
-    <Card className="border-border shadow-sm">
+    <Card className="border-border shadow-sm" aria-label={`${label}: ${value}`}>
       <CardContent className="p-5 flex items-center gap-4">
-        <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${color}`}>
+        <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${color}`} aria-hidden="true">
           <Icon className="w-6 h-6 text-white" />
         </div>
         <div>
-          <p className="text-2xl font-bold text-foreground">{value}</p>
-          <p className="text-sm text-muted-foreground">{label}</p>
+          <p className="text-2xl font-bold text-foreground" aria-hidden="true">{value}</p>
+          <p className="text-sm text-muted-foreground" aria-hidden="true">{label}</p>
         </div>
       </CardContent>
     </Card>
@@ -292,12 +292,13 @@ export default function Admin() {
           <div className="space-y-4">
             <div className="flex items-center gap-3">
               <div className="relative flex-1 max-w-sm">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" aria-hidden="true" />
                 <Input
                   placeholder="Buscar por nome ou email..."
                   value={userSearch}
                   onChange={(e) => setUserSearch(e.target.value)}
                   className="pl-9"
+                  aria-label="Buscar usuários por nome ou email"
                 />
               </div>
               <Badge variant="secondary">{filteredUsers.length} usuário(s)</Badge>
@@ -549,6 +550,7 @@ export default function Admin() {
                               <Star
                                 key={s}
                                 className={`w-4 h-4 ${s <= Math.round(Number(r.avgRating)) ? "text-yellow-500 fill-yellow-500" : "text-gray-300"}`}
+                                aria-hidden="true"
                               />
                             ))}
                             <span className="ml-1 text-sm font-medium">{Number(r.avgRating).toFixed(1)}</span>
@@ -611,10 +613,10 @@ export default function Admin() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <form onSubmit={handleUpload} noValidate className="space-y-5">
+              <form onSubmit={handleUpload} noValidate className="space-y-5" aria-label="Formulário de envio de material">
                 <div className="space-y-1.5">
-                  <Label htmlFor="mat-title">Título <span className="text-destructive">*</span></Label>
-                  <Input id="mat-title" required value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="Ex: Exercícios de Notas — Grau 1" />
+                  <Label htmlFor="mat-title">Título <span className="text-destructive" aria-label="obrigatório">*</span></Label>
+                  <Input id="mat-title" required aria-required="true" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="Ex: Exercícios de Notas — Grau 1" />
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="mat-desc">Descrição</Label>
@@ -622,7 +624,7 @@ export default function Admin() {
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1.5">
-                    <Label htmlFor="mat-grade">Grau <span className="text-destructive">*</span></Label>
+                    <Label htmlFor="mat-grade">Grau <span className="text-destructive" aria-label="obrigatório">*</span></Label>
                     <Select value={String(form.grade)} onValueChange={(v) => setForm({ ...form, grade: parseInt(v), stage: undefined })}>
                       <SelectTrigger id="mat-grade"><SelectValue /></SelectTrigger>
                       <SelectContent>
@@ -660,7 +662,7 @@ export default function Admin() {
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1.5">
-                    <Label htmlFor="mat-type">Tipo de Material <span className="text-destructive">*</span></Label>
+                    <Label htmlFor="mat-type">Tipo de Material <span className="text-destructive" aria-label="obrigatório">*</span></Label>
                     <Select value={form.materialType} onValueChange={(v) => setForm({ ...form, materialType: v as typeof form.materialType })}>
                       <SelectTrigger id="mat-type"><SelectValue /></SelectTrigger>
                       <SelectContent>
@@ -670,7 +672,7 @@ export default function Admin() {
                     </Select>
                   </div>
                   <div className="space-y-1.5">
-                    <Label htmlFor="mat-vision">Criador <span className="text-destructive">*</span></Label>
+                    <Label htmlFor="mat-vision">Criador <span className="text-destructive" aria-label="obrigatório">*</span></Label>
                     <Select value={form.creatorVision} onValueChange={(v) => setForm({ ...form, creatorVision: v as typeof form.creatorVision })}>
                       <SelectTrigger id="mat-vision"><SelectValue /></SelectTrigger>
                       <SelectContent>
@@ -685,7 +687,7 @@ export default function Admin() {
                   <Input id="mat-creator" value={form.creatorName} onChange={(e) => setForm({ ...form, creatorName: e.target.value })} placeholder="Ex: Rafael Vanazzi" />
                 </div>
                 <div className="space-y-1.5">
-                  <Label htmlFor="mat-file">Arquivo <span className="text-destructive">*</span></Label>
+                  <Label htmlFor="mat-file">Arquivo <span className="text-destructive" aria-label="obrigatório">*</span></Label>
                   <Input id="mat-file" type="file" ref={fileInputRef} onChange={handleFileChange} accept=".pdf,.mp3,.wav,.xml,.mxl,.brl,.txt,.zip" className="cursor-pointer" />
                   {selectedFile && (
                     <p className="text-xs text-muted-foreground mt-1">

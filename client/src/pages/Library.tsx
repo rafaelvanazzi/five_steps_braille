@@ -1,4 +1,5 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
+import { announce } from "@/hooks/useA11yAnnounce";
 import { useLanguage } from "@/contexts/LanguageContext";
 import SiteLayout from "@/components/SiteLayout";
 import { trpc } from "@/lib/trpc";
@@ -68,7 +69,7 @@ function StarRating({ materialId, isAuthenticated }: { materialId: number; isAut
 
   return (
     <div className="flex items-center gap-2 flex-wrap">
-      <div className="flex items-center gap-0.5" role="group" aria-label="Avaliação por estrelas">
+      <div className="flex items-center gap-0.5" role="radiogroup" aria-label={`Avaliação: ${count > 0 ? `média ${average.toFixed(1)} de 5, ${count} avaliações` : "sem avaliações"}`}>
         {[1, 2, 3, 4, 5].map((s) => (
           <button
             key={s}
@@ -77,7 +78,9 @@ function StarRating({ materialId, isAuthenticated }: { materialId: number; isAut
             onMouseLeave={() => setHoverStar(0)}
             disabled={!isAuthenticated || rateMutation.isPending}
             className="p-0.5 focus-visible:outline-2 focus-visible:outline-primary rounded disabled:cursor-default"
-            aria-label={`${s} estrela${s > 1 ? "s" : ""}`}
+            role="radio"
+            aria-checked={s === currentUserRating}
+            aria-label={`${s} estrela${s > 1 ? "s" : ""}${s === currentUserRating ? " (sua avaliação atual)" : ""}`}
           >
             <Star
               className={`w-4 h-4 transition-colors ${
@@ -136,9 +139,10 @@ function CommentsSection({ materialId, isAuthenticated }: { materialId: number; 
     <div className="mt-3 pt-3 border-t border-border/50">
       <button
         onClick={() => setShowComments(!showComments)}
+        aria-expanded={showComments}
         className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
       >
-        <MessageSquare className="w-3.5 h-3.5" />
+        <MessageSquare className="w-3.5 h-3.5" aria-hidden="true" />
         {showComments ? "Ocultar comentários" : "Ver comentários"}
         {showComments ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
       </button>
@@ -185,6 +189,7 @@ function CommentsSection({ materialId, isAuthenticated }: { materialId: number; 
                 rows={2}
                 className="text-sm resize-none flex-1"
                 maxLength={2000}
+                aria-label="Escreva um comentário"
               />
               <Button
                 size="sm"
@@ -363,6 +368,13 @@ export default function Library() {
     return result;
   }, [materials, filterType, filterCreator]);
 
+  // WCAG: Announce filter results to screen readers
+  useEffect(() => {
+    if (!isLoading && materials.length > 0) {
+      announce(`${filteredMaterials.length} materiais encontrados`);
+    }
+  }, [filteredMaterials.length, isLoading, materials.length]);
+
   return (
     <SiteLayout>
       {/* Hero */}
@@ -449,7 +461,7 @@ export default function Library() {
             {["all", "1", "2", "3", "4", "5"].map((tab) => (
               <TabsContent key={tab} value={tab}>
                 {isLoading ? (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4" aria-busy="true" aria-label="Carregando materiais">
                     {[1, 2, 3, 4].map((i) => (
                       <div key={i} className="h-24 bg-muted rounded-xl animate-pulse" aria-hidden="true" />
                     ))}

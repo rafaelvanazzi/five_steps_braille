@@ -6,6 +6,7 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { LanguageProvider } from "./contexts/LanguageContext";
 import Home from "./pages/Home";
+import { useRouteA11y } from "./hooks/useRouteA11y";
 import About from "./pages/About";
 import ForInstitutions from "./pages/ForInstitutions";
 import ForMusiciansDV from "./pages/ForMusiciansDV";
@@ -15,6 +16,7 @@ import Contact from "./pages/Contact";
 import Admin from "./pages/Admin";
 
 function Router() {
+  useRouteA11y();
   return (
     <Switch>
       <Route path="/" component={Home} />

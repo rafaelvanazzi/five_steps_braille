@@ -147,11 +147,11 @@ export default function Home() {
             {[
               { num: "5", label: "Graus" },
               { num: "23", label: "Etapas" },
-              { num: "∞", label: "Partituras" },
+              { num: "∞", label: "Partituras", ariaLabel: "Infinitas Partituras" },
             ].map((stat) => (
-              <div key={stat.label} className="bg-card border border-border rounded-xl p-6 shadow-sm">
-                <div className="text-4xl font-bold text-primary mb-1">{stat.num}</div>
-                <div className="text-sm text-muted-foreground font-medium">{stat.label}</div>
+              <div key={stat.label} className="bg-card border border-border rounded-xl p-6 shadow-sm" aria-label={(stat as any).ariaLabel || `${stat.num} ${stat.label}`}>
+                <div className="text-4xl font-bold text-primary mb-1" aria-hidden="true">{stat.num}</div>
+                <div className="text-sm text-muted-foreground font-medium" aria-hidden="true">{stat.label}</div>
               </div>
             ))}
           </div>
@@ -206,7 +206,7 @@ export default function Home() {
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             {audiences.map((aud) => (
-              <Link key={aud.href} href={aud.href}>
+              <Link key={aud.href} href={aud.href} aria-label={aud.title}>
                 <Card className={`border ${aud.bg} hover:shadow-lg transition-all cursor-pointer group h-full`}>
                   <CardContent className="p-6">
                     <div className={`${aud.color} mb-4`}>{aud.icon}</div>

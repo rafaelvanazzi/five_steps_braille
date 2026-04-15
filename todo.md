@@ -89,3 +89,19 @@
 - [x] Frontend: adicionar filtros por tipo de material e tipo de criador
 - [x] Traduções: adicionar chaves PT/EN/ES para os novos campos
 - [x] Testes: atualizar testes vitest
+
+## Acessibilidade Completa para Leitores de Tela (JAWS/NVDA)
+- [x] Auditoria: identificar problemas de acessibilidade em todas as páginas
+- [x] HTML semântico: landmarks (main, nav, header, footer, section, article)
+- [x] Atributo lang dinâmico no html baseado no idioma selecionado
+- [x] Skip navigation link funcional e visível ao focar
+- [x] ARIA labels em todos os elementos interativos
+- [x] Alt text descritivo em todas as imagens
+- [x] Foco visível e navegação por teclado em todos os componentes
+- [x] Formulários: labels associados, mensagens de erro acessíveis
+- [x] Contraste de cores WCAG AA verificado
+- [x] Live regions (aria-live) para conteúdo dinâmico
+- [x] Heading hierarchy correta (h1 > h2 > h3)
+- [x] Seletor de idioma acessível
+- [x] Sistema de estrelas acessível por teclado
+- [x] Testes automatizados de acessibilidade (vitest - 39 testes)

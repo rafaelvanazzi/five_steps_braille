@@ -59,7 +59,7 @@ export default function Header() {
           {/* Right side: Language + Auth */}
           <div className="hidden lg:flex items-center gap-2">
             {/* Language Toggle - Trilingual */}
-            <div className="flex gap-1 bg-primary-foreground/10 rounded-md p-1">
+            <div className="flex gap-1 bg-primary-foreground/10 rounded-md p-1" role="group" aria-label="Selecionar idioma">
               <button
                 onClick={() => setLanguage("pt")}
                 className={`px-2 py-1 rounded text-xs font-medium transition ${
@@ -68,7 +68,7 @@ export default function Header() {
                     : "text-primary-foreground/70 hover:text-primary-foreground"
                 }`}
                 aria-label="Português"
-                aria-current={language === "pt" ? "page" : undefined}
+                aria-pressed={language === "pt"}
               >
                 PT
               </button>
@@ -80,7 +80,7 @@ export default function Header() {
                     : "text-primary-foreground/70 hover:text-primary-foreground"
                 }`}
                 aria-label="English"
-                aria-current={language === "en" ? "page" : undefined}
+                aria-pressed={language === "en"}
               >
                 EN
               </button>
@@ -92,7 +92,7 @@ export default function Header() {
                     : "text-primary-foreground/70 hover:text-primary-foreground"
                 }`}
                 aria-label="Español"
-                aria-current={language === "es" ? "page" : undefined}
+                aria-pressed={language === "es"}
               >
                 ES
               </button>
@@ -163,7 +163,7 @@ export default function Header() {
               </Link>
             ))}
             <div className="flex flex-col gap-2 pt-2 border-t border-primary-foreground/20 mt-2">
-              <div className="flex gap-1 bg-primary-foreground/10 rounded-md p-1">
+              <div className="flex gap-1 bg-primary-foreground/10 rounded-md p-1" role="group" aria-label="Selecionar idioma">
                 <button
                   onClick={() => { setLanguage("pt"); setMobileOpen(false); }}
                   className={`px-2 py-1 rounded text-xs font-medium transition ${
@@ -172,7 +172,7 @@ export default function Header() {
                       : "text-primary-foreground/70 hover:text-primary-foreground"
                   }`}
                   aria-label="Português"
-                  aria-current={language === "pt" ? "page" : undefined}
+                  aria-pressed={language === "pt"}
                 >
                   PT
                 </button>
@@ -184,7 +184,7 @@ export default function Header() {
                       : "text-primary-foreground/70 hover:text-primary-foreground"
                   }`}
                   aria-label="English"
-                  aria-current={language === "en" ? "page" : undefined}
+                  aria-pressed={language === "en"}
                 >
                   EN
                 </button>
@@ -196,7 +196,7 @@ export default function Header() {
                       : "text-primary-foreground/70 hover:text-primary-foreground"
                   }`}
                   aria-label="Español"
-                  aria-current={language === "es" ? "page" : undefined}
+                  aria-pressed={language === "es"}
                 >
                   ES
                 </button>

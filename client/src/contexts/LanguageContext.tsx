@@ -702,13 +702,30 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
   const handleSetLanguage = (lang: Language) => {
     setLanguage(lang);
     localStorage.setItem("five_steps_lang", lang);
+    // WCAG: Sync HTML lang attribute for screen readers
+    const langMap: Record<Language, string> = { pt: "pt-BR", en: "en", es: "es" };
+    document.documentElement.lang = langMap[lang];
   };
+
+  // Sync lang on initial load
+  React.useEffect(() => {
+    const langMap: Record<Language, string> = { pt: "pt-BR", en: "en", es: "es" };
+    document.documentElement.lang = langMap[language];
+  }, [language]);
 
   const t = language === "pt" ? pt : language === "en" ? en : es;
 
   return (
     <LanguageContext.Provider value={{ language, setLanguage: handleSetLanguage, t }}>
       {children}
+      {/* WCAG: Live region for screen reader announcements */}
+      <div
+        id="a11y-announcer"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        className="sr-only"
+      />
     </LanguageContext.Provider>
   );
 }
