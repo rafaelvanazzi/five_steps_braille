@@ -1,4 +1,4 @@
-import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, bigint, uniqueIndex } from "drizzle-orm/mysql-core";
+import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, bigint, uniqueIndex, boolean } from "drizzle-orm/mysql-core";
 
 export const users = mysqlTable("users", {
   id: int("id").autoincrement().primaryKey(),
@@ -32,6 +32,7 @@ export const materials = mysqlTable("materials", {
   creatorVision: mysqlEnum("creatorVision", ["vidente", "pdv"]).default("vidente").notNull(),
   creatorName: varchar("creatorName", { length: 255 }),
   uploadedBy: int("uploadedBy").notNull(),
+  hidden: boolean("hidden").default(false).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });

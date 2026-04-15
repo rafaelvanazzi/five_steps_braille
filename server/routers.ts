@@ -6,9 +6,13 @@ import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
 import {
   getMaterials,
+  getMaterialsAll,
   getMaterialById,
   insertMaterial,
   deleteMaterial,
+  updateMaterial,
+  replaceMaterialFile,
+  toggleMaterialVisibility,
   insertContactMessage,
   getContactMessages,
   upsertRating,
@@ -34,13 +38,30 @@ import { storagePut } from "./storage";
 import { notifyOwner } from "./_core/notification";
 import { sendContactEmail } from "./email";
 
-// Admin-only guard
+// ─── Permission helpers ───────────────────────────────────────────────────────
+
+/** Admin-only guard */
 const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
   if (ctx.user.role !== "admin") {
     throw new TRPCError({ code: "FORBIDDEN", message: "Admin access required" });
   }
   return next({ ctx });
 });
+
+/**
+ * Verify that the current user is either the material owner or an admin.
+ * Throws FORBIDDEN if neither condition is met.
+ */
+async function assertOwnerOrAdmin(materialId: number, userId: number, role: string) {
+  const material = await getMaterialById(materialId);
+  if (!material) throw new TRPCError({ code: "NOT_FOUND", message: "Material não encontrado" });
+  if (material.uploadedBy !== userId && role !== "admin") {
+    throw new TRPCError({ code: "FORBIDDEN", message: "Apenas o autor ou um administrador pode realizar esta ação" });
+  }
+  return material;
+}
+
+// ─── Router ───────────────────────────────────────────────────────────────────
 
 export const appRouter = router({
   system: systemRouter,
@@ -56,10 +77,22 @@ export const appRouter = router({
 
   // ─── Materials (Library/Archive) ─────────────────────────────────────────
   materials: router({
-    // Public: list all materials (grade filter optional)
+    // Public: list visible materials (hidden=false). Grade filter optional.
     list: publicProcedure
       .input(z.object({ grade: z.number().min(1).max(5).optional() }))
       .query(({ input }) => getMaterials(input.grade)),
+
+    // Protected (owner/admin): list all materials including hidden ones
+    listAll: protectedProcedure
+      .input(z.object({ grade: z.number().min(1).max(5).optional() }))
+      .query(async ({ input, ctx }) => {
+        if (ctx.user.role === "admin") {
+          return getMaterialsAll(input.grade);
+        }
+        // Regular users: return visible + their own hidden materials
+        const all = await getMaterialsAll(input.grade);
+        return all.filter((m) => !m.hidden || m.uploadedBy === ctx.user.id);
+      }),
 
     // Protected: get download URL for a specific material (also logs the download)
     getDownloadUrl: protectedProcedure
@@ -67,7 +100,10 @@ export const appRouter = router({
       .query(async ({ input, ctx }) => {
         const material = await getMaterialById(input.id);
         if (!material) throw new TRPCError({ code: "NOT_FOUND" });
-        // Log the download
+        // Hidden materials: only owner or admin can download
+        if (material.hidden && material.uploadedBy !== ctx.user.id && ctx.user.role !== "admin") {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Material oculto" });
+        }
         try {
           await insertDownloadLog({ materialId: input.id, userId: ctx.user.id });
         } catch (e) {
@@ -118,10 +154,69 @@ export const appRouter = router({
         return { success: true };
       }),
 
-    // Admin: delete a material
-    delete: adminProcedure
+    // Protected (owner or admin): edit material attributes
+    edit: protectedProcedure
+      .input(
+        z.object({
+          id: z.number(),
+          title: z.string().min(1).max(255).optional(),
+          description: z.string().nullable().optional(),
+          grade: z.number().min(1).max(5).optional(),
+          stage: z.number().min(1).max(8).nullable().optional(),
+          language: z.enum(["pt", "en", "both"]).optional(),
+          materialType: z.enum(["partitura", "atividade"]).optional(),
+          creatorVision: z.enum(["vidente", "pdv"]).optional(),
+          creatorName: z.string().max(255).nullable().optional(),
+        })
+      )
+      .mutation(async ({ input, ctx }) => {
+        await assertOwnerOrAdmin(input.id, ctx.user.id, ctx.user.role);
+        const { id, ...data } = input;
+        await updateMaterial(id, data);
+        return { success: true };
+      }),
+
+    // Protected (owner or admin): replace the file of a material
+    replaceFile: protectedProcedure
+      .input(
+        z.object({
+          id: z.number(),
+          fileBase64: z.string(),
+          fileName: z.string(),
+          mimeType: z.string(),
+          fileSize: z.number(),
+        })
+      )
+      .mutation(async ({ input, ctx }) => {
+        const material = await assertOwnerOrAdmin(input.id, ctx.user.id, ctx.user.role);
+        const buffer = Buffer.from(input.fileBase64, "base64");
+        const suffix = Date.now().toString(36);
+        const fileKey = `five-steps/grade-${material.grade}/${suffix}-${input.fileName}`;
+        const { url } = await storagePut(fileKey, buffer, input.mimeType);
+        await replaceMaterialFile(input.id, {
+          fileKey,
+          fileUrl: url,
+          fileName: input.fileName,
+          fileSize: input.fileSize,
+          mimeType: input.mimeType,
+        });
+        return { success: true };
+      }),
+
+    // Protected (owner or admin): toggle visibility (hidden/visible)
+    toggleVisibility: protectedProcedure
+      .input(z.object({ id: z.number(), hidden: z.boolean() }))
+      .mutation(async ({ input, ctx }) => {
+        await assertOwnerOrAdmin(input.id, ctx.user.id, ctx.user.role);
+        await toggleMaterialVisibility(input.id, input.hidden);
+        return { success: true };
+      }),
+
+    // Protected (owner or admin): delete a material
+    delete: protectedProcedure
       .input(z.object({ id: z.number() }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
+        await assertOwnerOrAdmin(input.id, ctx.user.id, ctx.user.role);
         await deleteMaterial(input.id);
         return { success: true };
       }),
@@ -129,17 +224,14 @@ export const appRouter = router({
 
   // ─── Ratings ──────────────────────────────────────────────────────────────
   ratings: router({
-    // Public: get ratings for a material
     getForMaterial: publicProcedure
       .input(z.object({ materialId: z.number() }))
       .query(({ input }) => getRatingsForMaterial(input.materialId)),
 
-    // Protected: get current user's rating for a material
     getUserRating: protectedProcedure
       .input(z.object({ materialId: z.number() }))
       .query(({ input, ctx }) => getUserRating(input.materialId, ctx.user.id)),
 
-    // Protected: set/update rating
     rate: protectedProcedure
       .input(z.object({
         materialId: z.number(),
@@ -157,12 +249,10 @@ export const appRouter = router({
 
   // ─── Comments ─────────────────────────────────────────────────────────────
   comments: router({
-    // Public: get comments for a material
     getForMaterial: publicProcedure
       .input(z.object({ materialId: z.number() }))
       .query(({ input }) => getCommentsForMaterial(input.materialId)),
 
-    // Protected: add a comment
     add: protectedProcedure
       .input(z.object({
         materialId: z.number(),
@@ -177,7 +267,6 @@ export const appRouter = router({
         return { success: true };
       }),
 
-    // Protected: delete own comment (or admin can delete any)
     delete: protectedProcedure
       .input(z.object({ id: z.number() }))
       .mutation(async ({ input, ctx }) => {
@@ -210,20 +299,17 @@ export const appRouter = router({
           title: `Nova mensagem: ${input.subject}`,
           content: `De: ${input.name} (${input.email})\nInstituição: ${input.institution ?? "—"}\n\n${input.message}`,
         });
-        // Send email notification to Rafael (non-blocking — DB + Manus notification already done)
         sendContactEmail(input).catch((err) =>
           console.error("[contact] email send failed:", err)
         );
         return { success: true };
       }),
 
-    // Admin: list all contact messages
     list: adminProcedure.query(() => getContactMessages()),
   }),
 
   // ─── Admin Dashboard ──────────────────────────────────────────────────────
   admin: router({
-    // Get dashboard stats
     stats: adminProcedure.query(async () => {
       const [totalUsers, totalMaterials, totalDownloads, totalMessages] = await Promise.all([
         getTotalUsers(),
@@ -234,29 +320,22 @@ export const appRouter = router({
       return { totalUsers, totalMaterials, totalDownloads, totalMessages };
     }),
 
-    // Get all users with emails
     users: adminProcedure.query(() => getAllUsers()),
 
-    // Get materials with uploader info
     materialsWithUploader: adminProcedure.query(() => getMaterialsWithUploader()),
 
-    // Get download counts per material (most downloaded)
     downloadRanking: adminProcedure.query(() => getDownloadCountByMaterial()),
 
-    // Get recent comments
     recentComments: adminProcedure
       .input(z.object({ limit: z.number().min(1).max(100).default(20) }).optional())
       .query(({ input }) => getRecentComments(input?.limit ?? 20)),
 
-    // Get recent downloads
     recentDownloads: adminProcedure
       .input(z.object({ limit: z.number().min(1).max(100).default(20) }).optional())
       .query(({ input }) => getRecentDownloads(input?.limit ?? 20)),
 
-    // Get all ratings with details
     ratingsOverview: adminProcedure.query(() => getAllRatingsWithDetails()),
 
-    // Delete a comment (admin)
     deleteComment: adminProcedure
       .input(z.object({ id: z.number() }))
       .mutation(async ({ input }) => {

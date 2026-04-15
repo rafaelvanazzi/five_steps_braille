@@ -14,6 +14,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import {
   Trash2, Upload, FileText, Mail, ShieldAlert, Users, BarChart3,
   Download, MessageSquare, Star, Activity, Search, ArrowUpDown,
+  Pencil, Eye, EyeOff,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Link } from "wouter";
@@ -96,10 +97,21 @@ export default function Admin() {
     onSuccess: () => {
       toast.success("Material removido.");
       utils.materials.list.invalidate();
+      utils.materials.listAll.invalidate();
       utils.admin.materialsWithUploader.invalidate();
       utils.admin.stats.invalidate();
     },
-    onError: () => toast.error("Erro ao remover material."),
+    onError: (e) => toast.error(`Erro ao remover: ${e.message}`),
+  });
+
+  const toggleVisibilityMutation = trpc.materials.toggleVisibility.useMutation({
+    onSuccess: (_, vars) => {
+      toast.success(vars.hidden ? "Material ocultado para revisão." : "Material publicado no acervo.");
+      utils.materials.list.invalidate();
+      utils.materials.listAll.invalidate();
+      utils.admin.materialsWithUploader.invalidate();
+    },
+    onError: (e) => toast.error(`Erro: ${e.message}`),
   });
 
   const deleteCommentMutation = trpc.admin.deleteComment.useMutation({
@@ -350,7 +362,12 @@ export default function Admin() {
         {/* ═══ Materials with Uploader ═══ */}
         {activeTab === "materials" && (
           <div className="space-y-4">
-            <Badge variant="secondary">{materialsWithUploader.length} material(is)</Badge>
+            <div className="flex items-center gap-3">
+              <Badge variant="secondary">{materialsWithUploader.length} material(is)</Badge>
+              <Badge variant="outline" className="text-xs">
+                {materialsWithUploader.filter(m => m.hidden).length} oculto(s)
+              </Badge>
+            </div>
             {materialsLoading ? (
               <div className="space-y-2">{[1,2,3].map(i => <div key={i} className="h-12 bg-muted rounded animate-pulse" />)}</div>
             ) : materialsWithUploader.length === 0 ? (
@@ -363,34 +380,71 @@ export default function Admin() {
                       <TableHead>Título</TableHead>
                       <TableHead>Grau</TableHead>
                       <TableHead>Idioma</TableHead>
+                      <TableHead>Tipo</TableHead>
                       <TableHead>Enviado por</TableHead>
-                      <TableHead>Email</TableHead>
                       <TableHead>Downloads</TableHead>
+                      <TableHead>Status</TableHead>
                       <TableHead>Data</TableHead>
                       <TableHead>Ações</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {materialsWithUploader.map((m) => (
-                      <TableRow key={m.id}>
-                        <TableCell className="font-medium text-sm max-w-[200px] truncate">{m.title}</TableCell>
+                      <TableRow key={m.id} className={m.hidden ? "bg-amber-50/40 dark:bg-amber-900/10" : ""}>
+                        <TableCell className="font-medium text-sm max-w-[180px] truncate">{m.title}</TableCell>
                         <TableCell>
                           <Badge variant="outline" className="text-xs">G{m.grade}{m.stage ? `.${m.stage}` : ""}</Badge>
                         </TableCell>
                         <TableCell className="text-xs text-muted-foreground">{m.language.toUpperCase()}</TableCell>
-                        <TableCell className="text-sm">{m.uploaderName ?? "—"}</TableCell>
-                        <TableCell className="text-sm text-muted-foreground">{m.uploaderEmail ?? "—"}</TableCell>
+                        <TableCell className="text-xs text-muted-foreground">
+                          {m.materialType === "partitura" ? "Partitura" : "Atividade"}
+                        </TableCell>
+                        <TableCell className="text-sm">
+                          <div>
+                            <span className="font-medium">{m.uploaderName ?? "—"}</span>
+                            {m.uploaderEmail && (
+                              <p className="text-xs text-muted-foreground">{m.uploaderEmail}</p>
+                            )}
+                          </div>
+                        </TableCell>
                         <TableCell className="text-sm font-medium">{downloadCountMap.get(m.id) ?? 0}</TableCell>
+                        <TableCell>
+                          {m.hidden ? (
+                            <Badge variant="outline" className="text-xs border-amber-400 text-amber-700 bg-amber-50 dark:bg-amber-900/20">
+                              <EyeOff className="w-3 h-3 mr-1" aria-hidden="true" />
+                              Oculto
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="text-xs border-green-400 text-green-700 bg-green-50 dark:bg-green-900/20">
+                              <Eye className="w-3 h-3 mr-1" aria-hidden="true" />
+                              Visível
+                            </Badge>
+                          )}
+                        </TableCell>
                         <TableCell className="text-sm text-muted-foreground">{formatDate(m.createdAt)}</TableCell>
                         <TableCell>
-                          <Button
-                            size="sm"
-                            variant="destructive"
-                            onClick={() => { if (confirm("Remover este material?")) deleteMutation.mutate({ id: m.id }); }}
-                            aria-label={`Remover ${m.title}`}
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </Button>
+                          <div className="flex items-center gap-1">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => toggleVisibilityMutation.mutate({ id: m.id, hidden: !m.hidden })}
+                              disabled={toggleVisibilityMutation.isPending}
+                              aria-label={m.hidden ? `Publicar ${m.title}` : `Ocultar ${m.title}`}
+                              title={m.hidden ? "Publicar no acervo" : "Ocultar para revisão"}
+                            >
+                              {m.hidden
+                                ? <Eye className="w-3.5 h-3.5" aria-hidden="true" />
+                                : <EyeOff className="w-3.5 h-3.5" aria-hidden="true" />}
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              onClick={() => { if (confirm(`Remover permanentemente "${m.title}"?`)) deleteMutation.mutate({ id: m.id }); }}
+                              aria-label={`Remover ${m.title}`}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
+                            </Button>
+                          </div>
                         </TableCell>
                       </TableRow>
                     ))}

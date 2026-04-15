@@ -105,3 +105,18 @@
 - [x] Seletor de idioma acessível
 - [x] Sistema de estrelas acessível por teclado
 - [x] Testes automatizados de acessibilidade (vitest - 39 testes)
+
+## Gestão de Materiais (Admin + Uploader)
+- [x] Schema: adicionar campo `hidden` (boolean) na tabela materials para ocultar/revisão
+- [x] Migração SQL para o novo campo
+- [x] Router: endpoint para editar atributos do material (título, descrição, grau, etapa, idioma, tipo, criador)
+- [x] Router: endpoint para substituir arquivo do material (novo upload S3)
+- [x] Router: endpoint para alternar visibilidade (ocultar/mostrar)
+- [x] Router: endpoint para deletar material (admin + owner)
+- [x] Permissões: verificar que apenas admin ou o uploader original podem executar ações
+- [x] Frontend Library: botões de ação (editar, substituir, ocultar, deletar) visíveis para owner/admin
+- [x] Frontend Library: modal/dialog de edição de atributos
+- [x] Frontend Library: modal/dialog de substituição de arquivo
+- [x] Frontend Library: indicador visual de material oculto
+- [x] Frontend Admin: atualizar listagem para refletir status oculto
+- [x] Testes vitest para os novos endpoints

@@ -1,4 +1,4 @@
-import { eq, desc, asc, sql, and, count } from "drizzle-orm";
+import { eq, desc, asc, sql, and, count, or } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   InsertUser, users, materials, contactMessages,
@@ -57,11 +57,29 @@ export async function getUserByOpenId(openId: string) {
 
 // ─── Materials ───────────────────────────────────────────────────────────────
 
+/** Public listing: excludes hidden materials. Admin/owner listing uses getMaterialsAll. */
 export async function getMaterials(grade?: number) {
   const db = await getDb();
   if (!db) return [];
+  const visibleOnly = eq(materials.hidden, false);
   if (grade) {
-    return db.select().from(materials).where(eq(materials.grade, grade)).orderBy(asc(materials.grade), asc(materials.stage));
+    return db.select().from(materials)
+      .where(and(eq(materials.grade, grade), visibleOnly))
+      .orderBy(asc(materials.grade), asc(materials.stage));
+  }
+  return db.select().from(materials)
+    .where(visibleOnly)
+    .orderBy(asc(materials.grade), asc(materials.stage));
+}
+
+/** Returns all materials including hidden ones (for admin/owner views). */
+export async function getMaterialsAll(grade?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  if (grade) {
+    return db.select().from(materials)
+      .where(eq(materials.grade, grade))
+      .orderBy(asc(materials.grade), asc(materials.stage));
   }
   return db.select().from(materials).orderBy(asc(materials.grade), asc(materials.stage));
 }
@@ -83,6 +101,39 @@ export async function deleteMaterial(id: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   await db.delete(materials).where(eq(materials.id, id));
+}
+
+export async function updateMaterial(
+  id: number,
+  data: {
+    title?: string;
+    description?: string | null;
+    grade?: number;
+    stage?: number | null;
+    language?: "pt" | "en" | "both";
+    materialType?: "partitura" | "atividade";
+    creatorVision?: "vidente" | "pdv";
+    creatorName?: string | null;
+  }
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(materials).set(data).where(eq(materials.id, id));
+}
+
+export async function replaceMaterialFile(
+  id: number,
+  data: { fileKey: string; fileUrl: string; fileName: string; fileSize: number; mimeType: string }
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(materials).set(data).where(eq(materials.id, id));
+}
+
+export async function toggleMaterialVisibility(id: number, hidden: boolean) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(materials).set({ hidden }).where(eq(materials.id, id));
 }
 
 // ─── Contact Messages ─────────────────────────────────────────────────────────
@@ -247,7 +298,11 @@ export async function getMaterialsWithUploader() {
     fileSize: materials.fileSize,
     mimeType: materials.mimeType,
     language: materials.language,
+    materialType: materials.materialType,
+    creatorVision: materials.creatorVision,
+    creatorName: materials.creatorName,
     uploadedBy: materials.uploadedBy,
+    hidden: materials.hidden,
     createdAt: materials.createdAt,
     uploaderName: users.name,
     uploaderEmail: users.email,

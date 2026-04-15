@@ -1,0 +1,1 @@
+ALTER TABLE `materials` ADD `hidden` boolean DEFAULT false NOT NULL;
