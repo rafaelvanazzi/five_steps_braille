@@ -33,6 +33,10 @@ import {
   getRecentComments,
   getRecentDownloads,
   getAllRatingsWithDetails,
+  addFileToMaterial,
+  getFilesByMaterial,
+  deleteFile,
+  getFileById,
 } from "./db";
 import { storagePut } from "./storage";
 import { notifyOwner } from "./_core/notification";
@@ -218,6 +222,57 @@ export const appRouter = router({
       .mutation(async ({ input, ctx }) => {
         await assertOwnerOrAdmin(input.id, ctx.user.id, ctx.user.role);
         await deleteMaterial(input.id);
+        return { success: true };
+      }),
+
+    // Protected (owner only): add a file to an existing material
+    addFile: protectedProcedure
+      .input(
+        z.object({
+          materialId: z.number(),
+          fileBase64: z.string(),
+          fileName: z.string(),
+          mimeType: z.string(),
+          fileSize: z.number(),
+        })
+      )
+      .mutation(async ({ input, ctx }) => {
+        const material = await getMaterialById(input.materialId);
+        if (!material) throw new TRPCError({ code: "NOT_FOUND", message: "Material nao encontrado" });
+        if (material.uploadedBy !== ctx.user.id) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Apenas o autor pode adicionar arquivos a este material" });
+        }
+        const buffer = Buffer.from(input.fileBase64, "base64");
+        const suffix = Date.now().toString(36);
+        const fileKey = `five-steps/grade-${material.grade}/${suffix}-${input.fileName}`;
+        const { url } = await storagePut(fileKey, buffer, input.mimeType);
+        await addFileToMaterial({
+          materialId: input.materialId,
+          fileKey,
+          fileUrl: url,
+          fileName: input.fileName,
+          fileSize: input.fileSize,
+          mimeType: input.mimeType,
+          uploadedBy: ctx.user.id,
+        });
+        return { success: true };
+      }),
+
+    // Public: get files for a material
+    getFiles: publicProcedure
+      .input(z.object({ materialId: z.number() }))
+      .query(({ input }) => getFilesByMaterial(input.materialId)),
+
+    // Protected (owner only): delete a file from a material
+    deleteFile: protectedProcedure
+      .input(z.object({ fileId: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const file = await getFileById(input.fileId);
+        if (!file) throw new TRPCError({ code: "NOT_FOUND", message: "Arquivo nao encontrado" });
+        if (file.uploadedBy !== ctx.user.id) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Apenas o autor pode deletar este arquivo" });
+        }
+        await deleteFile(input.fileId);
         return { success: true };
       }),
   }),

@@ -84,6 +84,22 @@ export const materialComments = mysqlTable("material_comments", {
 export type MaterialComment = typeof materialComments.$inferSelect;
 export type InsertMaterialComment = typeof materialComments.$inferInsert;
 
+// ─── Material files (multiple files per material) ────────────────────────────
+export const materialFiles = mysqlTable("material_files", {
+  id: int("id").autoincrement().primaryKey(),
+  materialId: int("materialId").notNull(),
+  fileKey: varchar("fileKey", { length: 512 }).notNull(),
+  fileUrl: text("fileUrl").notNull(),
+  fileName: varchar("fileName", { length: 255 }).notNull(),
+  fileSize: bigint("fileSize", { mode: "number" }),
+  mimeType: varchar("mimeType", { length: 128 }),
+  uploadedBy: int("uploadedBy").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type MaterialFile = typeof materialFiles.$inferSelect;
+export type InsertMaterialFile = typeof materialFiles.$inferInsert;
+
 // ─── Download logs ──────────────────────────────────────────────────────────
 export const downloadLogs = mysqlTable("download_logs", {
   id: int("id").autoincrement().primaryKey(),

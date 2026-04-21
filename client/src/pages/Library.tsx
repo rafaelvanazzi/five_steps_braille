@@ -373,6 +373,18 @@ type MaterialData = {
   uploadedBy: number; hidden: boolean;
 };
 
+type MaterialFile = {
+  id: number;
+  materialId: number;
+  fileKey: string;
+  fileUrl: string;
+  fileName: string;
+  fileSize: number;
+  mimeType: string;
+  uploadedBy: number;
+  createdAt: Date;
+};
+
 function MaterialCard({ material, isAuthenticated, currentUserId, currentUserRole, onMutated }: {
   material: MaterialData;
   isAuthenticated: boolean;
@@ -383,6 +395,12 @@ function MaterialCard({ material, isAuthenticated, currentUserId, currentUserRol
   const { t } = useLanguage();
   const [editOpen, setEditOpen] = useState(false);
   const [replaceOpen, setReplaceOpen] = useState(false);
+  const [addFileOpen, setAddFileOpen] = useState(false);
+  const { data: additionalFiles = [] } = trpc.materials.getFiles.useQuery({ materialId: material.id });
+  const deleteFileMutation = trpc.materials.deleteFile.useMutation({
+    onSuccess: () => { toast.success("Arquivo removido."); onMutated(); },
+    onError: (e) => toast.error(`Erro: ${e.message}`),
+  });
 
   const utils = trpc.useUtils();
   const isOwner = currentUserId === material.uploadedBy;
@@ -471,6 +489,27 @@ function MaterialCard({ material, isAuthenticated, currentUserId, currentUserRol
                 <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2 mb-2">{material.description}</p>
               )}
               <p className="text-xs text-muted-foreground mb-2">{material.fileName}{formatSize(material.fileSize) && ` · ${formatSize(material.fileSize)}`}</p>
+              {additionalFiles.length > 0 && (
+                <div className="mt-3 pt-3 border-t border-border space-y-1.5">
+                  <p className="text-xs font-medium text-foreground">Arquivos adicionais ({additionalFiles.length}):</p>
+                  {additionalFiles.map((file) => (
+                    <div key={file.id} className="flex items-center justify-between gap-2 p-2 rounded bg-muted/50">
+                      <div className="flex items-center gap-2 flex-1 min-w-0">
+                        <FileIcon mimeType={file.mimeType} />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-medium text-foreground truncate">{file.fileName}</p>
+                          <p className="text-xs text-muted-foreground">{formatSize(file.fileSize)}</p>
+                        </div>
+                      </div>
+                      {isOwner && (
+                        <Button size="sm" variant="ghost" className="h-7 w-7 p-0 flex-shrink-0" onClick={() => { if (confirm(`Remover "${file.fileName}"?`)) deleteFileMutation.mutate({ fileId: file.id }); }} disabled={deleteFileMutation.isPending} aria-label={`Deletar ${file.fileName}`}>
+                          <Trash2 className="w-3.5 h-3.5 text-destructive" aria-hidden="true" />
+                        </Button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
 
               <StarRating materialId={material.id} isAuthenticated={isAuthenticated} />
               <CommentsSection materialId={material.id} isAuthenticated={isAuthenticated} />
@@ -511,6 +550,12 @@ function MaterialCard({ material, isAuthenticated, currentUserId, currentUserRol
                     <DropdownMenuItem onClick={() => setReplaceOpen(true)} className="gap-2 cursor-pointer">
                       <Upload className="w-4 h-4" aria-hidden="true" />
                       Substituir arquivo
+                    {isOwner && (
+                      <DropdownMenuItem onClick={() => setAddFileOpen(true)} className="gap-2 cursor-pointer">
+                        <Upload className="w-4 h-4" aria-hidden="true" />
+                        Adicionar arquivo
+                      </DropdownMenuItem>
+                    )}
                     </DropdownMenuItem>
                     <DropdownMenuSeparator />
                     <DropdownMenuItem
@@ -545,6 +590,10 @@ function MaterialCard({ material, isAuthenticated, currentUserId, currentUserRol
       {replaceOpen && (
         <ReplaceFileDialog materialId={material.id} materialTitle={material.title}
           open={replaceOpen} onClose={() => setReplaceOpen(false)} onSuccess={onMutated} />
+      )}
+      {addFileOpen && isOwner && (
+        <AddFileDialog materialId={material.id} materialTitle={material.title}
+          open={addFileOpen} onClose={() => setAddFileOpen(false)} onSuccess={onMutated} />
       )}
     </>
   );
@@ -694,5 +743,72 @@ export default function Library() {
         </div>
       </section>
     </SiteLayout>
+  );
+}
+
+
+// ─── Add File Dialog ────────────────────────────────────────────────────────
+function AddFileDialog({
+  materialId, materialTitle, open, onClose, onSuccess,
+}: { materialId: number; materialTitle: string; open: boolean; onClose: () => void; onSuccess: () => void }) {
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const addFileMutation = trpc.materials.addFile.useMutation({
+    onSuccess: () => { toast.success("Arquivo adicionado com sucesso!"); onSuccess(); onClose(); setSelectedFile(null); },
+    onError: (e) => toast.error(`Erro: ${e.message}`),
+  });
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedFile) { toast.error("Selecione um arquivo."); return; }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = (reader.result as string).split(",")[1];
+      addFileMutation.mutate({
+        materialId,
+        fileBase64: base64,
+        fileName: selectedFile.name,
+        mimeType: selectedFile.type,
+        fileSize: selectedFile.size,
+      });
+    };
+    reader.readAsDataURL(selectedFile);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Adicionar Arquivo</DialogTitle>
+        </DialogHeader>
+        <p className="text-sm text-muted-foreground">
+          Adicionando arquivo a: <span className="font-medium text-foreground">{materialTitle}</span>
+        </p>
+        <form onSubmit={handleSubmit} className="space-y-4" aria-label="Formulário de adição de arquivo">
+          <div className="space-y-1.5">
+            <Label htmlFor="add-file">Arquivo <span className="text-destructive" aria-label="obrigatório">*</span></Label>
+            <Input id="add-file" type="file" ref={fileInputRef}
+              onChange={(e) => setSelectedFile(e.target.files?.[0] ?? null)}
+              accept=".pdf,.mp3,.wav,.xml,.mxl,.brl,.txt,.zip"
+              aria-required="true" className="cursor-pointer" />
+            {selectedFile && (
+              <p className="text-xs text-muted-foreground">
+                <FileText className="w-3 h-3 inline mr-1" aria-hidden="true" />
+                {selectedFile.name} — {(selectedFile.size / 1024).toFixed(1)} KB
+              </p>
+            )}
+          </div>
+          <DialogFooter className="gap-2">
+            <DialogClose asChild>
+              <Button type="button" variant="outline">Cancelar</Button>
+            </DialogClose>
+            <Button type="submit" disabled={addFileMutation.isPending}>
+              {addFileMutation.isPending ? "Adicionando..." : "Adicionar Arquivo"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }

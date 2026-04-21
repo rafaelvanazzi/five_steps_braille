@@ -120,3 +120,15 @@
 - [x] Frontend Library: indicador visual de material oculto
 - [x] Frontend Admin: atualizar listagem para refletir status oculto
 - [x] Testes vitest para os novos endpoints
+
+
+## Múltiplos Arquivos por Card de Material
+- [x] Schema: criar tabela material_files (id, materialId, fileKey, fileUrl, fileName, fileSize, mimeType, uploadedBy, createdAt)
+- [x] Migração SQL para a nova tabela
+- [x] DB helpers: addFileToMaterial, getFilesByMaterial, deleteFile (owner-only)
+- [x] Router tRPC: addFileToMaterial (owner-only), deleteFile (owner-only)
+- [x] Atualizar router materials.list para retornar array de files por material
+- [x] UI Library: exibir múltiplos arquivos em cada card (lista ou abas)
+- [x] UI Library: botão "Adicionar arquivo" visível apenas para owner
+- [x] UI Library: botão deletar arquivo (owner-only)
+- [x] Testes vitest para múltiplos arquivos (5 testes)

@@ -2,9 +2,9 @@ import { eq, desc, asc, sql, and, count, or } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   InsertUser, users, materials, contactMessages,
-  materialRatings, materialComments, downloadLogs,
+  materialRatings, materialComments, downloadLogs, materialFiles,
   InsertMaterial, InsertContactMessage,
-  InsertMaterialRating, InsertMaterialComment, InsertDownloadLog,
+  InsertMaterialRating, InsertMaterialComment, InsertDownloadLog, InsertMaterialFile,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -368,4 +368,37 @@ export async function getAllRatingsWithDetails() {
     .groupBy(materialRatings.materialId, materials.title, materials.grade)
     .orderBy(desc(sql`AVG(${materialRatings.rating})`));
   return rows;
+}
+
+
+// ─── Material Files (Multiple files per material) ────────────────────────────
+
+export async function addFileToMaterial(data: InsertMaterialFile) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(materialFiles).values(data);
+  return result;
+}
+
+export async function getFilesByMaterial(materialId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(materialFiles)
+    .where(eq(materialFiles.materialId, materialId))
+    .orderBy(asc(materialFiles.createdAt));
+}
+
+export async function deleteFile(fileId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(materialFiles).where(eq(materialFiles.id, fileId));
+}
+
+export async function getFileById(fileId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(materialFiles)
+    .where(eq(materialFiles.id, fileId))
+    .limit(1);
+  return result[0];
 }

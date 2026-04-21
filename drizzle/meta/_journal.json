@@ -36,6 +36,13 @@
       "when": 1776265858130,
       "tag": "0004_skinny_gamora",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "5",
+      "when": 1776429014551,
+      "tag": "0005_faithful_patch",
+      "breakpoints": true
     }
   ]
 }
