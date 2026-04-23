@@ -24,6 +24,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { CalendarDays, Clock, Globe, Users, MapPin, CheckCircle, AlertCircle } from "lucide-react";
+import SiteLayout from "@/components/SiteLayout";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type EventItem = {
@@ -394,6 +395,7 @@ export default function Activities() {
   );
 
   return (
+    <SiteLayout>
     <main id="main-content" className="min-h-screen bg-background text-foreground">
       {/* Hero */}
       <section className="bg-muted/40 border-b border-border py-12 px-4">
@@ -465,5 +467,6 @@ export default function Activities() {
 
       </div>
     </main>
+    </SiteLayout>
   );
 }
