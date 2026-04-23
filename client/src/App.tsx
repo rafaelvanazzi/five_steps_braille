@@ -14,6 +14,7 @@ import ForMusiciansNoDV from "./pages/ForMusiciansNoDV";
 import Library from "./pages/Library";
 import Contact from "./pages/Contact";
 import Admin from "./pages/Admin";
+import Activities from "./pages/Activities";
 
 function Router() {
   useRouteA11y();
@@ -25,6 +26,7 @@ function Router() {
       <Route path="/para-musicos-dv" component={ForMusiciansDV} />
       <Route path="/para-musicos-sem-dv" component={ForMusiciansNoDV} />
       <Route path="/acervo" component={Library} />
+      <Route path="/atividades" component={Activities} />
       <Route path="/contato" component={Contact} />
       <Route path="/admin" component={Admin} />
       <Route path="/404" component={NotFound} />

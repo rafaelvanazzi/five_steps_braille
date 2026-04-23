@@ -5,6 +5,7 @@ import {
   materialRatings, materialComments, downloadLogs, materialFiles,
   InsertMaterial, InsertContactMessage,
   InsertMaterialRating, InsertMaterialComment, InsertDownloadLog, InsertMaterialFile,
+  events, eventRegistrations, InsertEvent, InsertEventRegistration,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -401,4 +402,108 @@ export async function getFileById(fileId: number) {
     .where(eq(materialFiles.id, fileId))
     .limit(1);
   return result[0];
+}
+
+// ─── Events helpers ──────────────────────────────────────────────────────────
+
+export async function createEvent(data: InsertEvent) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(events).values(data);
+  return result[0];
+}
+export async function updateEvent(id: number, data: Partial<InsertEvent>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(events).set(data).where(eq(events.id, id));
+}
+export async function deleteEvent(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(eventRegistrations).where(eq(eventRegistrations.eventId, id));
+  await db.delete(events).where(eq(events.id, id));
+}
+export async function listEvents(onlyPublished = true) {
+  const db = await getDb();
+  if (!db) return [];
+  const q = db.select().from(events);
+  if (onlyPublished) return q.where(eq(events.status, "published")).orderBy(desc(events.eventDate));
+  return q.orderBy(desc(events.eventDate));
+}
+export async function getEventById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(events).where(eq(events.id, id)).limit(1);
+  return result[0];
+}
+
+// ─── Event Registrations helpers ─────────────────────────────────────────────
+export async function createRegistration(data: InsertEventRegistration) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(eventRegistrations).values(data);
+  return result[0];
+}
+export async function countRegistrations(eventId: number) {
+  const db = await getDb();
+  if (!db) return { total: 0, waitlisted: 0 };
+  const rows = await db.select().from(eventRegistrations)
+    .where(eq(eventRegistrations.eventId, eventId));
+  return {
+    total: rows.length,
+    waitlisted: rows.filter(r => r.waitlisted).length,
+    confirmed: rows.filter(r => !r.waitlisted).length,
+  };
+}
+export async function listRegistrationsByEvent(eventId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select({
+    id: eventRegistrations.id,
+    eventId: eventRegistrations.eventId,
+    userId: eventRegistrations.userId,
+    country: eventRegistrations.country,
+    instrument: eventRegistrations.instrument,
+    brailleLevel: eventRegistrations.brailleLevel,
+    isVisuallyImpaired: eventRegistrations.isVisuallyImpaired,
+    motivation: eventRegistrations.motivation,
+    waitlisted: eventRegistrations.waitlisted,
+    createdAt: eventRegistrations.createdAt,
+    userName: users.name,
+    userEmail: users.email,
+  }).from(eventRegistrations)
+    .leftJoin(users, eq(eventRegistrations.userId, users.id))
+    .where(eq(eventRegistrations.eventId, eventId))
+    .orderBy(asc(eventRegistrations.createdAt));
+}
+export async function getUserRegistration(eventId: number, userId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(eventRegistrations)
+    .where(and(eq(eventRegistrations.eventId, eventId), eq(eventRegistrations.userId, userId)))
+    .limit(1);
+  return result[0];
+}
+export async function cancelRegistration(eventId: number, userId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(eventRegistrations)
+    .where(and(eq(eventRegistrations.eventId, eventId), eq(eventRegistrations.userId, userId)));
+}
+export async function listUserRegistrations(userId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select({
+    id: eventRegistrations.id,
+    eventId: eventRegistrations.eventId,
+    waitlisted: eventRegistrations.waitlisted,
+    createdAt: eventRegistrations.createdAt,
+    eventTitle: events.title,
+    eventDate: events.eventDate,
+    eventFormat: events.format,
+    meetingLink: events.meetingLink,
+  }).from(eventRegistrations)
+    .leftJoin(events, eq(eventRegistrations.eventId, events.id))
+    .where(eq(eventRegistrations.userId, userId))
+    .orderBy(desc(events.eventDate));
 }

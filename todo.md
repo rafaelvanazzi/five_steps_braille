@@ -139,3 +139,21 @@
 - [x] Adicionar endpoint getFileDownloadUrl para arquivos adicionais
 - [x] Adicionar botão de download nos arquivos adicionais (visível para usuários autenticados)
 - [x] Corrigir handleDownload para adicionar elemento ao DOM antes de clicar
+
+## Aba Aulas e Atividades
+- [x] Schema: tabela events (id, title, description, eventDate, format, targetAudience, maxSpots, meetingLink, status draft/published, pastEventText, createdAt)
+- [x] Schema: tabela event_registrations (id, eventId, userId, country, instrument, brailleLevel, isVisuallyImpaired, motivation, waitlisted, createdAt)
+- [x] Migração SQL aplicada
+- [x] DB helpers: createEvent, updateEvent, listEvents, getEventById, deleteEvent
+- [x] DB helpers: createRegistration, listRegistrationsByEvent, cancelRegistration, countRegistrations
+- [x] Router tRPC: events.list (public), events.get (public), events.create/update/delete (admin)
+- [x] Router tRPC: events.register (protected), events.cancelRegistration (protected), events.listMyRegistrations (protected)
+- [x] Router tRPC: events.listRegistrations (admin), events.exportRegistrations (admin)
+- [x] E-mail: notificação ao admin (rafaelvanazzi@gmail.com) ao receber inscrição
+- [x] E-mail: confirmação ao aluno com dados do evento e link da aula
+- [x] Página Activities.tsx com seção "Realizadas" (texto livre) e "Próximas Atividades"
+- [x] Dialog de inscrição com campos: país, instrumento, nível de braille, DV/vidente, motivação
+- [x] Admin: aba "Eventos" com CRUD completo (criar/editar/publicar/ocultar/deletar)
+- [x] Admin: aba "Inscrições" com lista por evento e exportação CSV
+- [x] Rota /atividades no App.tsx e link na navegação (PT/EN/ES)
+- [x] 101 testes passando

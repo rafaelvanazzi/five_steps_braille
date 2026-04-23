@@ -37,6 +37,17 @@ import {
   getFilesByMaterial,
   deleteFile,
   getFileById,
+  createEvent,
+  updateEvent,
+  deleteEvent,
+  listEvents,
+  getEventById,
+  createRegistration,
+  countRegistrations,
+  listRegistrationsByEvent,
+  getUserRegistration,
+  cancelRegistration,
+  listUserRegistrations,
 } from "./db";
 import { storagePut, storageGet } from "./storage";
 import { notifyOwner } from "./_core/notification";
@@ -67,8 +78,114 @@ async function assertOwnerOrAdmin(materialId: number, userId: number, role: stri
 
 // ─── Router ───────────────────────────────────────────────────────────────────
 
+const eventsRouter = router({
+  list: publicProcedure
+    .input(z.object({ includeAll: z.boolean().optional() }).optional())
+    .query(({ ctx, input }) => {
+      const isAdmin = ctx.user?.role === "admin";
+      return listEvents(isAdmin && input?.includeAll ? false : true);
+    }),
+  get: publicProcedure
+    .input(z.object({ id: z.number() }))
+    .query(async ({ input }) => {
+      const ev = await getEventById(input.id);
+      if (!ev) throw new TRPCError({ code: "NOT_FOUND" });
+      return ev;
+    }),
+  create: adminProcedure
+    .input(z.object({
+      title: z.string().min(1).max(255),
+      description: z.string().min(1),
+      eventDate: z.date(),
+      format: z.enum(["online", "presencial", "hibrido"]),
+      targetAudience: z.enum(["videntes", "pdv", "ambos"]),
+      maxSpots: z.number().min(1).max(10000).default(100),
+      meetingLink: z.string().url().optional().nullable(),
+      status: z.enum(["draft", "published"]).default("draft"),
+      pastEventText: z.string().optional().nullable(),
+    }))
+    .mutation(async ({ input }) => {
+      await createEvent(input as any);
+      return { success: true };
+    }),
+  update: adminProcedure
+    .input(z.object({
+      id: z.number(),
+      title: z.string().min(1).max(255).optional(),
+      description: z.string().min(1).optional(),
+      eventDate: z.date().optional(),
+      format: z.enum(["online", "presencial", "hibrido"]).optional(),
+      targetAudience: z.enum(["videntes", "pdv", "ambos"]).optional(),
+      maxSpots: z.number().min(1).max(10000).optional(),
+      meetingLink: z.string().url().optional().nullable(),
+      status: z.enum(["draft", "published"]).optional(),
+      pastEventText: z.string().optional().nullable(),
+    }))
+    .mutation(async ({ input }) => {
+      const { id, ...data } = input;
+      await updateEvent(id, data as any);
+      return { success: true };
+    }),
+  delete: adminProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ input }) => {
+      await deleteEvent(input.id);
+      return { success: true };
+    }),
+  register: protectedProcedure
+    .input(z.object({
+      eventId: z.number(),
+      country: z.string().min(1).max(100),
+      instrument: z.string().min(1).max(100),
+      brailleLevel: z.enum(["none", "basic", "intermediate", "advanced"]),
+      isVisuallyImpaired: z.boolean(),
+      motivation: z.string().max(2000).optional().nullable(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const ev = await getEventById(input.eventId);
+      if (!ev || ev.status !== "published") throw new TRPCError({ code: "NOT_FOUND", message: "Evento não encontrado" });
+      const existing = await getUserRegistration(input.eventId, ctx.user.id);
+      if (existing) throw new TRPCError({ code: "CONFLICT", message: "Você já está inscrito neste evento" });
+      const counts = await countRegistrations(input.eventId);
+      const waitlisted = (counts.confirmed ?? 0) >= ev.maxSpots;
+      await createRegistration({ ...input, userId: ctx.user.id, waitlisted });
+      // Send notification email to admin
+      const brailleLevelLabel: Record<string, string> = { none: "Nenhum", basic: "Básico", intermediate: "Intermediário", advanced: "Avançado" };
+      try {
+        const { Resend } = await import("resend");
+        const resend = new Resend(process.env.RESEND_API_KEY);
+        const adminBody = `Nova inscrição em "${ev.title}"\n\nNome: ${ctx.user.name}\nE-mail: ${ctx.user.email}\nPaís: ${input.country}\nInstrumento: ${input.instrument}\nNível de braille: ${brailleLevelLabel[input.brailleLevel]}\nPessoa com DV: ${input.isVisuallyImpaired ? "Sim" : "Não"}\nMotivação: ${input.motivation ?? "—"}\nStatus: ${waitlisted ? "Lista de espera" : "Confirmado"}\n\nEvento: ${ev.eventDate.toLocaleDateString("pt-BR")} — ${ev.format}`;
+        await resend.emails.send({ from: "Five Steps <noreply@braille5steps.com>", to: "rafaelvanazzi@gmail.com", subject: `[Five Steps] Nova inscrição: ${ev.title}`, text: adminBody });
+        // Confirmation to student
+        const linkLine = ev.meetingLink ? `\nLink da aula: ${ev.meetingLink}` : "";
+        const studentBody = `Olá, ${ctx.user.name}!\n\nSua inscrição em "${ev.title}" foi ${waitlisted ? "registrada na lista de espera" : "confirmada"}.\n\nDetalhes do evento:\nData: ${ev.eventDate.toLocaleDateString("pt-BR")} às ${ev.eventDate.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}\nFormato: ${ev.format}${linkLine}\n\nAté breve!\nEquipe Five Steps — braille5steps.com`;
+        await resend.emails.send({ from: "Five Steps <noreply@braille5steps.com>", to: ctx.user.email!, subject: `Inscrição confirmada: ${ev.title}`, text: studentBody });
+      } catch (e) { console.warn("[Email] Failed to send registration emails:", e); }
+      return { success: true, waitlisted };
+    }),
+  cancelRegistration: protectedProcedure
+    .input(z.object({ eventId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      await cancelRegistration(input.eventId, ctx.user.id);
+      return { success: true };
+    }),
+  myRegistrations: protectedProcedure
+    .query(({ ctx }) => listUserRegistrations(ctx.user.id)),
+  getMyRegistration: protectedProcedure
+    .input(z.object({ eventId: z.number() }))
+    .query(({ ctx, input }) => getUserRegistration(input.eventId, ctx.user.id)),
+  listRegistrations: adminProcedure
+    .input(z.object({ eventId: z.number() }))
+    .query(({ input }) => listRegistrationsByEvent(input.eventId)),
+  countRegistrations: publicProcedure
+    .input(z.object({ eventId: z.number() }))
+    .query(({ input }) => countRegistrations(input.eventId)),
+});
+
+
 export const appRouter = router({
   system: systemRouter,
+  events: eventsRouter,
 
   auth: router({
     me: publicProcedure.query((opts) => opts.ctx.user),

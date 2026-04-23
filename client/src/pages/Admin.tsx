@@ -14,14 +14,15 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import {
   Trash2, Upload, FileText, Mail, ShieldAlert, Users, BarChart3,
   Download, MessageSquare, Star, Activity, Search, ArrowUpDown,
-  Pencil, Eye, EyeOff,
+  Pencil, Eye, EyeOff, CalendarDays, UserCheck, Plus, X as XIcon,
 } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { Link } from "wouter";
 
 const gradeStages: Record<number, number> = { 1: 2, 2: 5, 3: 5, 4: 3, 5: 8 };
 
-type AdminTab = "dashboard" | "users" | "materials" | "downloads" | "comments" | "ratings" | "messages" | "upload";
+type AdminTab = "dashboard" | "users" | "materials" | "downloads" | "comments" | "ratings" | "messages" | "upload" | "events" | "registrations";
 
 function formatDate(d: Date | string) {
   return new Date(d).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
@@ -47,6 +48,286 @@ function StatCard({ icon: Icon, label, value, color }: { icon: React.ElementType
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+// ─── AdminEventsTab ──────────────────────────────────────────────────────────
+function AdminEventsTab({ utils }: { utils: ReturnType<typeof trpc.useUtils> }) {
+  const [showForm, setShowForm] = useState(false);
+  const [editingEvent, setEditingEvent] = useState<null | {
+    id: number; title: string; description: string; eventDate: string;
+    format: "online" | "presencial" | "hibrido"; targetAudience: "videntes" | "pdv" | "ambos";
+    maxSpots: number; meetingLink: string; status: "draft" | "published"; pastEventText: string;
+  }>(null);
+
+  const emptyForm = {
+    title: "", description: "", eventDate: "",
+    format: "online" as "online" | "presencial" | "hibrido",
+    targetAudience: "ambos" as "videntes" | "pdv" | "ambos",
+    maxSpots: 100, meetingLink: "", status: "draft" as "draft" | "published", pastEventText: "",
+  };
+  const [form, setForm] = useState(emptyForm);
+
+  const { data: events = [], isLoading } = trpc.events.list.useQuery({ includeAll: true }, { refetchOnWindowFocus: false });
+  type EventItem = (typeof events)[0];
+
+  const createMutation = trpc.events.create.useMutation({
+    onSuccess: () => { toast.success("Evento criado!"); utils.events.list.invalidate(); setShowForm(false); setForm(emptyForm); },
+    onError: (e) => toast.error(e.message),
+  });
+  const updateMutation = trpc.events.update.useMutation({
+    onSuccess: () => { toast.success("Evento atualizado!"); utils.events.list.invalidate(); setEditingEvent(null); },
+    onError: (e) => toast.error(e.message),
+  });
+  const deleteMutation = trpc.events.delete.useMutation({
+    onSuccess: () => { toast.success("Evento removido."); utils.events.list.invalidate(); },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!form.title || !form.eventDate) return;
+    const payload = {
+      ...form,
+      eventDate: new Date(form.eventDate),
+      meetingLink: form.meetingLink || null,
+      pastEventText: form.pastEventText || null,
+    };
+    if (editingEvent) updateMutation.mutate({ id: editingEvent.id, ...payload });
+    else createMutation.mutate(payload);
+  };
+
+  const startEdit = (ev: EventItem) => {
+    setEditingEvent({
+      id: ev.id, title: ev.title, description: ev.description,
+      eventDate: new Date(ev.eventDate).toISOString().slice(0, 16),
+      format: ev.format, targetAudience: ev.targetAudience,
+      maxSpots: ev.maxSpots, meetingLink: ev.meetingLink ?? "",
+      status: ev.status, pastEventText: ev.pastEventText ?? "",
+    });
+    setForm({
+      title: ev.title, description: ev.description,
+      eventDate: new Date(ev.eventDate).toISOString().slice(0, 16),
+      format: ev.format, targetAudience: ev.targetAudience,
+      maxSpots: ev.maxSpots, meetingLink: ev.meetingLink ?? "",
+      status: ev.status, pastEventText: ev.pastEventText ?? "",
+    });
+    setShowForm(true);
+  };
+
+  const cancelForm = () => { setShowForm(false); setEditingEvent(null); setForm(emptyForm); };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <h2 className="text-xl font-semibold">Gerenciar Eventos</h2>
+        {!showForm && (
+          <Button size="sm" onClick={() => setShowForm(true)}>
+            <Plus className="w-4 h-4 mr-1" aria-hidden="true" /> Novo Evento
+          </Button>
+        )}
+      </div>
+
+      {showForm && (
+        <Card className="border-border shadow-sm">
+          <CardHeader>
+            <CardTitle className="text-base">{editingEvent ? "Editar Evento" : "Criar Novo Evento"}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="md:col-span-2 space-y-1.5">
+                <Label htmlFor="ev-title">Título *</Label>
+                <Input id="ev-title" required value={form.title} onChange={e => setForm({...form, title: e.target.value})} placeholder="Ex: Introdução à Musicografia Braille" />
+              </div>
+              <div className="md:col-span-2 space-y-1.5">
+                <Label htmlFor="ev-desc">Descrição *</Label>
+                <Textarea id="ev-desc" required rows={3} value={form.description} onChange={e => setForm({...form, description: e.target.value})} placeholder="Descreva o evento..." />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="ev-date">Data e Hora *</Label>
+                <Input id="ev-date" type="datetime-local" required value={form.eventDate} onChange={e => setForm({...form, eventDate: e.target.value})} />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="ev-spots">Vagas</Label>
+                <Input id="ev-spots" type="number" min={1} max={9999} value={form.maxSpots} onChange={e => setForm({...form, maxSpots: parseInt(e.target.value) || 100})} />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="ev-format">Formato</Label>
+                <Select value={form.format} onValueChange={v => setForm({...form, format: v as typeof form.format})}>
+                  <SelectTrigger id="ev-format"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="online">Online</SelectItem>
+                    <SelectItem value="presencial">Presencial</SelectItem>
+                    <SelectItem value="hibrido">Híbrido</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="ev-audience">Público-alvo</Label>
+                <Select value={form.targetAudience} onValueChange={v => setForm({...form, targetAudience: v as typeof form.targetAudience})}>
+                  <SelectTrigger id="ev-audience"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="videntes">Músicos videntes</SelectItem>
+                    <SelectItem value="pdv">Pessoas com DV</SelectItem>
+                    <SelectItem value="ambos">Todos os públicos</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="ev-status">Status</Label>
+                <Select value={form.status} onValueChange={v => setForm({...form, status: v as typeof form.status})}>
+                  <SelectTrigger id="ev-status"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="draft">Rascunho (oculto)</SelectItem>
+                    <SelectItem value="published">Publicado</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="ev-link">Link da Aula (online)</Label>
+                <Input id="ev-link" type="url" value={form.meetingLink} onChange={e => setForm({...form, meetingLink: e.target.value})} placeholder="https://meet.google.com/..." />
+              </div>
+              <div className="md:col-span-2 space-y-1.5">
+                <Label htmlFor="ev-past-text">Relato do evento (após realizado)</Label>
+                <Textarea id="ev-past-text" rows={4} value={form.pastEventText} onChange={e => setForm({...form, pastEventText: e.target.value})} placeholder="Escreva aqui o relato do evento após sua realização..." />
+              </div>
+              <div className="md:col-span-2 flex gap-2">
+                <Button type="submit" disabled={createMutation.isPending || updateMutation.isPending}>
+                  {editingEvent ? "Salvar Alterações" : "Criar Evento"}
+                </Button>
+                <Button type="button" variant="outline" onClick={cancelForm}>Cancelar</Button>
+              </div>
+            </form>
+          </CardContent>
+        </Card>
+      )}
+
+      {isLoading ? (
+        <div className="space-y-2">{[1,2,3].map(i => <div key={i} className="h-16 bg-muted animate-pulse rounded" />)}</div>
+      ) : events.length === 0 ? (
+        <p className="text-muted-foreground italic">Nenhum evento criado ainda.</p>
+      ) : (
+        <div className="space-y-3">
+          {events.map((ev: EventItem) => (
+            <div key={ev.id} className="flex items-start justify-between gap-4 p-4 border border-border rounded-lg bg-card">
+              <div className="flex-1 min-w-0">
+                <div className="flex flex-wrap items-center gap-2 mb-1">
+                  <span className="font-medium text-sm">{ev.title}</span>
+                  <Badge variant={ev.status === "published" ? "default" : "secondary"} className="text-xs">
+                    {ev.status === "published" ? "Publicado" : "Rascunho"}
+                  </Badge>
+                  <Badge variant="outline" className="text-xs">{ev.format}</Badge>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {new Date(ev.eventDate).toLocaleString("pt-BR")} · {ev.maxSpots} vagas
+                </p>
+              </div>
+              <div className="flex gap-1 shrink-0">
+                <Button size="sm" variant="ghost" onClick={() => startEdit(ev)} aria-label="Editar evento">
+                  <Pencil className="w-4 h-4" aria-hidden="true" />
+                </Button>
+                <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive"
+                  onClick={() => { if (confirm("Remover este evento?")) deleteMutation.mutate({ id: ev.id }); }}
+                  aria-label="Remover evento">
+                  <Trash2 className="w-4 h-4" aria-hidden="true" />
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── AdminRegistrationsTab ────────────────────────────────────────────────────
+function AdminRegistrationsTab() {
+  const [selectedEventId, setSelectedEventId] = useState<number | null>(null);
+  const { data: events = [] } = trpc.events.list.useQuery({ includeAll: true }, { refetchOnWindowFocus: false });
+  type RegEventItem = (typeof events)[0];
+  const { data: registrations = [], isLoading } = trpc.events.listRegistrations.useQuery(
+    { eventId: selectedEventId! },
+    { enabled: selectedEventId !== null }
+  );
+
+  const handleExportCSV = () => {
+    if (!registrations.length) return;
+    const headers = ["Nome","Email","País","Instrumento","Nível Braille","Pessoa com DV","Motivação","Lista de Espera","Data"];
+    const rows = registrations.map(r => [
+      r.userName ?? "", r.userEmail ?? "", r.country, r.instrument,
+      r.brailleLevel, r.isVisuallyImpaired ? "Sim" : "Não",
+      r.motivation ?? "", r.waitlisted ? "Sim" : "Não",
+      new Date(r.createdAt).toLocaleString("pt-BR"),
+    ]);
+    const csv = [headers, ...rows].map(row => row.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = `inscricoes_evento_${selectedEventId}.csv`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+  };
+
+  return (
+    <div className="space-y-6">
+      <h2 className="text-xl font-semibold">Inscrições por Evento</h2>
+      <div className="max-w-sm">
+        <Label htmlFor="reg-event-select">Selecionar Evento</Label>
+        <Select value={selectedEventId ? String(selectedEventId) : ""} onValueChange={v => setSelectedEventId(v ? parseInt(v) : null)}>
+          <SelectTrigger id="reg-event-select" className="mt-1"><SelectValue placeholder="Escolha um evento..." /></SelectTrigger>
+          <SelectContent>
+            {events.map((ev: RegEventItem) => (
+              <SelectItem key={ev.id} value={String(ev.id)}>{ev.title} — {new Date(ev.eventDate).toLocaleDateString("pt-BR")}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      {selectedEventId && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-muted-foreground">{registrations.length} inscrito(s)</p>
+            <Button size="sm" variant="outline" onClick={handleExportCSV} disabled={!registrations.length}>
+              Exportar CSV
+            </Button>
+          </div>
+          {isLoading ? (
+            <div className="space-y-2">{[1,2,3].map(i => <div key={i} className="h-12 bg-muted animate-pulse rounded" />)}</div>
+          ) : registrations.length === 0 ? (
+            <p className="text-muted-foreground italic">Nenhuma inscrição para este evento.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Nome</TableHead>
+                    <TableHead>Email</TableHead>
+                    <TableHead>País</TableHead>
+                    <TableHead>Instrumento</TableHead>
+                    <TableHead>Nível Braille</TableHead>
+                    <TableHead>DV</TableHead>
+                    <TableHead>Lista Espera</TableHead>
+                    <TableHead>Data</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {registrations.map(r => (
+                    <TableRow key={r.id}>
+                      <TableCell className="font-medium">{r.userName ?? "—"}</TableCell>
+                      <TableCell className="text-xs">{r.userEmail ?? "—"}</TableCell>
+                      <TableCell>{r.country}</TableCell>
+                      <TableCell>{r.instrument}</TableCell>
+                      <TableCell>{r.brailleLevel}</TableCell>
+                      <TableCell>{r.isVisuallyImpaired ? "Sim" : "Não"}</TableCell>
+                      <TableCell>{r.waitlisted ? <Badge variant="secondary">Espera</Badge> : <Badge variant="default">Confirmado</Badge>}</TableCell>
+                      <TableCell className="text-xs">{new Date(r.createdAt).toLocaleDateString("pt-BR")}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -184,6 +465,8 @@ export default function Admin() {
     { key: "comments", label: "Comentários", icon: MessageSquare },
     { key: "ratings", label: "Avaliações", icon: Star },
     { key: "messages", label: "Mensagens", icon: Mail },
+    { key: "events", label: "Eventos", icon: CalendarDays },
+    { key: "registrations", label: "Inscrições", icon: UserCheck },
     { key: "upload", label: "Enviar", icon: Upload },
   ];
 
@@ -656,6 +939,12 @@ export default function Admin() {
             )}
           </div>
         )}
+
+        {/* ═══ Events ═══ */}
+        {activeTab === "events" && <AdminEventsTab utils={utils} />}
+
+        {/* ═══ Registrations ═══ */}
+        {activeTab === "registrations" && <AdminRegistrationsTab />}
 
         {/* ═══ Upload ═══ */}
         {activeTab === "upload" && (

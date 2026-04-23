@@ -23,6 +23,7 @@ export default function Header() {
     { href: "/para-musicos-dv", label: t.nav_musicians_dv },
     { href: "/para-musicos-sem-dv", label: t.nav_musicians_nodv },
     { href: "/acervo", label: t.nav_library },
+    { href: "/atividades", label: t.nav_activities },
     { href: "/contato", label: t.nav_contact },
   ];
 

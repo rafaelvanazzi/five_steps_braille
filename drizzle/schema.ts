@@ -100,6 +100,44 @@ export const materialFiles = mysqlTable("material_files", {
 export type MaterialFile = typeof materialFiles.$inferSelect;
 export type InsertMaterialFile = typeof materialFiles.$inferInsert;
 
+// ─── Events (Aulas e Atividades) ───────────────────────────────────────────
+export const events = mysqlTable("events", {
+  id: int("id").autoincrement().primaryKey(),
+  title: varchar("title", { length: 255 }).notNull(),
+  description: text("description").notNull(),
+  eventDate: timestamp("eventDate").notNull(),
+  format: mysqlEnum("format", ["online", "presencial", "hibrido"]).default("online").notNull(),
+  targetAudience: mysqlEnum("targetAudience", ["videntes", "pdv", "ambos"]).default("ambos").notNull(),
+  maxSpots: int("maxSpots").default(100).notNull(),
+  meetingLink: text("meetingLink"),
+  status: mysqlEnum("status", ["draft", "published"]).default("draft").notNull(),
+  pastEventText: text("pastEventText"), // free text for past event report
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type Event = typeof events.$inferSelect;
+export type InsertEvent = typeof events.$inferInsert;
+
+// ─── Event Registrations ─────────────────────────────────────────────────────
+export const eventRegistrations = mysqlTable("event_registrations", {
+  id: int("id").autoincrement().primaryKey(),
+  eventId: int("eventId").notNull(),
+  userId: int("userId").notNull(),
+  country: varchar("country", { length: 100 }).notNull(),
+  instrument: varchar("instrument", { length: 100 }).notNull(),
+  brailleLevel: mysqlEnum("brailleLevel", ["none", "basic", "intermediate", "advanced"]).notNull(),
+  isVisuallyImpaired: boolean("isVisuallyImpaired").default(false).notNull(),
+  motivation: text("motivation"),
+  waitlisted: boolean("waitlisted").default(false).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex("unique_event_user").on(table.eventId, table.userId),
+]);
+
+export type EventRegistration = typeof eventRegistrations.$inferSelect;
+export type InsertEventRegistration = typeof eventRegistrations.$inferInsert;
+
 // ─── Download logs ──────────────────────────────────────────────────────────
 export const downloadLogs = mysqlTable("download_logs", {
   id: int("id").autoincrement().primaryKey(),

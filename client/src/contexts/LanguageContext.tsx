@@ -10,6 +10,7 @@ type Translations = {
   nav_musicians_dv: string;
   nav_musicians_nodv: string;
   nav_library: string;
+  nav_activities: string;
   nav_contact: string;
   nav_login: string;
   nav_logout: string;
@@ -188,6 +189,7 @@ const pt: Translations = {
   nav_musicians_dv: "Para Músicos com DV",
   nav_musicians_nodv: "Para Músicos sem DV",
   nav_library: "Acervo",
+  nav_activities: "Aulas e Atividades",
   nav_contact: "Contato",
   nav_login: "Entrar",
   nav_logout: "Sair",
@@ -356,6 +358,7 @@ const en: Translations = {
   nav_musicians_dv: "For Musicians with VI",
   nav_musicians_nodv: "For Musicians without VI",
   nav_library: "Library",
+  nav_activities: "Classes & Activities",
   nav_contact: "Contact",
   nav_login: "Sign In",
   nav_logout: "Sign Out",
@@ -524,6 +527,7 @@ const es: Translations = {
   nav_musicians_dv: "Para Músicos con DV",
   nav_musicians_nodv: "Para Músicos sin DV",
   nav_library: "Biblioteca",
+  nav_activities: "Clases y Actividades",
   nav_contact: "Contacto",
   nav_login: "Iniciar Sesión",
   nav_logout: "Cerrar Sesión",
