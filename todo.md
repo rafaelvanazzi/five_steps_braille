@@ -132,3 +132,10 @@
 - [x] UI Library: botão "Adicionar arquivo" visível apenas para owner
 - [x] UI Library: botão deletar arquivo (owner-only)
 - [x] Testes vitest para múltiplos arquivos (5 testes)
+
+## Correção de Download de Arquivos
+- [x] Diagnosticar problema de download (URL estática vs presigned)
+- [x] Corrigir download do arquivo principal (usar storageGet para URL presigned fresca)
+- [x] Adicionar endpoint getFileDownloadUrl para arquivos adicionais
+- [x] Adicionar botão de download nos arquivos adicionais (visível para usuários autenticados)
+- [x] Corrigir handleDownload para adicionar elemento ao DOM antes de clicar

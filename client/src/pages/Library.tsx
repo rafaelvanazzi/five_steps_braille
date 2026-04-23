@@ -422,6 +422,8 @@ function MaterialCard({ material, isAuthenticated, currentUserId, currentUserRol
     onError: (e) => toast.error(`Erro: ${e.message}`),
   });
 
+  const [downloadingFileId, setDownloadingFileId] = useState<number | null>(null);
+
   const handleDownload = async () => {
     if (!isAuthenticated) { toast.error(t.library_login_required); return; }
     const result = await getDownload.refetch();
@@ -431,7 +433,31 @@ function MaterialCard({ material, isAuthenticated, currentUserId, currentUserRol
       a.download = result.data.fileName;
       a.target = "_blank";
       a.rel = "noopener noreferrer";
+      document.body.appendChild(a);
       a.click();
+      document.body.removeChild(a);
+    }
+  };
+
+  const handleDownloadAdditionalFile = async (fileId: number, fileName: string) => {
+    if (!isAuthenticated) { toast.error(t.library_login_required); return; }
+    setDownloadingFileId(fileId);
+    try {
+      const result = await utils.client.materials.getFileDownloadUrl.query({ fileId });
+      if (result) {
+        const a = document.createElement("a");
+        a.href = result.url;
+        a.download = result.fileName;
+        a.target = "_blank";
+        a.rel = "noopener noreferrer";
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      }
+    } catch (e: any) {
+      toast.error(`Erro ao baixar arquivo: ${e.message}`);
+    } finally {
+      setDownloadingFileId(null);
     }
   };
 
@@ -501,11 +527,24 @@ function MaterialCard({ material, isAuthenticated, currentUserId, currentUserRol
                           <p className="text-xs text-muted-foreground">{formatSize(file.fileSize)}</p>
                         </div>
                       </div>
-                      {isOwner && (
-                        <Button size="sm" variant="ghost" className="h-7 w-7 p-0 flex-shrink-0" onClick={() => { if (confirm(`Remover "${file.fileName}"?`)) deleteFileMutation.mutate({ fileId: file.id }); }} disabled={deleteFileMutation.isPending} aria-label={`Deletar ${file.fileName}`}>
-                          <Trash2 className="w-3.5 h-3.5 text-destructive" aria-hidden="true" />
-                        </Button>
-                      )}
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        {isAuthenticated && (
+                          <Button size="sm" variant="ghost" className="h-7 w-7 p-0"
+                            onClick={() => handleDownloadAdditionalFile(file.id, file.fileName)}
+                            disabled={downloadingFileId === file.id}
+                            aria-label={`Baixar ${file.fileName}`}>
+                            <FileDown className="w-3.5 h-3.5 text-primary" aria-hidden="true" />
+                          </Button>
+                        )}
+                        {isOwner && (
+                          <Button size="sm" variant="ghost" className="h-7 w-7 p-0"
+                            onClick={() => { if (confirm(`Remover "${file.fileName}"?`)) deleteFileMutation.mutate({ fileId: file.id }); }}
+                            disabled={deleteFileMutation.isPending}
+                            aria-label={`Deletar ${file.fileName}`}>
+                            <Trash2 className="w-3.5 h-3.5 text-destructive" aria-hidden="true" />
+                          </Button>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>

@@ -38,7 +38,7 @@ import {
   deleteFile,
   getFileById,
 } from "./db";
-import { storagePut } from "./storage";
+import { storagePut, storageGet } from "./storage";
 import { notifyOwner } from "./_core/notification";
 import { sendContactEmail } from "./email";
 
@@ -113,7 +113,15 @@ export const appRouter = router({
         } catch (e) {
           console.warn("[Download Log] Failed to log download:", e);
         }
-        return { url: material.fileUrl, fileName: material.fileName };
+        // Generate a fresh presigned download URL via storageGet
+        let downloadUrl = material.fileUrl;
+        try {
+          const { url } = await storageGet(material.fileKey);
+          downloadUrl = url;
+        } catch (e) {
+          console.warn("[Download] storageGet failed, falling back to stored URL:", e);
+        }
+        return { url: downloadUrl, fileName: material.fileName };
       }),
 
     // Admin: upload a new material
@@ -256,6 +264,27 @@ export const appRouter = router({
           uploadedBy: ctx.user.id,
         });
         return { success: true };
+      }),
+
+    // Protected: get presigned download URL for an additional file
+    getFileDownloadUrl: protectedProcedure
+      .input(z.object({ fileId: z.number() }))
+      .query(async ({ input, ctx }) => {
+        const file = await getFileById(input.fileId);
+        if (!file) throw new TRPCError({ code: "NOT_FOUND", message: "Arquivo não encontrado" });
+        // Check if parent material is hidden
+        const material = await getMaterialById(file.materialId);
+        if (material?.hidden && material.uploadedBy !== ctx.user.id && ctx.user.role !== "admin") {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Material oculto" });
+        }
+        let downloadUrl = file.fileUrl;
+        try {
+          const { url } = await storageGet(file.fileKey);
+          downloadUrl = url;
+        } catch (e) {
+          console.warn("[Download] storageGet failed for additional file, falling back:", e);
+        }
+        return { url: downloadUrl, fileName: file.fileName };
       }),
 
     // Public: get files for a material
