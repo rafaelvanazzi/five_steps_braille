@@ -16,6 +16,9 @@ const CONTACT_RECIPIENTS = [
 // Sender address — verified domain in Resend.
 const FROM_ADDRESS = "Five Steps <noreply@braille5steps.com>";
 
+// Reply-to address — replies to automated emails go here
+const REPLY_TO = "contato@braille5steps.com";
+
 export interface ContactEmailPayload {
   name: string;
   email: string;
@@ -84,7 +87,7 @@ export async function sendContactEmail(payload: ContactEmailPayload): Promise<vo
   const { error } = await client.emails.send({
     from: FROM_ADDRESS,
     to: CONTACT_RECIPIENTS,
-    replyTo: payload.email,
+    replyTo: [payload.email, REPLY_TO],
     subject: `[Five Steps] ${payload.subject}`,
     html,
   });

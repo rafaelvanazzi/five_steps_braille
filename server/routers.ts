@@ -170,11 +170,11 @@ const eventsRouter = router({
         const { Resend } = await import("resend");
         const resend = new Resend(process.env.RESEND_API_KEY);
         const adminBody = `Nova inscrição em "${ev.title}"\n\nNome: ${ctx.user.name}\nE-mail: ${ctx.user.email}\nPaís: ${input.country}\nInstrumento: ${input.instrument}\nNível de braille: ${brailleLevelLabel[input.brailleLevel]}\nPessoa com DV: ${input.isVisuallyImpaired ? "Sim" : "Não"}\nMotivação: ${input.motivation ?? "—"}\nStatus: ${waitlisted ? "Lista de espera" : "Confirmado"}\n\nEvento: ${ev.eventDate.toLocaleDateString("pt-BR")} — ${ev.format}`;
-        await resend.emails.send({ from: "Five Steps <noreply@braille5steps.com>", to: "rafaelvanazzi@gmail.com", subject: `[Five Steps] Nova inscrição: ${ev.title}`, text: adminBody });
+        await resend.emails.send({ from: "Five Steps <noreply@braille5steps.com>", replyTo: "contato@braille5steps.com", to: "rafaelvanazzi@gmail.com", subject: `[Five Steps] Nova inscrição: ${ev.title}`, text: adminBody });
         // Confirmation to student
         const linkLine = ev.meetingLink ? `\nLink da aula: ${ev.meetingLink}` : "";
         const studentBody = `Olá, ${ctx.user.name}!\n\nSua inscrição em "${ev.title}" foi ${waitlisted ? "registrada na lista de espera" : "confirmada"}.\n\nDetalhes do evento:\nData: ${ev.eventDate.toLocaleDateString("pt-BR")} às ${ev.eventDate.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}\nFormato: ${ev.format}${linkLine}\n\nAté breve!\nEquipe Five Steps — braille5steps.com`;
-        await resend.emails.send({ from: "Five Steps <noreply@braille5steps.com>", to: ctx.user.email!, subject: `Inscrição confirmada: ${ev.title}`, text: studentBody });
+        await resend.emails.send({ from: "Five Steps <noreply@braille5steps.com>", replyTo: "contato@braille5steps.com", to: ctx.user.email!, subject: `Inscrição confirmada: ${ev.title}`, text: studentBody });
       } catch (e) { console.warn("[Email] Failed to send registration emails:", e); }
       return { success: true, waitlisted };
     }),

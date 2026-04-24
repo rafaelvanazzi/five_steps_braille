@@ -36,7 +36,8 @@ describe("sendContactEmail", () => {
     expect(call.to).toContain("acervo.musicografia@gmail.com");
     expect(call.to).toContain("rafaelvanazzi@gmail.com");
     expect(call.subject).toBe("[Five Steps] Test Subject");
-    expect(call.replyTo).toBe("test@example.com");
+    expect(call.replyTo).toContain("test@example.com");
+    expect(call.replyTo).toContain("contato@braille5steps.com");
   });
 
   it("skips sending when RESEND_API_KEY is not set", async () => {
