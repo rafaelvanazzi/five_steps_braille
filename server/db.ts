@@ -507,3 +507,241 @@ export async function listUserRegistrations(userId: number) {
     .where(eq(eventRegistrations.userId, userId))
     .orderBy(desc(events.eventDate));
 }
+
+// ─── Forum ────────────────────────────────────────────────────────────────────
+import {
+  forumCategories, forumTopics, forumPosts, userDisplayNames,
+  InsertForumTopic, InsertForumPost,
+} from "../drizzle/schema";
+
+export async function getForumCategories() {
+  const db = await getDb();
+  if (!db) return [];
+  const cats = await db.select().from(forumCategories).orderBy(asc(forumCategories.sortOrder));
+  // attach topic count to each category
+  const counts = await db.select({
+    categoryId: forumTopics.categoryId,
+    topicCount: count(forumTopics.id),
+  }).from(forumTopics)
+    .where(eq(forumTopics.hidden, false))
+    .groupBy(forumTopics.categoryId);
+  const countMap = Object.fromEntries(counts.map(c => [c.categoryId, c.topicCount]));
+  return cats.map(c => ({ ...c, topicCount: countMap[c.id] ?? 0 }));
+}
+
+export async function getForumCategoryBySlug(slug: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(forumCategories).where(eq(forumCategories.slug, slug)).limit(1);
+  return result[0];
+}
+
+export async function getForumTopics(categoryId: number, includeHidden = false) {
+  const db = await getDb();
+  if (!db) return [];
+  const cond = includeHidden
+    ? eq(forumTopics.categoryId, categoryId)
+    : and(eq(forumTopics.categoryId, categoryId), eq(forumTopics.hidden, false));
+  const rows = await db.select({
+    id: forumTopics.id,
+    categoryId: forumTopics.categoryId,
+    userId: forumTopics.userId,
+    title: forumTopics.title,
+    pinned: forumTopics.pinned,
+    hidden: forumTopics.hidden,
+    lastPostAt: forumTopics.lastPostAt,
+    createdAt: forumTopics.createdAt,
+    authorName: users.name,
+    authorDisplayName: userDisplayNames.displayName,
+  }).from(forumTopics)
+    .leftJoin(users, eq(forumTopics.userId, users.id))
+    .leftJoin(userDisplayNames, eq(forumTopics.userId, userDisplayNames.userId))
+    .where(cond)
+    .orderBy(desc(forumTopics.pinned), desc(forumTopics.lastPostAt));
+  // attach reply count
+  const topicIds = rows.map(r => r.id);
+  if (topicIds.length === 0) return rows.map(r => ({ ...r, replyCount: 0 }));
+  const replyCounts = await db.select({
+    topicId: forumPosts.topicId,
+    replyCount: count(forumPosts.id),
+  }).from(forumPosts)
+    .where(and(eq(forumPosts.hidden, false), sql`${forumPosts.topicId} IN (${sql.join(topicIds.map(id => sql`${id}`), sql`, `)})`))
+    .groupBy(forumPosts.topicId);
+  const replyMap = Object.fromEntries(replyCounts.map(r => [r.topicId, r.replyCount]));
+  return rows.map(r => ({ ...r, replyCount: replyMap[r.id] ?? 0 }));
+}
+
+export async function getForumTopicById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select({
+    id: forumTopics.id,
+    categoryId: forumTopics.categoryId,
+    userId: forumTopics.userId,
+    title: forumTopics.title,
+    pinned: forumTopics.pinned,
+    hidden: forumTopics.hidden,
+    lastPostAt: forumTopics.lastPostAt,
+    createdAt: forumTopics.createdAt,
+  }).from(forumTopics).where(eq(forumTopics.id, id)).limit(1);
+  return result[0];
+}
+
+export async function createForumTopic(data: InsertForumTopic) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(forumTopics).values(data);
+  return result[0];
+}
+
+export async function updateForumTopicLastPost(topicId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(forumTopics).set({ lastPostAt: new Date() }).where(eq(forumTopics.id, topicId));
+}
+
+export async function toggleForumTopicPin(id: number, pinned: boolean) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(forumTopics).set({ pinned }).where(eq(forumTopics.id, id));
+}
+
+export async function toggleForumTopicHidden(id: number, hidden: boolean) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(forumTopics).set({ hidden }).where(eq(forumTopics.id, id));
+}
+
+export async function deleteForumTopic(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(forumPosts).where(eq(forumPosts.topicId, id));
+  await db.delete(forumTopics).where(eq(forumTopics.id, id));
+}
+
+export async function getForumPosts(topicId: number, includeHidden = false) {
+  const db = await getDb();
+  if (!db) return [];
+  const cond = includeHidden
+    ? eq(forumPosts.topicId, topicId)
+    : and(eq(forumPosts.topicId, topicId), eq(forumPosts.hidden, false));
+  return db.select({
+    id: forumPosts.id,
+    topicId: forumPosts.topicId,
+    userId: forumPosts.userId,
+    body: forumPosts.body,
+    hidden: forumPosts.hidden,
+    createdAt: forumPosts.createdAt,
+    updatedAt: forumPosts.updatedAt,
+    authorName: users.name,
+    authorDisplayName: userDisplayNames.displayName,
+    authorEmail: users.email,
+  }).from(forumPosts)
+    .leftJoin(users, eq(forumPosts.userId, users.id))
+    .leftJoin(userDisplayNames, eq(forumPosts.userId, userDisplayNames.userId))
+    .where(cond)
+    .orderBy(asc(forumPosts.createdAt));
+}
+
+export async function createForumPost(data: InsertForumPost) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.insert(forumPosts).values(data);
+  await updateForumTopicLastPost(data.topicId);
+}
+
+export async function toggleForumPostHidden(id: number, hidden: boolean) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(forumPosts).set({ hidden }).where(eq(forumPosts.id, id));
+}
+
+export async function deleteForumPost(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(forumPosts).where(eq(forumPosts.id, id));
+}
+
+export async function getForumPostById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(forumPosts).where(eq(forumPosts.id, id)).limit(1);
+  return result[0];
+}
+
+// ─── User Display Names ────────────────────────────────────────────────────────
+
+export async function getUserDisplayName(userId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(userDisplayNames).where(eq(userDisplayNames.userId, userId)).limit(1);
+  return result[0]?.displayName ?? null;
+}
+
+export async function setUserDisplayName(userId: number, displayName: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.insert(userDisplayNames).values({ userId, displayName })
+    .onDuplicateKeyUpdate({ set: { displayName } });
+}
+
+// ─── Forum seed (5 default categories) ────────────────────────────────────────
+
+export async function seedForumCategories() {
+  const db = await getDb();
+  if (!db) return;
+  const existing = await db.select({ id: forumCategories.id }).from(forumCategories).limit(1);
+  if (existing.length > 0) return; // already seeded
+  await db.insert(forumCategories).values([
+    {
+      slug: "musicografia-braille",
+      namePt: "Musicografia Braille",
+      nameEn: "Braille Music Notation",
+      nameEs: "Musicografía Braille",
+      descriptionPt: "Dúvidas, descobertas e discussões sobre o método Five Steps e a musicografia braille em geral.",
+      descriptionEn: "Questions, discoveries and discussions about the Five Steps method and braille music notation in general.",
+      descriptionEs: "Dudas, descubrimientos y discusiones sobre el método Five Steps y la musicografía braille en general.",
+      sortOrder: 1,
+    },
+    {
+      slug: "acervo",
+      namePt: "Acervo de Partituras",
+      nameEn: "Sheet Music Archive",
+      nameEs: "Acervo de Partituras",
+      descriptionPt: "Dúvidas e sugestões sobre os materiais disponíveis no acervo.",
+      descriptionEn: "Questions and suggestions about the materials available in the archive.",
+      descriptionEs: "Dudas y sugerencias sobre los materiales disponibles en el acervo.",
+      sortOrder: 2,
+    },
+    {
+      slug: "duvidas-suporte",
+      namePt: "Dúvidas e Suporte",
+      nameEn: "Questions & Support",
+      nameEs: "Dudas y Soporte",
+      descriptionPt: "Tire suas dúvidas sobre o método, o site e os materiais.",
+      descriptionEn: "Get help with the method, the website and the materials.",
+      descriptionEs: "Resuelve tus dudas sobre el método, el sitio y los materiales.",
+      sortOrder: 3,
+    },
+    {
+      slug: "eventos-formacoes",
+      namePt: "Eventos e Formações",
+      nameEn: "Events & Training",
+      nameEs: "Eventos y Formaciones",
+      descriptionPt: "Discussões sobre aulas, workshops, palestras e outras atividades.",
+      descriptionEn: "Discussions about classes, workshops, lectures and other activities.",
+      descriptionEs: "Discusiones sobre clases, talleres, conferencias y otras actividades.",
+      sortOrder: 4,
+    },
+    {
+      slug: "geral",
+      namePt: "Geral",
+      nameEn: "General",
+      nameEs: "General",
+      descriptionPt: "Conversas gerais sobre música, inclusão e acessibilidade.",
+      descriptionEn: "General conversations about music, inclusion and accessibility.",
+      descriptionEs: "Conversaciones generales sobre música, inclusión y accesibilidad.",
+      sortOrder: 5,
+    },
+  ]);
+}

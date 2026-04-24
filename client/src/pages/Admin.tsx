@@ -14,7 +14,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import {
   Trash2, Upload, FileText, Mail, ShieldAlert, Users, BarChart3,
   Download, MessageSquare, Star, Activity, Search, ArrowUpDown,
-  Pencil, Eye, EyeOff, CalendarDays, UserCheck, Plus, X as XIcon,
+  Pencil, Eye, EyeOff, CalendarDays, UserCheck, Plus, X as XIcon, MessagesSquare,
 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { toast } from "sonner";
@@ -22,7 +22,69 @@ import { Link } from "wouter";
 
 const gradeStages: Record<number, number> = { 1: 2, 2: 5, 3: 5, 4: 3, 5: 8 };
 
-type AdminTab = "dashboard" | "users" | "materials" | "downloads" | "comments" | "ratings" | "messages" | "upload" | "events" | "registrations";
+type AdminTab = "dashboard" | "users" | "materials" | "downloads" | "comments" | "ratings" | "messages" | "upload" | "events" | "registrations" | "forum";
+
+// ─── AdminForumTab ────────────────────────────────────────────────────────────
+function AdminForumTab() {
+  const utils = trpc.useUtils();
+  const { data: topics = [], isLoading } = trpc.forum.allTopics.useQuery();
+  const hideTopic = trpc.forum.hideTopic.useMutation({ onSuccess: () => utils.forum.allTopics.invalidate() });
+  const deleteTopic = trpc.forum.deleteTopic.useMutation({
+    onSuccess: () => { toast.success("Tópico removido."); utils.forum.allTopics.invalidate(); },
+    onError: (e) => toast.error(e.message),
+  });
+  return (
+    <div className="space-y-4">
+      <h2 className="text-xl font-semibold">Moderar Fórum</h2>
+      <p className="text-sm text-muted-foreground">Total de tópicos: <strong>{topics.length}</strong></p>
+      {isLoading ? (
+        <div className="space-y-2">{[1,2,3].map(i => <div key={i} className="h-12 bg-muted animate-pulse rounded" />)}</div>
+      ) : topics.length === 0 ? (
+        <p className="text-muted-foreground italic">Nenhum tópico ainda.</p>
+      ) : (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Tópico</TableHead>
+              <TableHead>Categoria</TableHead>
+              <TableHead>Autor</TableHead>
+              <TableHead>Respostas</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Ações</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {topics.map(topic => (
+              <TableRow key={topic.id} className={topic.hidden ? "opacity-60" : ""}>
+                <TableCell className="font-medium max-w-xs truncate">{topic.title}</TableCell>
+                <TableCell className="text-sm text-muted-foreground">{topic.categoryNamePt}</TableCell>
+                <TableCell className="text-sm">{topic.authorDisplayName ?? topic.authorName ?? "—"}</TableCell>
+                <TableCell className="text-sm">{topic.replyCount}</TableCell>
+                <TableCell>
+                  <Badge variant={topic.hidden ? "outline" : "default"} className={topic.hidden ? "border-amber-400 text-amber-600" : ""}>
+                    {topic.hidden ? "Oculto" : "Visível"}
+                  </Badge>
+                </TableCell>
+                <TableCell>
+                  <div className="flex gap-1">
+                    <Button size="icon" variant="ghost" className="h-7 w-7" aria-label={topic.hidden ? "Mostrar tópico" : "Ocultar tópico"}
+                      onClick={() => hideTopic.mutate({ topicId: topic.id, hidden: !topic.hidden })}>
+                      {topic.hidden ? <Eye className="w-4 h-4" aria-hidden="true" /> : <EyeOff className="w-4 h-4" aria-hidden="true" />}
+                    </Button>
+                    <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive hover:text-destructive" aria-label="Deletar tópico"
+                      onClick={() => { if (confirm("Deletar tópico e todas as respostas?")) deleteTopic.mutate({ topicId: topic.id }); }}>
+                      <Trash2 className="w-4 h-4" aria-hidden="true" />
+                    </Button>
+                  </div>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      )}
+    </div>
+  );
+}
 
 function formatDate(d: Date | string) {
   return new Date(d).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
@@ -467,6 +529,7 @@ export default function Admin() {
     { key: "messages", label: "Mensagens", icon: Mail },
     { key: "events", label: "Eventos", icon: CalendarDays },
     { key: "registrations", label: "Inscrições", icon: UserCheck },
+    { key: "forum", label: "Fórum", icon: MessagesSquare },
     { key: "upload", label: "Enviar", icon: Upload },
   ];
 
@@ -945,6 +1008,9 @@ export default function Admin() {
 
         {/* ═══ Registrations ═══ */}
         {activeTab === "registrations" && <AdminRegistrationsTab />}
+
+        {/* ═══ Forum ═══ */}
+        {activeTab === "forum" && <AdminForumTab />}
 
         {/* ═══ Upload ═══ */}
         {activeTab === "upload" && (

@@ -157,3 +157,22 @@
 - [x] Admin: aba "Inscrições" com lista por evento e exportação CSV
 - [x] Rota /atividades no App.tsx e link na navegação (PT/EN/ES)
 - [x] 101 testes passando
+
+## Fórum Comunitário
+- [ ] Schema: tabela forum_categories (id, slug, nameKey, descriptionKey, order, createdAt)
+- [ ] Schema: tabela forum_topics (id, categoryId, userId, title, pinned, hidden, createdAt, lastPostAt)
+- [ ] Schema: tabela forum_posts (id, topicId, userId, body, hidden, createdAt, updatedAt)
+- [ ] Schema: tabela user_display_names (userId PK, displayName, updatedAt)
+- [ ] Migração SQL aplicada
+- [ ] DB helpers: categorias, tópicos (list, get, create, pin, hide), posts (list, create, hide), displayName (get, set)
+- [ ] Router tRPC: forum.categories (public), forum.topics (public list, protected create/pin/hide), forum.posts (protected list/create, admin hide)
+- [ ] Router tRPC: forum.setDisplayName (protected), forum.getDisplayName (protected)
+- [ ] Seeder: inserir as 5 categorias padrão no banco
+- [ ] Página Forum.tsx: lista de categorias com contador de tópicos (pública)
+- [ ] Página ForumCategory.tsx: lista de tópicos com título, autor, nº respostas, data (pública)
+- [ ] Página ForumTopic.tsx: posts completos (requer login) + formulário de resposta
+- [ ] Dialog SetDisplayName: aparece antes do primeiro post, nome do Google como sugestão
+- [ ] Admin: aba Fórum com lista de tópicos/posts para moderar (fixar, ocultar, deletar)
+- [ ] Navegação: link "Fórum" no Header (PT/EN/ES)
+- [ ] Rotas no App.tsx: /forum, /forum/:slug, /forum/:slug/:topicId
+- [ ] Testes vitest para os novos endpoints

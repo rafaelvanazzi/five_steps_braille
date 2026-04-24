@@ -48,6 +48,21 @@ import {
   getUserRegistration,
   cancelRegistration,
   listUserRegistrations,
+  getForumCategories,
+  getForumCategoryBySlug,
+  getForumTopics,
+  getForumTopicById,
+  createForumTopic,
+  toggleForumTopicPin,
+  toggleForumTopicHidden,
+  deleteForumTopic,
+  getForumPosts,
+  createForumPost,
+  toggleForumPostHidden,
+  deleteForumPost,
+  getUserDisplayName,
+  setUserDisplayName,
+  seedForumCategories,
 } from "./db";
 import { storagePut, storageGet } from "./storage";
 import { notifyOwner } from "./_core/notification";
@@ -183,9 +198,86 @@ const eventsRouter = router({
 });
 
 
+// ─── Forum Router ────────────────────────────────────────────────────────────
+const forumRouter = router({
+  categories: publicProcedure.query(async () => {
+    await seedForumCategories();
+    return getForumCategories();
+  }),
+  topics: publicProcedure
+    .input(z.object({ slug: z.string() }))
+    .query(async ({ input }) => {
+      const cat = await getForumCategoryBySlug(input.slug);
+      if (!cat) throw new TRPCError({ code: "NOT_FOUND" });
+      const topics = await getForumTopics(cat.id, false);
+      return { category: cat, topics };
+    }),
+  posts: protectedProcedure
+    .input(z.object({ topicId: z.number() }))
+    .query(async ({ input, ctx }) => {
+      const topic = await getForumTopicById(input.topicId);
+      if (!topic || topic.hidden) throw new TRPCError({ code: "NOT_FOUND" });
+      const posts = await getForumPosts(input.topicId, ctx.user.role === "admin");
+      return { topic, posts };
+    }),
+  createTopic: protectedProcedure
+    .input(z.object({
+      categorySlug: z.string(),
+      title: z.string().min(3).max(255),
+      body: z.string().min(1).max(10000),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      const cat = await getForumCategoryBySlug(input.categorySlug);
+      if (!cat) throw new TRPCError({ code: "NOT_FOUND" });
+      await createForumTopic({ categoryId: cat.id, userId: ctx.user.id, title: input.title });
+      const topics = await getForumTopics(cat.id, true);
+      const newTopic = topics.find(t => t.title === input.title && t.userId === ctx.user.id);
+      if (!newTopic) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      await createForumPost({ topicId: newTopic.id, userId: ctx.user.id, body: input.body });
+      return { topicId: newTopic.id };
+    }),
+  reply: protectedProcedure
+    .input(z.object({ topicId: z.number(), body: z.string().min(1).max(10000) }))
+    .mutation(async ({ input, ctx }) => {
+      const topic = await getForumTopicById(input.topicId);
+      if (!topic || topic.hidden) throw new TRPCError({ code: "NOT_FOUND" });
+      await createForumPost({ topicId: input.topicId, userId: ctx.user.id, body: input.body });
+      return { success: true };
+    }),
+  pinTopic: adminProcedure
+    .input(z.object({ topicId: z.number(), pinned: z.boolean() }))
+    .mutation(({ input }) => toggleForumTopicPin(input.topicId, input.pinned)),
+  hideTopic: adminProcedure
+    .input(z.object({ topicId: z.number(), hidden: z.boolean() }))
+    .mutation(({ input }) => toggleForumTopicHidden(input.topicId, input.hidden)),
+  deleteTopic: adminProcedure
+    .input(z.object({ topicId: z.number() }))
+    .mutation(({ input }) => deleteForumTopic(input.topicId)),
+  hidePost: adminProcedure
+    .input(z.object({ postId: z.number(), hidden: z.boolean() }))
+    .mutation(({ input }) => toggleForumPostHidden(input.postId, input.hidden)),
+  deletePost: adminProcedure
+    .input(z.object({ postId: z.number() }))
+    .mutation(({ input }) => deleteForumPost(input.postId)),
+  allTopics: adminProcedure.query(async () => {
+    const cats = await getForumCategories();
+    const results: any[] = [];
+    for (const cat of cats) {
+      const topics = await getForumTopics(cat.id, true);
+      results.push(...topics.map(t => ({ ...t, categorySlug: cat.slug, categoryNamePt: cat.namePt })));
+    }
+    return results.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }),
+  getDisplayName: protectedProcedure.query(({ ctx }) => getUserDisplayName(ctx.user.id)),
+  setDisplayName: protectedProcedure
+    .input(z.object({ displayName: z.string().min(1).max(64) }))
+    .mutation(({ input, ctx }) => setUserDisplayName(ctx.user.id, input.displayName)),
+});
+
 export const appRouter = router({
   system: systemRouter,
   events: eventsRouter,
+  forum: forumRouter,
 
   auth: router({
     me: publicProcedure.query((opts) => opts.ctx.user),

@@ -138,6 +138,59 @@ export const eventRegistrations = mysqlTable("event_registrations", {
 export type EventRegistration = typeof eventRegistrations.$inferSelect;
 export type InsertEventRegistration = typeof eventRegistrations.$inferInsert;
 
+// ─── Forum ─────────────────────────────────────────────────────────────────
+export const forumCategories = mysqlTable("forum_categories", {
+  id: int("id").autoincrement().primaryKey(),
+  slug: varchar("slug", { length: 64 }).notNull().unique(),
+  namePt: varchar("namePt", { length: 128 }).notNull(),
+  nameEn: varchar("nameEn", { length: 128 }).notNull(),
+  nameEs: varchar("nameEs", { length: 128 }).notNull(),
+  descriptionPt: text("descriptionPt"),
+  descriptionEn: text("descriptionEn"),
+  descriptionEs: text("descriptionEs"),
+  sortOrder: int("sortOrder").default(0).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type ForumCategory = typeof forumCategories.$inferSelect;
+export type InsertForumCategory = typeof forumCategories.$inferInsert;
+
+export const forumTopics = mysqlTable("forum_topics", {
+  id: int("id").autoincrement().primaryKey(),
+  categoryId: int("categoryId").notNull(),
+  userId: int("userId").notNull(),
+  title: varchar("title", { length: 255 }).notNull(),
+  pinned: boolean("pinned").default(false).notNull(),
+  hidden: boolean("hidden").default(false).notNull(),
+  lastPostAt: timestamp("lastPostAt").defaultNow().notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type ForumTopic = typeof forumTopics.$inferSelect;
+export type InsertForumTopic = typeof forumTopics.$inferInsert;
+
+export const forumPosts = mysqlTable("forum_posts", {
+  id: int("id").autoincrement().primaryKey(),
+  topicId: int("topicId").notNull(),
+  userId: int("userId").notNull(),
+  body: text("body").notNull(),
+  hidden: boolean("hidden").default(false).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ForumPost = typeof forumPosts.$inferSelect;
+export type InsertForumPost = typeof forumPosts.$inferInsert;
+
+export const userDisplayNames = mysqlTable("user_display_names", {
+  userId: int("userId").primaryKey(),
+  displayName: varchar("displayName", { length: 64 }).notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type UserDisplayName = typeof userDisplayNames.$inferSelect;
+export type InsertUserDisplayName = typeof userDisplayNames.$inferInsert;
+
 // ─── Download logs ──────────────────────────────────────────────────────────
 export const downloadLogs = mysqlTable("download_logs", {
   id: int("id").autoincrement().primaryKey(),
