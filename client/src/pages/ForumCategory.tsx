@@ -27,6 +27,7 @@ export default function ForumCategory() {
   const [body, setBody] = useState("");
   const [topicLang, setTopicLang] = useState<"pt" | "en" | "es">(language as "pt" | "en" | "es" || "pt");
   const [showDisplayNameDialog, setShowDisplayNameDialog] = useState(false);
+  const [langFilter, setLangFilter] = useState<"all" | "pt" | "en" | "es">("all");
 
   const { data, isLoading } = trpc.forum.topics.useQuery({ slug: slug ?? "" }, { enabled: !!slug });
   const { data: displayName } = trpc.forum.getDisplayName.useQuery(undefined, { enabled: !!user });
@@ -58,7 +59,8 @@ export default function ForumCategory() {
   };
 
   const cat = data?.category;
-  const topics = data?.topics ?? [];
+  const allTopics = data?.topics ?? [];
+  const topics = langFilter === "all" ? allTopics : allTopics.filter(t => t.language === langFilter);
 
   const getCategoryName = () => {
     if (!cat) return "";
@@ -97,6 +99,36 @@ export default function ForumCategory() {
               <Plus className="w-4 h-4" aria-hidden="true" />
               {language === "en" ? "New Topic" : language === "es" ? "Nuevo Tema" : "Novo Tópico"}
             </Button>
+          </div>
+
+          {/* Language filter */}
+          <div className="flex items-center gap-2 mb-4 flex-wrap" role="group" aria-label={language === "en" ? "Filter by language" : language === "es" ? "Filtrar por idioma" : "Filtrar por idioma"}>
+            <span className="text-sm text-muted-foreground mr-1">
+              {language === "en" ? "Language:" : language === "es" ? "Idioma:" : "Idioma:"}
+            </span>
+            {(["all", "pt", "en", "es"] as const).map(l => (
+              <button
+                key={l}
+                type="button"
+                onClick={() => setLangFilter(l)}
+                aria-pressed={langFilter === l}
+                className={`text-xs font-semibold px-2.5 py-1 rounded border transition-colors ${
+                  langFilter === l
+                    ? l === "pt" ? "bg-green-600 text-white border-green-600"
+                      : l === "es" ? "bg-yellow-500 text-white border-yellow-500"
+                      : l === "en" ? "bg-blue-600 text-white border-blue-600"
+                      : "bg-foreground text-background border-foreground"
+                    : "bg-background text-muted-foreground border-border hover:border-foreground"
+                }`}
+              >
+                {l === "all" ? (language === "en" ? "All" : language === "es" ? "Todos" : "Todos") : l.toUpperCase()}
+              </button>
+            ))}
+            {langFilter !== "all" && (
+              <span className="text-xs text-muted-foreground">
+                ({topics.length} {language === "en" ? "topics" : language === "es" ? "temas" : "tópicos"})
+              </span>
+            )}
           </div>
 
           {/* Topics list */}

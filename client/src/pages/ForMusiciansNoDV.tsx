@@ -2,7 +2,7 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import SiteLayout from "@/components/SiteLayout";
 import { Button } from "@/components/ui/button";
 import { Link } from "wouter";
-import { CheckCircle2, Upload, Globe, ArrowRight } from "lucide-react";
+import { CheckCircle2, Upload, Globe, ArrowRight, Users } from "lucide-react";
 
 export default function ForMusiciansNoDV() {
   const { t } = useLanguage();
@@ -46,6 +46,33 @@ export default function ForMusiciansNoDV() {
             <Globe className="w-10 h-10 text-primary mb-4" aria-hidden="true" />
             <h2 id="impact-nodv-heading" className="text-2xl font-bold mb-4">{t.nodv_impact_title}</h2>
             <p className="text-muted-foreground leading-relaxed">{t.nodv_impact_desc}</p>
+          </div>
+        </div>
+      </section>
+
+      {/* Bloco de convite a voluntários */}
+      <section className="py-14 bg-muted/40" aria-labelledby="volunteer-nodv-heading">
+        <div className="container max-w-3xl mx-auto">
+          <div className="border-l-4 border-secondary bg-card rounded-2xl p-8 shadow-sm">
+            <div className="flex items-center gap-3 mb-4">
+              <Users className="w-8 h-8 text-secondary flex-shrink-0" aria-hidden="true" />
+              <h2 id="volunteer-nodv-heading" className="text-2xl font-bold">{t.nodv_volunteer_title}</h2>
+            </div>
+            <p className="text-muted-foreground leading-relaxed mb-6">{t.nodv_volunteer_desc}</p>
+            <div className="flex flex-wrap gap-3">
+              <Button asChild size="default" className="bg-secondary text-secondary-foreground hover:bg-secondary/90 font-semibold">
+                <Link href="/contato">
+                  <CheckCircle2 className="w-4 h-4 mr-2" aria-hidden="true" />
+                  {t.nodv_volunteer_cta}
+                </Link>
+              </Button>
+              <Button asChild size="default" variant="outline">
+                <Link href="/contato">
+                  {t.nodv_volunteer_contact_cta}
+                  <ArrowRight className="w-4 h-4 ml-2" aria-hidden="true" />
+                </Link>
+              </Button>
+            </div>
           </div>
         </div>
       </section>

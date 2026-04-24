@@ -184,3 +184,7 @@
 - [ ] Frontend ForumCategory: seletor de idioma ao criar tópico
 - [ ] Frontend ForumCategory: badge PT/EN/ES nos cards de tópicos
 - [ ] Frontend ForumTopic: badge de idioma no cabeçalho do tópico
+
+## Filtro de Idioma no Fórum e Convite a Voluntários
+- [x] Filtro por idioma (Todos/PT/EN/ES) na lista de tópicos do fórum
+- [x] Bloco de convite a voluntários na página ForMusiciansNoDV

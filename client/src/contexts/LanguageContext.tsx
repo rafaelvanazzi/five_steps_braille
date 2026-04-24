@@ -102,6 +102,10 @@ type Translations = {
   nodv_impact_title: string;
   nodv_impact_desc: string;
   nodv_cta: string;
+  nodv_volunteer_title: string;
+  nodv_volunteer_desc: string;
+  nodv_volunteer_cta: string;
+  nodv_volunteer_contact_cta: string;
 
   // Library
   lib_title: string;
@@ -277,6 +281,10 @@ const pt: Translations = {
   nodv_impact_title: "O Impacto da sua Contribuição",
   nodv_impact_desc: "Cada material que você cria e organiza de acordo com as etapas do Five Steps pode ser usado por professores e alunos em todo o mundo. Sua contribuição ajuda a construir o maior acervo colaborativo de musicografia Braille já criado.",
   nodv_cta: "Começar a Contribuir",
+  nodv_volunteer_title: "Seja um Voluntário de Transcrição",
+  nodv_volunteer_desc: "Estamos formando um grupo de músicos videntes voluntários para transcrever partituras convencionais em musicografia Braille. Cada partitura transcrita amplia o acervo disponível para músicos com deficiência visual em todo o mundo. Não é necessário ter experiência prévia \u2014 o método Five Steps guia você passo a passo.",
+  nodv_volunteer_cta: "Quero ser voluntário",
+  nodv_volunteer_contact_cta: "Falar com a equipe",
 
   lib_title: "Acervo de Materiais",
   lib_subtitle: "Materiais didáticos organizados pelos 5 Graus e 23 etapas do método",
@@ -447,6 +455,10 @@ const en: Translations = {
   nodv_impact_title: "The Impact of Your Contribution",
   nodv_impact_desc: "Each material you create and organize according to the Five Steps stages can be used by teachers and students worldwide. Your contribution helps build the largest collaborative Braille music library ever created.",
   nodv_cta: "Start Contributing",
+  nodv_volunteer_title: "Become a Transcription Volunteer",
+  nodv_volunteer_desc: "We are forming a group of sighted musician volunteers to transcribe conventional sheet music into Braille music notation. Each transcribed score expands the library available to visually impaired musicians worldwide. No prior experience is required \u2014 the Five Steps method guides you step by step.",
+  nodv_volunteer_cta: "I want to volunteer",
+  nodv_volunteer_contact_cta: "Talk to the team",
 
   lib_title: "Materials Library",
   lib_subtitle: "Teaching materials organized by the 5 Grades and 23 stages of the method",
@@ -617,6 +629,10 @@ const es: Translations = {
   nodv_impact_title: "El Impacto de tu Contribución",
   nodv_impact_desc: "Cada material que creas y organices de acuerdo con las etapas de Five Steps puede ser utilizado por profesores y estudiantes en todo el mundo. Tu contribución ayuda a construir la biblioteca colaborativa de musicografía Braille más grande jamás creada.",
   nodv_cta: "Comenzar a Contribuir",
+  nodv_volunteer_title: "S\u00e9 Voluntario de Transcripci\u00f3n",
+  nodv_volunteer_desc: "Estamos formando un grupo de m\u00fasicos videntes voluntarios para transcribir partituras convencionales en musicograf\u00eda Braille. Cada partitura transcrita ampl\u00eda la biblioteca disponible para m\u00fasicos con discapacidad visual en todo el mundo. No se requiere experiencia previa \u2014 el m\u00e9todo Five Steps te gu\u00eda paso a paso.",
+  nodv_volunteer_cta: "Quiero ser voluntario",
+  nodv_volunteer_contact_cta: "Hablar con el equipo",
 
   lib_title: "Biblioteca de Materiales",
   lib_subtitle: "Materiales didácticos organizados por los 5 Grados y 23 etapas del método",
