@@ -188,3 +188,8 @@
 ## Filtro de Idioma no Fórum e Convite a Voluntários
 - [x] Filtro por idioma (Todos/PT/EN/ES) na lista de tópicos do fórum
 - [x] Bloco de convite a voluntários na página ForMusiciansNoDV
+
+## Domínio de E-mail Verificado
+- [x] Verificar domínio braille5steps.com no Resend (registros SPF/DKIM/DMARC no Hostinger)
+- [x] Atualizar FROM_ADDRESS em server/email.ts para "Five Steps <noreply@braille5steps.com>"
+- [x] Atualizar from nos e-mails de inscrição em eventos (server/routers.ts) — já estava correto

@@ -13,10 +13,8 @@ const CONTACT_RECIPIENTS = [
   "rafaelvanazzi@gmail.com",
 ];
 
-// Sender address — must be a verified domain in Resend.
-// Using onboarding@resend.dev works for testing; once a custom domain
-// is verified in Resend, replace with e.g. "Five Steps <noreply@braille5steps.com>"
-const FROM_ADDRESS = "Five Steps <onboarding@resend.dev>";
+// Sender address — verified domain in Resend.
+const FROM_ADDRESS = "Five Steps <noreply@braille5steps.com>";
 
 export interface ContactEmailPayload {
   name: string;
