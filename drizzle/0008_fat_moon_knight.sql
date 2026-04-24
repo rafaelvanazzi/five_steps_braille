@@ -1,0 +1,1 @@
+ALTER TABLE `forum_topics` ADD `language` enum('pt','en','es') DEFAULT 'pt' NOT NULL;

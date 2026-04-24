@@ -225,11 +225,12 @@ const forumRouter = router({
       categorySlug: z.string(),
       title: z.string().min(3).max(255),
       body: z.string().min(1).max(10000),
+      language: z.enum(["pt", "en", "es"]).default("pt"),
     }))
     .mutation(async ({ input, ctx }) => {
       const cat = await getForumCategoryBySlug(input.categorySlug);
       if (!cat) throw new TRPCError({ code: "NOT_FOUND" });
-      await createForumTopic({ categoryId: cat.id, userId: ctx.user.id, title: input.title });
+      await createForumTopic({ categoryId: cat.id, userId: ctx.user.id, title: input.title, language: input.language });
       const topics = await getForumTopics(cat.id, true);
       const newTopic = topics.find(t => t.title === input.title && t.userId === ctx.user.id);
       if (!newTopic) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });

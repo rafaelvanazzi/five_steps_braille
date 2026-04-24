@@ -547,6 +547,7 @@ export async function getForumTopics(categoryId: number, includeHidden = false) 
     categoryId: forumTopics.categoryId,
     userId: forumTopics.userId,
     title: forumTopics.title,
+    language: forumTopics.language,
     pinned: forumTopics.pinned,
     hidden: forumTopics.hidden,
     lastPostAt: forumTopics.lastPostAt,

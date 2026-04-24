@@ -176,3 +176,11 @@
 - [ ] Navegação: link "Fórum" no Header (PT/EN/ES)
 - [ ] Rotas no App.tsx: /forum, /forum/:slug, /forum/:slug/:topicId
 - [ ] Testes vitest para os novos endpoints
+
+## Badge de Idioma no Fórum
+- [ ] Schema: adicionar campo `language` (enum: pt/en/es) na tabela forum_topics
+- [ ] Migração SQL aplicada
+- [ ] Backend: atualizar createTopic e listTopics para incluir language
+- [ ] Frontend ForumCategory: seletor de idioma ao criar tópico
+- [ ] Frontend ForumCategory: badge PT/EN/ES nos cards de tópicos
+- [ ] Frontend ForumTopic: badge de idioma no cabeçalho do tópico

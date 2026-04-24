@@ -160,6 +160,7 @@ export const forumTopics = mysqlTable("forum_topics", {
   categoryId: int("categoryId").notNull(),
   userId: int("userId").notNull(),
   title: varchar("title", { length: 255 }).notNull(),
+  language: mysqlEnum("language", ["pt", "en", "es"]).default("pt").notNull(),
   pinned: boolean("pinned").default(false).notNull(),
   hidden: boolean("hidden").default(false).notNull(),
   lastPostAt: timestamp("lastPostAt").defaultNow().notNull(),

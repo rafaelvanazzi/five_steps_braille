@@ -25,6 +25,7 @@ export default function ForumCategory() {
   const [newTopicOpen, setNewTopicOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
+  const [topicLang, setTopicLang] = useState<"pt" | "en" | "es">(language as "pt" | "en" | "es" || "pt");
   const [showDisplayNameDialog, setShowDisplayNameDialog] = useState(false);
 
   const { data, isLoading } = trpc.forum.topics.useQuery({ slug: slug ?? "" }, { enabled: !!slug });
@@ -53,7 +54,7 @@ export default function ForumCategory() {
 
   const handleSubmit = () => {
     if (!title.trim() || !body.trim()) return;
-    createTopic.mutate({ categorySlug: slug ?? "", title: title.trim(), body: body.trim() });
+    createTopic.mutate({ categorySlug: slug ?? "", title: title.trim(), body: body.trim(), language: topicLang });
   };
 
   const cat = data?.category;
@@ -123,6 +124,19 @@ export default function ForumCategory() {
                       </p>
                     </Link>
                     <div className="flex items-center gap-3 flex-shrink-0">
+                      {/* Language badge */}
+                      {topic.language && (
+                        <span
+                          className={`text-xs font-semibold px-1.5 py-0.5 rounded uppercase tracking-wide ${
+                            topic.language === "pt" ? "bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300" :
+                            topic.language === "es" ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300" :
+                            "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300"
+                          }`}
+                          aria-label={`Idioma: ${topic.language === "pt" ? "Português" : topic.language === "es" ? "Español" : "English"}`}
+                        >
+                          {topic.language}
+                        </span>
+                      )}
                       <span className="text-sm text-muted-foreground" aria-label={`${topic.replyCount} respostas`}>
                         <MessageSquare className="w-3.5 h-3.5 inline mr-1" aria-hidden="true" />
                         {topic.replyCount}
@@ -178,6 +192,27 @@ export default function ForumCategory() {
                   maxLength={255}
                   aria-required="true"
                 />
+              </div>
+              <div>
+                <Label htmlFor="topic-lang">{language === "en" ? "Language" : language === "es" ? "Idioma" : "Idioma"}</Label>
+                <div className="flex gap-2 mt-1" role="radiogroup" aria-label="Idioma do tópico">
+                  {(["pt", "en", "es"] as const).map(l => (
+                    <button
+                      key={l}
+                      type="button"
+                      role="radio"
+                      aria-checked={topicLang === l}
+                      onClick={() => setTopicLang(l)}
+                      className={`px-3 py-1.5 rounded text-sm font-semibold uppercase border transition-colors ${
+                        topicLang === l
+                          ? l === "pt" ? "bg-green-600 text-white border-green-600" : l === "es" ? "bg-yellow-500 text-white border-yellow-500" : "bg-blue-600 text-white border-blue-600"
+                          : "bg-background text-muted-foreground border-border hover:border-foreground"
+                      }`}
+                    >
+                      {l === "pt" ? "PT" : l === "es" ? "ES" : "EN"}
+                    </button>
+                  ))}
+                </div>
               </div>
               <div>
                 <Label htmlFor="topic-body">{language === "en" ? "Message" : language === "es" ? "Mensaje" : "Mensagem"} *</Label>
