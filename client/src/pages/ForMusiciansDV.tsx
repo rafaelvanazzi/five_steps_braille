@@ -50,6 +50,21 @@ export default function ForMusiciansDV() {
         </div>
       </section>
 
+      {/* Peer Learning Story */}
+      <section className="py-14" aria-labelledby="peer-heading">
+        <div className="container max-w-3xl mx-auto">
+          <div className="flex items-start gap-4">
+            <div className="bg-amber-100 text-amber-700 rounded-xl p-3 shrink-0">
+              <Lightbulb className="w-6 h-6" aria-hidden="true" />
+            </div>
+            <div>
+              <h2 id="peer-heading" className="text-2xl md:text-3xl font-bold mb-4">{t.dv_peer_title}</h2>
+              <p className="text-muted-foreground leading-relaxed text-lg">{t.dv_peer_desc}</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
       {/* Learning Journey */}
       <section className="py-14" aria-labelledby="journey-heading">
         <div className="container max-w-3xl mx-auto">

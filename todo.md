@@ -203,3 +203,10 @@
 - [x] Página Para Educadores de Música: reformulada com foco pedagógico comprovado, público-alvo explícito
 - [x] Página Sobre o Método: seção Dalcroze adicionada (Diploma Rítmica Jacques-Dalcroze, Santiago 2018)
 - [x] LanguageContext: novos textos em PT/EN/ES para todas as seções reformuladas
+
+## Conteúdo do Vídeo de Aula Incorporado ao Site
+- [x] Citações aprimoradas de Rafael Vanazzi na Home (seção de destaque visual)
+- [x] História do "aluno ensinando aluno" na página Para Pessoas com DV
+- [x] Seção Joan Llongueres (Dalcroze para cegos) na página Sobre o Método
+- [x] Crítica às provas de aptidão universitárias na página Para Educadores de Música
+- [x] Embed do vídeo da aula (YouTube) na página Sobre o Método

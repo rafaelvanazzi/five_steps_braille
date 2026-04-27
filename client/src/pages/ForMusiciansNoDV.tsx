@@ -3,7 +3,7 @@ import SiteLayout from "@/components/SiteLayout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Link } from "wouter";
-import { CheckCircle2, GraduationCap, Globe, ArrowRight, Users, BookOpen } from "lucide-react";
+import { CheckCircle2, GraduationCap, Globe, ArrowRight, Users, BookOpen, AlertTriangle } from "lucide-react";
 
 export default function ForMusiciansNoDV() {
   const { t } = useLanguage();
@@ -51,6 +51,21 @@ export default function ForMusiciansNoDV() {
             <GraduationCap className="w-10 h-10 text-primary mb-4" aria-hidden="true" />
             <h2 id="impact-nodv-heading" className="text-2xl font-bold mb-4">{t.nodv_impact_title}</h2>
             <p className="text-muted-foreground leading-relaxed">{t.nodv_impact_desc}</p>
+          </div>
+        </div>
+      </section>
+
+      {/* University Critique */}
+      <section className="py-14 bg-muted/40" aria-labelledby="university-nodv-heading">
+        <div className="container max-w-3xl mx-auto">
+          <div className="flex items-start gap-4">
+            <div className="bg-orange-100 text-orange-700 rounded-xl p-3 shrink-0">
+              <AlertTriangle className="w-6 h-6" aria-hidden="true" />
+            </div>
+            <div>
+              <h2 id="university-nodv-heading" className="text-2xl md:text-3xl font-bold mb-4">{t.nodv_university_title}</h2>
+              <p className="text-muted-foreground leading-relaxed text-lg">{t.nodv_university_desc}</p>
+            </div>
           </div>
         </div>
       </section>

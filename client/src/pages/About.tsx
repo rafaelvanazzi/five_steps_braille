@@ -139,6 +139,19 @@ export default function About() {
         </div>
       </section>
 
+      {/* Llongueres — Dalcroze for the Blind */}
+      <section className="py-14 bg-muted/40" aria-labelledby="llongueres-heading">
+        <div className="container">
+          <div className="max-w-3xl mx-auto">
+            <div className="flex items-center gap-3 mb-4">
+              <Music className="w-6 h-6 text-secondary" aria-hidden="true" />
+              <h2 id="llongueres-heading" className="text-2xl md:text-3xl font-bold">{t.about_llongueres_title}</h2>
+            </div>
+            <p className="text-muted-foreground leading-relaxed">{t.about_llongueres_desc}</p>
+          </div>
+        </div>
+      </section>
+
       {/* 5 Grades Detail */}
       <section className="py-14 bg-muted/40" aria-labelledby="grades-detail-heading">
         <div className="container">
@@ -195,6 +208,42 @@ export default function About() {
                   {item}
                 </span>
               ))}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Video Embed */}
+      <section className="py-14 bg-muted/40" aria-labelledby="video-heading">
+        <div className="container">
+          <div className="max-w-3xl mx-auto">
+            <h2 id="video-heading" className="text-2xl md:text-3xl font-bold mb-2 text-center">
+              {language === "pt" ? "Assista: Aula sobre Musicografia Braille" :
+               language === "en" ? "Watch: Lecture on Braille Music Notation" :
+               "Ver: Clase sobre Musicografía Braille"}
+            </h2>
+            <p className="text-muted-foreground text-center mb-6 text-sm">
+              {language === "pt" ? "Rafael Vanazzi apresenta os fundamentos pedagógicos e experiências práticas do projeto." :
+               language === "en" ? "Rafael Vanazzi presents the pedagogical foundations and practical experiences of the project." :
+               "Rafael Vanazzi presenta los fundamentos pedagógicos y las experiencias prácticas del proyecto."}
+            </p>
+            <div
+              className="relative w-full rounded-2xl overflow-hidden shadow-lg"
+              style={{ paddingBottom: "56.25%" }}
+              aria-label={language === "pt" ? "Vídeo: Aula sobre Musicografia Braille por Rafael Vanazzi" :
+                          language === "en" ? "Video: Lecture on Braille Music Notation by Rafael Vanazzi" :
+                          "Video: Clase sobre Musicografía Braille por Rafael Vanazzi"}
+            >
+              <iframe
+                className="absolute inset-0 w-full h-full"
+                src="https://www.youtube.com/embed/RVjoGH4o_X0?start=39"
+                title={language === "pt" ? "Aula sobre Musicografia Braille — Rafael Vanazzi" :
+                       language === "en" ? "Lecture on Braille Music Notation — Rafael Vanazzi" :
+                       "Clase sobre Musicografía Braille — Rafael Vanazzi"}
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                allowFullScreen
+                loading="lazy"
+              />
             </div>
           </div>
         </div>

@@ -196,6 +196,30 @@ export default function Home() {
         </div>
       </section>
 
+      {/* Quotes Section */}
+      <section className="py-16 md:py-20" aria-labelledby="quotes-heading">
+        <div className="container">
+          <h2 id="quotes-heading" className="sr-only">Perspectivas do Projeto</h2>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-5xl mx-auto">
+            {[
+              { quote: t.home_quote1, ctx: t.home_quote1_context },
+              { quote: t.home_quote2, ctx: t.home_quote2_context },
+              { quote: t.home_quote3, ctx: t.home_quote3_context },
+            ].map((item, i) => (
+              <figure key={i} className="bg-card border border-border rounded-2xl p-6 flex flex-col gap-4">
+                <span className="text-4xl text-primary/30 font-serif leading-none" aria-hidden="true">&ldquo;</span>
+                <blockquote className="text-foreground leading-relaxed text-sm flex-1">
+                  {item.quote}
+                </blockquote>
+                <figcaption className="text-xs text-muted-foreground font-medium border-t border-border pt-3">
+                  {item.ctx}
+                </figcaption>
+              </figure>
+            ))}
+          </div>
+        </div>
+      </section>
+
       {/* Community Section */}
       <section className="py-16 md:py-20" aria-labelledby="community-heading">
         <div className="container">

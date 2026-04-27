@@ -191,6 +191,26 @@ type Translations = {
   common_read_more: string;
   common_skip_nav: string;
 
+  // Quotes from video
+  home_quote1: string;
+  home_quote1_context: string;
+  home_quote2: string;
+  home_quote2_context: string;
+  home_quote3: string;
+  home_quote3_context: string;
+
+  // About — Dalcroze for the blind (Llongueres)
+  about_llongueres_title: string;
+  about_llongueres_desc: string;
+
+  // DV page — peer learning story
+  dv_peer_title: string;
+  dv_peer_desc: string;
+
+  // NoDV page — university critique
+  nodv_university_title: string;
+  nodv_university_desc: string;
+
   // Services
   home_services_title: string;
   home_services_subtitle: string;
@@ -399,6 +419,22 @@ const pt: Translations = {
   home_services_consulting_desc: "Diagnóstico e capacitação em acessibilidade musical para escolas, conservatórios e universidades.",
   home_services_languages: "Disponível em português e espanhol",
   home_services_cta: "Solicitar Orçamento",
+
+  home_quote1: "A musicografia Braille não é uma garantia de acesso e de inclusão. Ela é um meio, ela é uma ferramenta.",
+  home_quote1_context: "Rafael Vanazzi",
+  home_quote2: "O professor não pode transmitir ao aluno aquilo que ele mesmo não possui. Para ensinar a partir do universo da PDV, é preciso compreender esse universo por dentro — e não apenas adaptá-lo a partir de fora.",
+  home_quote2_context: "Rafael Vanazzi — sobre a necessidade de referenciais perceptivos próprios da PDV",
+  home_quote3: "A distância entre o discurso da inclusão e a prática pedagógica real é o principal obstáculo a ser superado na educação musical para pessoas com deficiência visual.",
+  home_quote3_context: "Rafael Vanazzi — sobre a teoria versus a prática em sala de aula",
+
+  about_llongueres_title: "Dalcroze e a Educação Musical para Cegos — Joan Llongueres",
+  about_llongueres_desc: "Embora Émile Jaques-Dalcroze não tenha desenvolvido atividades específicas para pessoas cegas, seu aluno Joan Llongueres (Barcelona) aplicou os princípios da Rítmica com crianças cegas durante sete anos com resultados notáveis. Essa experiência demonstrou que a vivência rítmica e corporal não depende da visão — e que, portanto, é o caminho mais natural antes de introduzir a leitura formal em Braille. O Five Steps incorpora essa perspectiva: a experiência musical precede a partitura.",
+
+  dv_peer_title: "Quando a Explicação Vem de Dentro",
+  dv_peer_desc: "Em uma aula prática, ao tentar explicar um conceito musical a um aluno com deficiência visual sem conseguir que ele compreendesse, pedimos a outro aluno com DV — que já havia entendido — que explicasse. A compreensão foi imediata. A explicação usou referenciais completamente diferentes dos de um professor vidente: mais diretos, mais táteis, mais conectados ao universo de quem vive o Braille por dentro. Essa experiência, repetida diversas vezes, é a base do nosso incentivo para que músicos com DV se tornem professores.",
+
+  nodv_university_title: "Um Problema nas Universidades",
+  nodv_university_desc: "As provas de aptidão musical em universidades brasileiras frequentemente exigem leitura à primeira vista de partitura. Para candidatos com deficiência visual, isso representa uma barreira artificial: enquanto o músico vidente pode ler e tocar simultaneamente ao piano, o músico cego precisa primeiro memorizar a partitura tátil para depois executá-la. Exigir os mesmos critérios é, na prática, excluir. O educador de música que compreende a musicografia Braille tem as ferramentas para propor avaliações mais justas e pedagogicamente coerentes.",
 };
 
 const en: Translations = {
@@ -594,6 +630,22 @@ const en: Translations = {
   home_services_consulting_desc: "Accessibility assessment and training in braille music for schools, conservatories, and universities.",
   home_services_languages: "Available in Portuguese and Spanish",
   home_services_cta: "Request a Quote",
+
+  home_quote1: "Braille music notation is not a guarantee of access and inclusion. It is a means, it is a tool.",
+  home_quote1_context: "Rafael Vanazzi",
+  home_quote2: "A teacher cannot transmit to the student what they themselves do not possess. To teach from within the world of the visually impaired, one must understand that world from the inside — not merely adapt it from the outside.",
+  home_quote2_context: "Rafael Vanazzi — on the need for perceptual references intrinsic to the visually impaired",
+  home_quote3: "The gap between the discourse of inclusion and real pedagogical practice is the main obstacle to be overcome in music education for people with visual impairment.",
+  home_quote3_context: "Rafael Vanazzi — on theory versus practice in the classroom",
+
+  about_llongueres_title: "Dalcroze and Music Education for the Blind — Joan Llongueres",
+  about_llongueres_desc: "Although Émile Jaques-Dalcroze did not develop specific activities for blind people, his student Joan Llongueres (Barcelona) applied the principles of Eurhythmics with blind children for seven years with remarkable results. This experience demonstrated that rhythmic and bodily experience does not depend on vision — and therefore is the most natural path before introducing formal Braille reading. Five Steps incorporates this perspective: musical experience precedes the score.",
+
+  dv_peer_title: "When the Explanation Comes from Within",
+  dv_peer_desc: "In a practical class, when trying to explain a musical concept to a visually impaired student without success, we asked another student with VI — who had already understood — to explain. Comprehension was immediate. The explanation used entirely different references than those of a sighted teacher: more direct, more tactile, more connected to the world of someone who lives Braille from the inside. This experience, repeated many times, is the foundation of our encouragement for musicians with VI to become teachers.",
+
+  nodv_university_title: "A Problem in Universities",
+  nodv_university_desc: "Music aptitude tests at Brazilian universities frequently require sight-reading of a score. For visually impaired candidates, this represents an artificial barrier: while a sighted musician can read and play simultaneously at the piano, a blind musician must first memorize the tactile score before performing it. Applying the same criteria is, in practice, exclusionary. A music educator who understands Braille music notation has the tools to propose fairer and pedagogically coherent assessments.",
 };
 
 const es: Translations = {
@@ -789,6 +841,22 @@ const es: Translations = {
   home_services_consulting_desc: "Diagnóstico y capacitación en accesibilidad musical para escuelas, conservatorios y universidades.",
   home_services_languages: "Disponible en portugués y español",
   home_services_cta: "Solicitar Presupuesto",
+
+  home_quote1: "La musicografía Braille no es una garantía de acceso e inclusión. Es un medio, es una herramienta.",
+  home_quote1_context: "Rafael Vanazzi",
+  home_quote2: "El profesor no puede transmitir al estudiante lo que él mismo no posee. Para enseñar desde el universo de la persona con DV, es necesario comprender ese universo desde adentro — no simplemente adaptarlo desde afuera.",
+  home_quote2_context: "Rafael Vanazzi — sobre la necesidad de referencias perceptivas propias de la persona con DV",
+  home_quote3: "La distancia entre el discurso de la inclusión y la práctica pedagógica real es el principal obstáculo a superar en la educación musical para personas con discapacidad visual.",
+  home_quote3_context: "Rafael Vanazzi — sobre la teoría versus la práctica en el aula",
+
+  about_llongueres_title: "Dalcroze y la Educación Musical para Ciegos — Joan Llongueres",
+  about_llongueres_desc: "Aunque Émile Jaques-Dalcroze no desarrolló actividades específicas para personas ciegas, su alumno Joan Llongueres (Barcelona) aplicó los principios de la Rítmica con niños ciegos durante siete años con resultados notables. Esta experiencia demostró que la vivencia rítmica y corporal no depende de la visión — y que, por lo tanto, es el camino más natural antes de introducir la lectura formal en Braille. Five Steps incorpora esta perspectiva: la experiencia musical precede a la partitura.",
+
+  dv_peer_title: "Cuando la Explicación Viene desde Adentro",
+  dv_peer_desc: "En una clase práctica, al intentar explicar un concepto musical a un estudiante con discapacidad visual sin lograrlo, pedimos a otro estudiante con DV — que ya había comprendido — que explicara. La comprensión fue inmediata. La explicación usó referencias completamente distintas a las de un profesor vidente: más directas, más táctiles, más conectadas al universo de quien vive el Braille desde adentro. Esta experiencia, repetida muchas veces, es la base de nuestro incentivo para que músicos con DV se conviertan en profesores.",
+
+  nodv_university_title: "Un Problema en las Universidades",
+  nodv_university_desc: "Las pruebas de aptitud musical en universidades frecuentemente exigen lectura a primera vista de una partitura. Para candidatos con discapacidad visual, esto representa una barrera artificial: mientras el músico vidente puede leer y tocar simultáneamente al piano, el músico ciego debe primero memorizar la partitura táctil para luego ejecutarla. Aplicar los mismos criterios es, en la práctica, excluir. El educador musical que comprende la musicografía Braille tiene las herramientas para proponer evaluaciones más justas y pedagógicamente coherentes.",
 };
 
 type LanguageContextType = {
