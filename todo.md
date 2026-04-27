@@ -193,3 +193,13 @@
 - [x] Verificar domínio braille5steps.com no Resend (registros SPF/DKIM/DMARC no Hostinger)
 - [x] Atualizar FROM_ADDRESS em server/email.ts para "Five Steps <noreply@braille5steps.com>"
 - [x] Atualizar from nos e-mails de inscrição em eventos (server/routers.ts) — já estava correto
+
+## Realinhamento do Site (Missão e Posicionamento)
+- [x] Home: nova seção de Missão com sonho do projeto
+- [x] Home: seção de Evidências com artigo publicado e dissertação UNICAMP
+- [x] Home: seção de Comunidade (Fórum Internacional + Acervo classificado)
+- [x] Home: graus do método reposicionados como instrumento da missão
+- [x] Página Para Pessoas com DV: unificada (músicos e não músicos) com seção para quem ensina
+- [x] Página Para Educadores de Música: reformulada com foco pedagógico comprovado, público-alvo explícito
+- [x] Página Sobre o Método: seção Dalcroze adicionada (Diploma Rítmica Jacques-Dalcroze, Santiago 2018)
+- [x] LanguageContext: novos textos em PT/EN/ES para todas as seções reformuladas

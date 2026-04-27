@@ -3,7 +3,11 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import SiteLayout from "@/components/SiteLayout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { ArrowRight, BookOpen, Users, Building2, Music2, GraduationCap, Mic, FileMusic, Landmark, Globe } from "lucide-react";
+import {
+  ArrowRight, BookOpen, Users, Building2, Music2,
+  GraduationCap, Mic, FileMusic, Landmark, Globe,
+  FlaskConical, Star, MessageSquare, Library,
+} from "lucide-react";
 
 const gradeColors = [
   "from-blue-600 to-blue-800",
@@ -11,14 +15,6 @@ const gradeColors = [
   "from-amber-500 to-amber-700",
   "from-orange-500 to-orange-700",
   "from-purple-600 to-purple-800",
-];
-
-const gradeBadgeClasses = [
-  "grade-badge-1",
-  "grade-badge-2",
-  "grade-badge-3",
-  "grade-badge-4",
-  "grade-badge-5",
 ];
 
 export default function Home() {
@@ -130,76 +126,127 @@ export default function Home() {
         <div className="h-12" aria-hidden="true" />
       </section>
 
-      {/* What is Five Steps */}
-      <section className="py-16 md:py-20" aria-labelledby="what-heading">
+      {/* Mission Section */}
+      <section className="py-16 md:py-20" aria-labelledby="mission-heading">
         <div className="container">
-          <div className="max-w-3xl mx-auto text-center">
-            <h2 id="what-heading" className="text-3xl md:text-4xl font-bold text-foreground mb-6">
-              {t.home_what_title}
-            </h2>
-            <p className="text-lg text-muted-foreground leading-relaxed">
-              {t.home_what_desc}
-            </p>
-          </div>
-
-          {/* Stats */}
-          <div className="grid grid-cols-3 gap-6 mt-12 max-w-lg mx-auto text-center">
-            {[
-              { num: "5", label: "Graus" },
-              { num: "23", label: "Etapas" },
-              { num: "∞", label: "Partituras", ariaLabel: "Infinitas Partituras" },
-            ].map((stat) => (
-              <div key={stat.label} className="bg-card border border-border rounded-xl p-6 shadow-sm" aria-label={(stat as any).ariaLabel || `${stat.num} ${stat.label}`}>
-                <div className="text-4xl font-bold text-primary mb-1" aria-hidden="true">{stat.num}</div>
-                <div className="text-sm text-muted-foreground font-medium" aria-hidden="true">{stat.label}</div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-12 items-center">
+            <div>
+              <h2 id="mission-heading" className="text-3xl md:text-4xl font-bold text-foreground mb-6">
+                {t.home_mission_title}
+              </h2>
+              <p className="text-lg text-muted-foreground leading-relaxed mb-6">
+                {t.home_mission_desc}
+              </p>
+            </div>
+            <div className="bg-primary/5 border border-primary/15 rounded-2xl p-8">
+              <div className="flex items-start gap-4 mb-6">
+                <div className="bg-secondary/20 text-secondary rounded-xl p-3 shrink-0">
+                  <Star className="w-6 h-6" aria-hidden="true" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-foreground text-lg mb-2">{t.home_dream_title}</h3>
+                  <p className="text-muted-foreground leading-relaxed text-sm">
+                    {t.home_dream_desc}
+                  </p>
+                </div>
               </div>
-            ))}
+              <div className="grid grid-cols-3 gap-4 pt-4 border-t border-border">
+                {[
+                  { num: "5", label: "Graus" },
+                  { num: "23", label: "Etapas" },
+                  { num: "3", label: "Idiomas" },
+                ].map((stat) => (
+                  <div key={stat.label} className="text-center" aria-label={`${stat.num} ${stat.label}`}>
+                    <div className="text-3xl font-bold text-primary mb-1" aria-hidden="true">{stat.num}</div>
+                    <div className="text-xs text-muted-foreground font-medium" aria-hidden="true">{stat.label}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
       </section>
 
-      {/* 5 Grades */}
-      <section className="py-16 bg-muted/50" aria-labelledby="grades-heading">
+      {/* Evidence Section */}
+      <section className="py-16 bg-muted/50" aria-labelledby="evidence-heading">
         <div className="container">
-          <h2 id="grades-heading" className="text-3xl md:text-4xl font-bold text-center mb-12">
-            {t.home_grades_title}
+          <div className="max-w-4xl mx-auto">
+            <div className="flex items-center gap-3 mb-6">
+              <div className="bg-amber-100 text-amber-700 rounded-xl p-3">
+                <FlaskConical className="w-6 h-6" aria-hidden="true" />
+              </div>
+              <h2 id="evidence-heading" className="text-3xl md:text-4xl font-bold text-foreground">
+                {t.home_evidence_title}
+              </h2>
+            </div>
+            <p className="text-lg text-muted-foreground leading-relaxed mb-8">
+              {t.home_evidence_desc}
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="bg-card border border-border rounded-xl p-5">
+                <div className="text-xs font-semibold text-amber-700 uppercase tracking-wider mb-2">Artigo Publicado</div>
+                <p className="text-sm text-foreground leading-relaxed">{t.home_evidence_article}</p>
+              </div>
+              <div className="bg-card border border-border rounded-xl p-5">
+                <div className="text-xs font-semibold text-primary uppercase tracking-wider mb-2">Dissertação de Mestrado — UNICAMP</div>
+                <p className="text-sm text-foreground leading-relaxed">{t.home_evidence_thesis}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Community Section */}
+      <section className="py-16 md:py-20" aria-labelledby="community-heading">
+        <div className="container">
+          <h2 id="community-heading" className="text-3xl md:text-4xl font-bold text-center mb-12">
+            {t.home_community_title}
           </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-            {grades.map((grade, i) => (
-              <Card
-                key={i}
-                className="border-0 shadow-md overflow-hidden hover:shadow-lg transition-shadow"
-              >
-                <div className={`bg-gradient-to-br ${gradeColors[i]} p-4 text-white`}>
-                  <div className="text-3xl font-bold mb-1">{i + 1}</div>
-                  <div className="text-xs font-semibold uppercase tracking-wider opacity-80">
-                    {grade.stages} {grade.stages === 1 ? "etapa" : "etapas"}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-3xl mx-auto">
+            <Link href="/forum" aria-label={t.home_community_forum}>
+              <Card className="border border-blue-200 bg-blue-50 hover:shadow-lg transition-all cursor-pointer group h-full">
+                <CardContent className="p-6">
+                  <div className="text-blue-700 mb-4">
+                    <MessageSquare className="w-8 h-8" aria-hidden="true" />
                   </div>
-                </div>
-                <CardContent className="p-4">
-                  <h3 className="font-semibold text-sm text-foreground mb-2 leading-tight">
-                    {grade.title}
+                  <h3 className="font-bold text-lg text-foreground mb-2 group-hover:text-primary transition-colors">
+                    {t.home_community_forum}
                   </h3>
-                  <p className="text-xs text-muted-foreground leading-relaxed">
-                    {grade.desc}
+                  <p className="text-muted-foreground text-sm leading-relaxed mb-4">
+                    {t.home_community_forum_desc}
                   </p>
+                  <span className="text-sm font-semibold text-blue-700 flex items-center gap-1">
+                    {t.common_read_more}
+                    <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" aria-hidden="true" />
+                  </span>
                 </CardContent>
               </Card>
-            ))}
-          </div>
-          <div className="text-center mt-8">
-            <Button asChild variant="outline" size="lg">
-              <Link href="/sobre">
-                {t.common_read_more}
-                <ArrowRight className="w-4 h-4 ml-2" aria-hidden="true" />
-              </Link>
-            </Button>
+            </Link>
+            <Link href="/acervo" aria-label={t.home_community_library}>
+              <Card className="border border-emerald-200 bg-emerald-50 hover:shadow-lg transition-all cursor-pointer group h-full">
+                <CardContent className="p-6">
+                  <div className="text-emerald-700 mb-4">
+                    <Library className="w-8 h-8" aria-hidden="true" />
+                  </div>
+                  <h3 className="font-bold text-lg text-foreground mb-2 group-hover:text-primary transition-colors">
+                    {t.home_community_library}
+                  </h3>
+                  <p className="text-muted-foreground text-sm leading-relaxed mb-4">
+                    {t.home_community_library_desc}
+                  </p>
+                  <span className="text-sm font-semibold text-emerald-700 flex items-center gap-1">
+                    {t.common_read_more}
+                    <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" aria-hidden="true" />
+                  </span>
+                </CardContent>
+              </Card>
+            </Link>
           </div>
         </div>
       </section>
 
       {/* Who is it for */}
-      <section className="py-16 md:py-20" aria-labelledby="who-heading">
+      <section className="py-16 bg-muted/50" aria-labelledby="who-heading">
         <div className="container">
           <h2 id="who-heading" className="text-3xl md:text-4xl font-bold text-center mb-12">
             {t.home_who_title}
@@ -228,6 +275,54 @@ export default function Home() {
         </div>
       </section>
 
+      {/* Method Overview */}
+      <section className="py-16 md:py-20" aria-labelledby="what-heading">
+        <div className="container">
+          <div className="max-w-3xl mx-auto text-center mb-12">
+            <h2 id="what-heading" className="text-3xl md:text-4xl font-bold text-foreground mb-6">
+              {t.home_what_title}
+            </h2>
+            <p className="text-lg text-muted-foreground leading-relaxed">
+              {t.home_what_desc}
+            </p>
+          </div>
+
+          <section aria-labelledby="grades-heading">
+          <h3 id="grades-heading" className="text-2xl font-bold text-center mb-8">{t.home_grades_title}</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+            {grades.map((grade, i) => (
+              <Card
+                key={i}
+                className="border-0 shadow-md overflow-hidden hover:shadow-lg transition-shadow"
+              >
+                <div className={`bg-gradient-to-br ${gradeColors[i]} p-4 text-white`}>
+                  <div className="text-3xl font-bold mb-1">{i + 1}</div>
+                  <div className="text-xs font-semibold uppercase tracking-wider opacity-80">
+                    {grade.stages} {grade.stages === 1 ? "etapa" : "etapas"}
+                  </div>
+                </div>
+                <CardContent className="p-4">
+                  <h4 className="font-semibold text-sm text-foreground mb-2 leading-tight">
+                    {grade.title}
+                  </h4>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    {grade.desc}
+                  </p>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+           <div className="text-center mt-8">
+            <Button asChild variant="outline" size="lg">
+              <Link href="/sobre">
+                {t.common_read_more}
+                <ArrowRight className="w-4 h-4 ml-2" aria-hidden="true" />
+              </Link>
+            </Button>
+          </div>
+          </section>
+        </div>
+      </section>
       {/* Services Section */}
       <section className="py-16 bg-muted/50" aria-labelledby="services-heading">
         <div className="container">

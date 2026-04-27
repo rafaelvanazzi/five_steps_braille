@@ -1,8 +1,9 @@
 import { useLanguage } from "@/contexts/LanguageContext";
 import SiteLayout from "@/components/SiteLayout";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
 import { Link } from "wouter";
-import { CheckCircle2, BookOpen, ArrowRight } from "lucide-react";
+import { CheckCircle2, BookOpen, ArrowRight, Users, Lightbulb } from "lucide-react";
 
 export default function ForMusiciansDV() {
   const { t } = useLanguage();
@@ -18,6 +19,7 @@ export default function ForMusiciansDV() {
 
   return (
     <SiteLayout>
+      {/* Hero */}
       <section className="bg-primary text-primary-foreground py-14" aria-labelledby="dv-heading">
         <div className="container">
           <h1 id="dv-heading" className="text-4xl md:text-5xl font-bold mb-4">{t.dv_title}</h1>
@@ -25,6 +27,7 @@ export default function ForMusiciansDV() {
         </div>
       </section>
 
+      {/* A different approach */}
       <section className="py-14" aria-labelledby="what-braille-heading">
         <div className="container max-w-3xl mx-auto">
           <h2 id="what-braille-heading" className="text-2xl md:text-3xl font-bold mb-4">{t.dv_what_title}</h2>
@@ -32,6 +35,7 @@ export default function ForMusiciansDV() {
         </div>
       </section>
 
+      {/* Benefits */}
       <section className="py-14 bg-muted/40" aria-labelledby="benefits-heading">
         <div className="container max-w-3xl mx-auto">
           <h2 id="benefits-heading" className="text-2xl md:text-3xl font-bold mb-8">{t.dv_benefits_title}</h2>
@@ -46,6 +50,7 @@ export default function ForMusiciansDV() {
         </div>
       </section>
 
+      {/* Learning Journey */}
       <section className="py-14" aria-labelledby="journey-heading">
         <div className="container max-w-3xl mx-auto">
           <h2 id="journey-heading" className="text-2xl md:text-3xl font-bold mb-8">{t.dv_journey_title}</h2>
@@ -65,15 +70,55 @@ export default function ForMusiciansDV() {
         </div>
       </section>
 
+      {/* For musicians with VI who teach */}
+      <section className="py-14 bg-muted/40" aria-labelledby="teacher-heading">
+        <div className="container max-w-3xl mx-auto">
+          <Card className="border border-primary/20 bg-primary/5">
+            <CardContent className="p-8">
+              <div className="flex items-start gap-4 mb-4">
+                <div className="bg-primary/10 text-primary rounded-xl p-3 shrink-0">
+                  <Users className="w-6 h-6" aria-hidden="true" />
+                </div>
+                <div>
+                  <h2 id="teacher-heading" className="text-2xl font-bold text-foreground mb-3">
+                    {t.dv_teacher_title}
+                  </h2>
+                  <p className="text-muted-foreground leading-relaxed">
+                    {t.dv_teacher_desc}
+                  </p>
+                </div>
+              </div>
+              <div className="mt-6 pt-6 border-t border-primary/15">
+                <div className="flex items-start gap-3">
+                  <Lightbulb className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" aria-hidden="true" />
+                  <p className="text-sm text-muted-foreground leading-relaxed">
+                    O acervo da plataforma inclui atividades criadas por pessoas com DV — identificadas com o badge de criador — para que você possa estudar e se inspirar nessa perspectiva única.
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </section>
+
+      {/* CTA */}
       <section className="py-14 bg-primary text-primary-foreground" aria-label="Chamada para ação">
         <div className="container text-center">
           <h2 className="text-2xl md:text-3xl font-bold mb-6">Comece sua jornada musical</h2>
-          <Button asChild size="lg" className="bg-secondary text-secondary-foreground hover:bg-secondary/90 font-semibold">
-            <Link href="/acervo">
-              <BookOpen className="w-5 h-5 mr-2" aria-hidden="true" />
-              {t.dv_cta}
-            </Link>
-          </Button>
+          <div className="flex flex-wrap justify-center gap-4">
+            <Button asChild size="lg" className="bg-secondary text-secondary-foreground hover:bg-secondary/90 font-semibold">
+              <Link href="/acervo">
+                <BookOpen className="w-5 h-5 mr-2" aria-hidden="true" />
+                {t.dv_cta}
+              </Link>
+            </Button>
+            <Button asChild size="lg" variant="outline" className="border-primary-foreground/40 text-primary-foreground hover:bg-primary-foreground/10 font-semibold">
+              <Link href="/contato">
+                {t.common_read_more}
+                <ArrowRight className="w-5 h-5 ml-2" aria-hidden="true" />
+              </Link>
+            </Button>
+          </div>
         </div>
       </section>
     </SiteLayout>

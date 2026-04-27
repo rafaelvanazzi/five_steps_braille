@@ -3,7 +3,7 @@ import SiteLayout from "@/components/SiteLayout";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Link } from "wouter";
-import { BookOpen, Brain, Globe, ArrowRight } from "lucide-react";
+import { BookOpen, Brain, Globe, ArrowRight, Music } from "lucide-react";
 
 const gradesData = [
   {
@@ -117,6 +117,23 @@ export default function About() {
                   <em>The Musical Mind: The Cognitive Psychology of Music</em> (1985)
                 </p>
               </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Dalcroze Foundation */}
+      <section className="py-14" aria-labelledby="dalcroze-heading">
+        <div className="container">
+          <div className="max-w-3xl mx-auto">
+            <div className="flex items-center gap-3 mb-4">
+              <Music className="w-6 h-6 text-secondary" aria-hidden="true" />
+              <h2 id="dalcroze-heading" className="text-2xl md:text-3xl font-bold">{t.about_dalcroze_title}</h2>
+            </div>
+            <p className="text-muted-foreground leading-relaxed mb-6">{t.about_dalcroze_desc}</p>
+            <div className="bg-secondary/10 border border-secondary/30 rounded-xl p-5">
+              <p className="text-sm font-semibold text-foreground">Institut Jacques-Dalcroze — Genebra, Suíça</p>
+              <p className="text-xs text-muted-foreground mt-1">Diploma em Rítmica Jacques-Dalcroze · Rafael Vanazzi · Santiago, Chile, 2018</p>
             </div>
           </div>
         </div>
