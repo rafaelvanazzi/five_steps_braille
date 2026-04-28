@@ -63,6 +63,11 @@ import {
   getUserDisplayName,
   setUserDisplayName,
   seedForumCategories,
+  incrementTopicView,
+  getTopicViewCount,
+  toggleForumReaction,
+  getReactionsForPosts,
+  searchForumTopics,
 } from "./db";
 import { storagePut, storageGet } from "./storage";
 import { notifyOwner } from "./_core/notification";
@@ -273,6 +278,30 @@ const forumRouter = router({
   setDisplayName: protectedProcedure
     .input(z.object({ displayName: z.string().min(1).max(64) }))
     .mutation(({ input, ctx }) => setUserDisplayName(ctx.user.id, input.displayName)),
+
+  // ── Search ────────────────────────────────────────────────────────────────
+  search: publicProcedure
+    .input(z.object({ query: z.string().min(1).max(200) }))
+    .query(({ input }) => searchForumTopics(input.query)),
+
+  // ── Views ─────────────────────────────────────────────────────────────────
+  incrementView: publicProcedure
+    .input(z.object({ topicId: z.number() }))
+    .mutation(({ input }) => incrementTopicView(input.topicId)),
+  getViewCount: publicProcedure
+    .input(z.object({ topicId: z.number() }))
+    .query(({ input }) => getTopicViewCount(input.topicId)),
+
+  // ── Reactions ─────────────────────────────────────────────────────────────
+  toggleReaction: protectedProcedure
+    .input(z.object({
+      postId: z.number(),
+      emoji: z.enum(["thumbsup", "heart", "bulb", "music", "hands", "question"]),
+    }))
+    .mutation(({ input, ctx }) => toggleForumReaction(input.postId, ctx.user.id, input.emoji)),
+  getReactions: publicProcedure
+    .input(z.object({ postIds: z.array(z.number()) }))
+    .query(({ input }) => getReactionsForPosts(input.postIds)),
 });
 
 export const appRouter = router({

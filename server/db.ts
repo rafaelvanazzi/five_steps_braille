@@ -1,4 +1,4 @@
-import { eq, desc, asc, sql, and, count, or } from "drizzle-orm";
+import { eq, desc, asc, sql, and, count, or, like, inArray } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   InsertUser, users, materials, contactMessages,
@@ -6,6 +6,7 @@ import {
   InsertMaterial, InsertContactMessage,
   InsertMaterialRating, InsertMaterialComment, InsertDownloadLog, InsertMaterialFile,
   events, eventRegistrations, InsertEvent, InsertEventRegistration,
+  forumTopicViews, forumReactions,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -554,22 +555,24 @@ export async function getForumTopics(categoryId: number, includeHidden = false) 
     createdAt: forumTopics.createdAt,
     authorName: users.name,
     authorDisplayName: userDisplayNames.displayName,
+    viewCount: forumTopicViews.viewCount,
   }).from(forumTopics)
     .leftJoin(users, eq(forumTopics.userId, users.id))
     .leftJoin(userDisplayNames, eq(forumTopics.userId, userDisplayNames.userId))
+    .leftJoin(forumTopicViews, eq(forumTopics.id, forumTopicViews.topicId))
     .where(cond)
     .orderBy(desc(forumTopics.pinned), desc(forumTopics.lastPostAt));
   // attach reply count
   const topicIds = rows.map(r => r.id);
-  if (topicIds.length === 0) return rows.map(r => ({ ...r, replyCount: 0 }));
+  if (topicIds.length === 0) return rows.map(r => ({ ...r, replyCount: 0, viewCount: r.viewCount ?? 0 }));
   const replyCounts = await db.select({
     topicId: forumPosts.topicId,
     replyCount: count(forumPosts.id),
   }).from(forumPosts)
-    .where(and(eq(forumPosts.hidden, false), sql`${forumPosts.topicId} IN (${sql.join(topicIds.map(id => sql`${id}`), sql`, `)})`))
+    .where(and(eq(forumPosts.hidden, false), sql`${forumPosts.topicId} IN (${sql.join(topicIds.map(id => sql`${id}`), sql`, `)})`))  
     .groupBy(forumPosts.topicId);
   const replyMap = Object.fromEntries(replyCounts.map(r => [r.topicId, r.replyCount]));
-  return rows.map(r => ({ ...r, replyCount: replyMap[r.id] ?? 0 }));
+  return rows.map(r => ({ ...r, replyCount: replyMap[r.id] ?? 0, viewCount: r.viewCount ?? 0 }));
 }
 
 export async function getForumTopicById(id: number) {
@@ -686,8 +689,115 @@ export async function setUserDisplayName(userId: number, displayName: string) {
     .onDuplicateKeyUpdate({ set: { displayName } });
 }
 
-// ─── Forum seed (5 default categories) ────────────────────────────────────────
+// ─── Forum Topic Views ──────────────────────────────────────────────────────────────────
+export async function incrementTopicView(topicId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.insert(forumTopicViews)
+    .values({ topicId, viewCount: 1 })
+    .onDuplicateKeyUpdate({ set: { viewCount: sql`${forumTopicViews.viewCount} + 1` } });
+}
 
+export async function getTopicViewCount(topicId: number): Promise<number> {
+  const db = await getDb();
+  if (!db) return 0;
+  const result = await db.select({ viewCount: forumTopicViews.viewCount })
+    .from(forumTopicViews)
+    .where(eq(forumTopicViews.topicId, topicId))
+    .limit(1);
+  return result[0]?.viewCount ?? 0;
+}
+
+// ─── Forum Reactions ──────────────────────────────────────────────────────────────────
+export type EmojiType = "thumbsup" | "heart" | "bulb" | "music" | "hands" | "question";
+
+export async function toggleForumReaction(postId: number, userId: number, emoji: EmojiType) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  // Check if reaction already exists
+  const existing = await db.select({ id: forumReactions.id })
+    .from(forumReactions)
+    .where(and(
+      eq(forumReactions.postId, postId),
+      eq(forumReactions.userId, userId),
+      eq(forumReactions.emoji, emoji)
+    ))
+    .limit(1);
+  if (existing.length > 0) {
+    // Remove reaction
+    await db.delete(forumReactions).where(eq(forumReactions.id, existing[0].id));
+    return { added: false };
+  } else {
+    // Add reaction
+    await db.insert(forumReactions).values({ postId, userId, emoji });
+    return { added: true };
+  }
+}
+
+export async function getReactionsForPosts(postIds: number[]) {
+  const db = await getDb();
+  if (!db || postIds.length === 0) return [];
+  return db.select()
+    .from(forumReactions)
+    .where(inArray(forumReactions.postId, postIds));
+}
+
+// ─── Forum Search ───────────────────────────────────────────────────────────────────
+export async function searchForumTopics(query: string) {
+  const db = await getDb();
+  if (!db) return [];
+  const term = `%${query}%`;
+  // Search in topic titles
+  const topicResults = await db
+    .select({
+      topicId: forumTopics.id,
+      topicTitle: forumTopics.title,
+      categoryId: forumTopics.categoryId,
+      language: forumTopics.language,
+      createdAt: forumTopics.createdAt,
+      matchType: sql<string>`'title'`,
+      snippet: sql<string>`NULL`,
+    })
+    .from(forumTopics)
+    .where(and(
+      eq(forumTopics.hidden, false),
+      like(forumTopics.title, term)
+    ))
+    .limit(20);
+
+  // Search in post bodies
+  const postResults = await db
+    .select({
+      topicId: forumPosts.topicId,
+      topicTitle: forumTopics.title,
+      categoryId: forumTopics.categoryId,
+      language: forumTopics.language,
+      createdAt: forumTopics.createdAt,
+      matchType: sql<string>`'body'`,
+      snippet: sql<string>`SUBSTRING(${forumPosts.body}, 1, 200)`,
+    })
+    .from(forumPosts)
+    .innerJoin(forumTopics, eq(forumPosts.topicId, forumTopics.id))
+    .where(and(
+      eq(forumPosts.hidden, false),
+      eq(forumTopics.hidden, false),
+      like(forumPosts.body, term)
+    ))
+    .limit(20);
+
+  // Merge, deduplicate by topicId
+  const seen = new Set<number>();
+  const merged: typeof topicResults = [];
+  for (const r of [...topicResults, ...postResults]) {
+    if (!seen.has(r.topicId)) {
+      seen.add(r.topicId);
+      merged.push(r);
+    }
+  }
+  return merged.slice(0, 20);
+}
+
+// ─── Forum seed (5 default categories) ────────────────────────────────────────────────────────────
 export async function seedForumCategories() {
   const db = await getDb();
   if (!db) return;

@@ -192,6 +192,33 @@ export const userDisplayNames = mysqlTable("user_display_names", {
 export type UserDisplayName = typeof userDisplayNames.$inferSelect;
 export type InsertUserDisplayName = typeof userDisplayNames.$inferInsert;
 
+// ─── Forum Topic Views ────────────────────────────────────────────────────────
+export const forumTopicViews = mysqlTable("forum_topic_views", {
+  id: int("id").autoincrement().primaryKey(),
+  topicId: int("topicId").notNull(),
+  viewCount: int("viewCount").default(0).notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => [
+  uniqueIndex("unique_topic_view").on(table.topicId),
+]);
+
+export type ForumTopicView = typeof forumTopicViews.$inferSelect;
+export type InsertForumTopicView = typeof forumTopicViews.$inferInsert;
+
+// ─── Forum Reactions ────────────────────────────────────────────────────────
+export const forumReactions = mysqlTable("forum_reactions", {
+  id: int("id").autoincrement().primaryKey(),
+  postId: int("postId").notNull(),
+  userId: int("userId").notNull(),
+  emoji: mysqlEnum("emoji", ["thumbsup", "heart", "bulb", "music", "hands", "question"]).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex("unique_post_user_emoji").on(table.postId, table.userId, table.emoji),
+]);
+
+export type ForumReaction = typeof forumReactions.$inferSelect;
+export type InsertForumReaction = typeof forumReactions.$inferInsert;
+
 // ─── Download logs ──────────────────────────────────────────────────────────
 export const downloadLogs = mysqlTable("download_logs", {
   id: int("id").autoincrement().primaryKey(),

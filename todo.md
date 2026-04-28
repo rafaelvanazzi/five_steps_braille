@@ -210,3 +210,15 @@
 - [x] Seção Joan Llongueres (Dalcroze para cegos) na página Sobre o Método
 - [x] Crítica às provas de aptidão universitárias na página Para Educadores de Música
 - [x] Embed do vídeo da aula (YouTube) na página Sobre o Método
+
+## Novas Funcionalidades do Fórum
+
+- [ ] Schema: tabela forum_topic_views (contagem de visualizações)
+- [ ] Schema: tabela forum_reactions (reações com emoji por post)
+- [ ] tRPC: busca global no fórum (título + corpo dos posts)
+- [ ] tRPC: incrementar views ao abrir tópico
+- [ ] tRPC: toggle de reação (adicionar/remover emoji)
+- [ ] UI: barra de busca global na página do fórum
+- [ ] UI: contador de visualizações nos cards de tópico
+- [ ] UI: botões de reação acessíveis nos posts (aria-label descritivo)
+- [ ] Traduções PT/EN/ES para busca e reações

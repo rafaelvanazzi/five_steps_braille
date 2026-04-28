@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useParams, useLocation } from "wouter";
-import { ChevronLeft, Plus, MessageSquare, Pin, EyeOff, Trash2, MoreVertical } from "lucide-react";
+import { ChevronLeft, Plus, MessageSquare, Pin, EyeOff, Trash2, MoreVertical, Eye } from "lucide-react";
 import SiteLayout from "@/components/SiteLayout";
 import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/_core/hooks/useAuth";
@@ -146,7 +146,7 @@ export default function ForumCategory() {
               {topics.map(topic => (
                 <li key={topic.id} className={`rounded-lg border ${topic.hidden ? "border-amber-300 bg-amber-50 dark:bg-amber-950/20" : "border-border bg-card"}`}>
                   <div className="flex items-center gap-3 p-4">
-                    {topic.pinned && <Pin className="w-4 h-4 text-primary flex-shrink-0" aria-label="Tópico fixado" />}
+                    {topic.pinned && <Pin className="w-4 h-4 text-primary flex-shrink-0" aria-label={language === "en" ? "Pinned topic" : language === "es" ? "Tema fijado" : "Tópico fixado"} />}
                     <Link href={`/forum/topico/${topic.id}`} className="flex-1 min-w-0">
                       <span className="font-medium text-foreground hover:text-primary transition-colors line-clamp-1 cursor-pointer">
                         {topic.title}
@@ -169,8 +169,16 @@ export default function ForumCategory() {
                           {topic.language}
                         </span>
                       )}
-                      <span className="text-sm text-muted-foreground" aria-label={`${topic.replyCount} respostas`}>
-                        <MessageSquare className="w-3.5 h-3.5 inline mr-1" aria-hidden="true" />
+                      {/* View count */}
+                      {"viewCount" in topic && typeof topic.viewCount === "number" && topic.viewCount > 0 && (
+                        <span className="text-xs text-muted-foreground flex items-center gap-1" aria-label={`${topic.viewCount} ${language === "en" ? "views" : language === "es" ? "vistas" : "visualizações"}`}>
+                          <Eye className="w-3.5 h-3.5" aria-hidden="true" />
+                          {topic.viewCount}
+                        </span>
+                      )}
+                      {/* Reply count */}
+                      <span className="text-sm text-muted-foreground flex items-center gap-1" aria-label={`${topic.replyCount} ${language === "en" ? "replies" : language === "es" ? "respuestas" : "respostas"}`}>
+                        <MessageSquare className="w-3.5 h-3.5" aria-hidden="true" />
                         {topic.replyCount}
                       </span>
                       {user?.role === "admin" && (
@@ -183,18 +191,22 @@ export default function ForumCategory() {
                           <DropdownMenuContent align="end">
                             <DropdownMenuItem onClick={() => pinTopic.mutate({ topicId: topic.id, pinned: !topic.pinned })}>
                               <Pin className="w-4 h-4 mr-2" aria-hidden="true" />
-                              {topic.pinned ? "Desafixar" : "Fixar"}
+                              {topic.pinned
+                                ? (language === "en" ? "Unpin" : language === "es" ? "Desfijar" : "Desafixar")
+                                : (language === "en" ? "Pin" : language === "es" ? "Fijar" : "Fixar")}
                             </DropdownMenuItem>
                             <DropdownMenuItem onClick={() => hideTopic.mutate({ topicId: topic.id, hidden: !topic.hidden })}>
                               <EyeOff className="w-4 h-4 mr-2" aria-hidden="true" />
-                              {topic.hidden ? "Mostrar" : "Ocultar"}
+                              {topic.hidden
+                                ? (language === "en" ? "Show" : language === "es" ? "Mostrar" : "Mostrar")
+                                : (language === "en" ? "Hide" : language === "es" ? "Ocultar" : "Ocultar")}
                             </DropdownMenuItem>
                             <DropdownMenuItem
                               className="text-destructive"
-                              onClick={() => { if (confirm("Deletar este tópico e todas as respostas?")) deleteTopic.mutate({ topicId: topic.id }); }}
+                              onClick={() => { if (confirm(language === "en" ? "Delete this topic and all replies?" : language === "es" ? "¿Eliminar este tema y todas las respuestas?" : "Deletar este tópico e todas as respostas?")) deleteTopic.mutate({ topicId: topic.id }); }}
                             >
                               <Trash2 className="w-4 h-4 mr-2" aria-hidden="true" />
-                              Deletar
+                              {language === "en" ? "Delete" : language === "es" ? "Eliminar" : "Deletar"}
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
@@ -235,25 +247,27 @@ export default function ForumCategory() {
                       role="radio"
                       aria-checked={topicLang === l}
                       onClick={() => setTopicLang(l)}
-                      className={`px-3 py-1.5 rounded text-sm font-semibold uppercase border transition-colors ${
+                      className={`text-xs font-semibold px-3 py-1.5 rounded border transition-colors ${
                         topicLang === l
-                          ? l === "pt" ? "bg-green-600 text-white border-green-600" : l === "es" ? "bg-yellow-500 text-white border-yellow-500" : "bg-blue-600 text-white border-blue-600"
+                          ? l === "pt" ? "bg-green-600 text-white border-green-600"
+                            : l === "es" ? "bg-yellow-500 text-white border-yellow-500"
+                            : "bg-blue-600 text-white border-blue-600"
                           : "bg-background text-muted-foreground border-border hover:border-foreground"
                       }`}
                     >
-                      {l === "pt" ? "PT" : l === "es" ? "ES" : "EN"}
+                      {l.toUpperCase()}
                     </button>
                   ))}
                 </div>
               </div>
               <div>
-                <Label htmlFor="topic-body">{language === "en" ? "Message" : language === "es" ? "Mensaje" : "Mensagem"} *</Label>
+                <Label htmlFor="topic-body">{language === "en" ? "Content" : language === "es" ? "Contenido" : "Conteúdo"} *</Label>
                 <Textarea
                   id="topic-body"
                   value={body}
                   onChange={e => setBody(e.target.value)}
                   placeholder={language === "en" ? "Write your message..." : language === "es" ? "Escribe tu mensaje..." : "Escreva sua mensagem..."}
-                  rows={6}
+                  rows={5}
                   maxLength={10000}
                   aria-required="true"
                 />
@@ -264,13 +278,12 @@ export default function ForumCategory() {
                 {language === "en" ? "Cancel" : language === "es" ? "Cancelar" : "Cancelar"}
               </Button>
               <Button onClick={handleSubmit} disabled={!title.trim() || !body.trim() || createTopic.isPending}>
-                {createTopic.isPending ? "..." : language === "en" ? "Publish" : language === "es" ? "Publicar" : "Publicar"}
+                {createTopic.isPending ? "..." : language === "en" ? "Create topic" : language === "es" ? "Crear tema" : "Criar tópico"}
               </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
 
-        {/* Display Name Dialog */}
         <DisplayNameDialog
           open={showDisplayNameDialog}
           onClose={() => setShowDisplayNameDialog(false)}
