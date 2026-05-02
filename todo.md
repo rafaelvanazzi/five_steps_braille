@@ -222,3 +222,9 @@
 - [ ] UI: contador de visualizações nos cards de tópico
 - [ ] UI: botões de reação acessíveis nos posts (aria-label descritivo)
 - [ ] Traduções PT/EN/ES para busca e reações
+
+## Upload por Usuários Logados
+- [ ] Liberar procedure materials.upload para qualquer usuário autenticado (não apenas admin)
+- [ ] Materiais enviados por usuários ficam ocultos (hidden=true) até aprovação do admin
+- [ ] Adicionar formulário de upload na página Acervo (Library.tsx) para usuários logados
+- [ ] Notificação ao admin quando novo material for enviado por usuário

@@ -363,8 +363,8 @@ export const appRouter = router({
         return { url: downloadUrl, fileName: material.fileName };
       }),
 
-    // Admin: upload a new material
-    upload: adminProcedure
+    // Any logged-in user can upload; non-admin uploads start hidden (pending approval)
+    upload: protectedProcedure
       .input(
         z.object({
           title: z.string().min(1).max(255),
@@ -382,6 +382,7 @@ export const appRouter = router({
         })
       )
       .mutation(async ({ input, ctx }) => {
+        const isAdmin = ctx.user.role === "admin";
         const buffer = Buffer.from(input.fileBase64, "base64");
         const suffix = Date.now().toString(36);
         const fileKey = `five-steps/grade-${input.grade}/${suffix}-${input.fileName}`;
@@ -401,8 +402,15 @@ export const appRouter = router({
           creatorVision: input.creatorVision,
           creatorName: input.creatorName ?? null,
           uploadedBy: ctx.user.id,
+          hidden: !isAdmin,
         });
-        return { success: true };
+        if (!isAdmin) {
+          await notifyOwner({
+            title: "Novo material aguardando aprovação",
+            content: `${ctx.user.name ?? "Um usuário"} enviou o material "${input.title}" (Grau ${input.grade}) para o acervo. Acesse o painel de administração para aprovar ou rejeitar.`,
+          });
+        }
+        return { success: true, pendingApproval: !isAdmin };
       }),
 
     // Protected (owner or admin): edit material attributes

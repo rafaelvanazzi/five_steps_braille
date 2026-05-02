@@ -18,7 +18,7 @@ import {
 } from "@/components/ui/dialog";
 import {
   FileDown, Lock, BookOpen, FileText, Music, Star, MessageSquare, Send, Trash2,
-  ChevronDown, ChevronUp, Eye, EyeOff, User, Pencil, Upload, MoreVertical,
+  ChevronDown, ChevronUp, Eye, EyeOff, User, Pencil, Upload, MoreVertical, PlusCircle,
 } from "lucide-react";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
@@ -692,6 +692,7 @@ export default function Library() {
   }, [filteredMaterials.length, isLoading, (materials as MaterialData[]).length]);
 
   const handleMutated = () => { refetch(); };
+  const [showUserUpload, setShowUserUpload] = useState(false);
 
   return (
     <SiteLayout>
@@ -703,6 +704,22 @@ export default function Library() {
         </div>
       </section>
 
+      {/* Upload Banner for logged-in users */}
+      {isAuthenticated && (
+        <div className="bg-accent/20 border-b border-accent/30 py-3">
+          <div className="container flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2 text-sm text-foreground">
+              <PlusCircle className="w-4 h-4 text-primary" aria-hidden="true" />
+              <span>Tem um material para compartilhar com a comunidade? Envie para o acervo!</span>
+            </div>
+            <Button size="sm" className="bg-primary text-primary-foreground hover:bg-primary/90"
+              onClick={() => setShowUserUpload(true)}
+              aria-haspopup="dialog">
+              Enviar Material
+            </Button>
+          </div>
+        </div>
+      )}
       {/* Login Banner */}
       {!isAuthenticated && (
         <div className="bg-secondary/20 border-b border-secondary/30 py-3">
@@ -797,7 +814,167 @@ export default function Library() {
           </Tabs>
         </div>
       </section>
+      {/* User Upload Dialog */}
+      {isAuthenticated && (
+        <UserUploadDialog
+          open={showUserUpload}
+          onClose={() => setShowUserUpload(false)}
+          onSuccess={() => { setShowUserUpload(false); handleMutated(); }}
+        />
+      )}
     </SiteLayout>
+  );
+}
+
+
+// ─── User Upload Dialog ─────────────────────────────────────────────────────
+function UserUploadDialog({
+  open, onClose, onSuccess,
+}: { open: boolean; onClose: () => void; onSuccess: () => void }) {
+  const { user } = useAuth();
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [form, setForm] = useState({
+    title: "",
+    description: "",
+    grade: 1,
+    stage: undefined as number | undefined,
+    language: "pt" as "pt" | "en" | "both",
+    materialType: "atividade" as "partitura" | "atividade",
+    creatorVision: "vidente" as "vidente" | "pdv",
+    creatorName: "",
+  });
+  const uploadMutation = trpc.materials.upload.useMutation({
+    onSuccess: () => {
+      toast.success("Material enviado! Ficará visível após revisão.");
+      onSuccess();
+      setSelectedFile(null);
+      setForm({ title: "", description: "", grade: 1, stage: undefined, language: "pt", materialType: "atividade", creatorVision: "vidente", creatorName: "" });
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    },
+    onError: (e) => toast.error(`Erro: ${e.message}`),
+  });
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedFile) { toast.error("Selecione um arquivo."); return; }
+    if (!form.title.trim()) { toast.error("Informe o título."); return; }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = (reader.result as string).split(",")[1];
+      uploadMutation.mutate({
+        ...form,
+        creatorName: form.creatorName.trim() || user?.name || undefined,
+        fileBase64: base64,
+        fileName: selectedFile.name,
+        mimeType: selectedFile.type,
+        fileSize: selectedFile.size,
+      });
+    };
+    reader.readAsDataURL(selectedFile);
+  };
+  const gradeStagesLocal: Record<number, number> = { 1: 2, 2: 5, 3: 5, 4: 3, 5: 8 };
+  return (
+    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto" aria-labelledby="user-upload-title">
+        <DialogHeader>
+          <DialogTitle id="user-upload-title">Enviar Material ao Acervo</DialogTitle>
+        </DialogHeader>
+        <p className="text-sm text-muted-foreground -mt-2 mb-2">
+          Materiais enviados por usuários ficam ocultos até serem revisados pela equipe.
+        </p>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="uu-title">Título <span className="text-destructive" aria-label="obrigatório">*</span></Label>
+            <Input id="uu-title" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="Ex: Exercício de Notas — Grau 1" required />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="uu-desc">Descrição</Label>
+            <Textarea id="uu-desc" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Descreva brevemente o material..." rows={2} className="resize-none" />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="uu-grade">Grau <span className="text-destructive" aria-label="obrigatório">*</span></Label>
+              <Select value={String(form.grade)} onValueChange={(v) => setForm({ ...form, grade: parseInt(v), stage: undefined })}>
+                <SelectTrigger id="uu-grade"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {[1,2,3,4,5].map((g) => <SelectItem key={g} value={String(g)}>Grau {g}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="uu-stage">Etapa (opcional)</Label>
+              <Select value={form.stage ? String(form.stage) : "none"} onValueChange={(v) => setForm({ ...form, stage: v === "none" ? undefined : parseInt(v) })}>
+                <SelectTrigger id="uu-stage"><SelectValue placeholder="Selecionar..." /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Sem etapa</SelectItem>
+                  {Array.from({ length: gradeStagesLocal[form.grade] ?? 0 }, (_, i) => i + 1).map((s) => (
+                    <SelectItem key={s} value={String(s)}>Etapa {s}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="uu-lang">Idioma</Label>
+            <Select value={form.language} onValueChange={(v) => setForm({ ...form, language: v as typeof form.language })}>
+              <SelectTrigger id="uu-lang"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="pt">Português</SelectItem>
+                <SelectItem value="en">English</SelectItem>
+                <SelectItem value="both">Bilíngue</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="uu-type">Tipo <span className="text-destructive" aria-label="obrigatório">*</span></Label>
+              <Select value={form.materialType} onValueChange={(v) => setForm({ ...form, materialType: v as typeof form.materialType })}>
+                <SelectTrigger id="uu-type"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="atividade">Atividade</SelectItem>
+                  <SelectItem value="partitura">Partitura</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="uu-vision">Criador <span className="text-destructive" aria-label="obrigatório">*</span></Label>
+              <Select value={form.creatorVision} onValueChange={(v) => setForm({ ...form, creatorVision: v as typeof form.creatorVision })}>
+                <SelectTrigger id="uu-vision"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="vidente">Vidente</SelectItem>
+                  <SelectItem value="pdv">Pessoa com DV</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="uu-creator">Nome do Criador</Label>
+            <Input id="uu-creator" value={form.creatorName} onChange={(e) => setForm({ ...form, creatorName: e.target.value })} placeholder={user?.name ?? "Seu nome"} />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="uu-file">Arquivo <span className="text-destructive" aria-label="obrigatório">*</span></Label>
+            <Input id="uu-file" type="file" ref={fileInputRef}
+              onChange={(e) => setSelectedFile(e.target.files?.[0] ?? null)}
+              className="cursor-pointer" aria-describedby="uu-file-hint" />
+            <p id="uu-file-hint" className="text-xs text-muted-foreground">Aceita qualquer formato: .brm, .pdf, .doc, .xml, .mp3, etc.</p>
+            {selectedFile && (
+              <p className="text-xs text-muted-foreground">
+                <FileText className="w-3 h-3 inline mr-1" aria-hidden="true" />
+                {selectedFile.name} — {(selectedFile.size / 1024).toFixed(1)} KB
+              </p>
+            )}
+          </div>
+          <DialogFooter className="gap-2">
+            <DialogClose asChild>
+              <Button type="button" variant="outline" onClick={onClose}>Cancelar</Button>
+            </DialogClose>
+            <Button type="submit" disabled={uploadMutation.isPending} className="bg-primary text-primary-foreground hover:bg-primary/90">
+              {uploadMutation.isPending ? "Enviando..." : "Enviar Material"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 
