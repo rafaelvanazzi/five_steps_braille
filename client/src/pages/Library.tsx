@@ -710,7 +710,7 @@ export default function Library() {
           <div className="container flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2 text-sm text-foreground">
               <PlusCircle className="w-4 h-4 text-primary" aria-hidden="true" />
-              <span>Tem um material para compartilhar com a comunidade? Envie para o acervo!</span>
+              <span>Tem um material para compartilhar? Envie para o acervo — uploads passam por revisão editorial antes de serem publicados.</span>
             </div>
             <Button size="sm" className="bg-primary text-primary-foreground hover:bg-primary/90"
               onClick={() => setShowUserUpload(true)}
@@ -880,7 +880,7 @@ function UserUploadDialog({
           <DialogTitle id="user-upload-title">Enviar Material ao Acervo</DialogTitle>
         </DialogHeader>
         <p className="text-sm text-muted-foreground -mt-2 mb-2">
-          Materiais enviados por usuários ficam ocultos até serem revisados pela equipe.
+          Os materiais enviados pela comunidade passam por revisão do editor do site antes de serem publicados no acervo. Você será notificado quando seu material for aprovado.
         </p>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-1.5">
