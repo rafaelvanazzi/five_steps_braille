@@ -35,10 +35,27 @@ const gradeLabels: Record<number, { pt: string; en: string; badge: string }> = {
 
 const gradeStages: Record<number, number> = { 1: 2, 2: 5, 3: 5, 4: 3, 5: 8 };
 
-function FileIcon({ mimeType }: { mimeType?: string | null }) {
-  if (mimeType?.includes("audio")) return <Music className="w-5 h-5 text-purple-600" aria-hidden="true" />;
-  if (mimeType?.includes("pdf")) return <FileText className="w-5 h-5 text-red-600" aria-hidden="true" />;
-  return <BookOpen className="w-5 h-5 text-blue-600" aria-hidden="true" />;
+function FileIcon({ mimeType, fileName }: { mimeType?: string | null; fileName?: string | null }) {
+  const ext = fileName?.split(".").pop()?.toLowerCase() ?? "";
+  if (mimeType?.includes("audio") || ["mp3","wav","ogg","flac","aac","m4a"].includes(ext))
+    return <Music className="w-5 h-5 text-purple-600" aria-hidden="true" />;
+  if (mimeType?.includes("video") || ["mp4","mov","avi","mkv","webm"].includes(ext))
+    return <Music className="w-5 h-5 text-pink-600" aria-hidden="true" />;
+  if (mimeType?.includes("pdf") || ext === "pdf")
+    return <FileText className="w-5 h-5 text-red-600" aria-hidden="true" />;
+  if (["doc","docx","odt","rtf"].includes(ext))
+    return <FileText className="w-5 h-5 text-blue-700" aria-hidden="true" />;
+  if (["xls","xlsx","ods","csv"].includes(ext))
+    return <FileText className="w-5 h-5 text-green-700" aria-hidden="true" />;
+  if (["xml","mxl","musicxml"].includes(ext))
+    return <Music className="w-5 h-5 text-indigo-600" aria-hidden="true" />;
+  if (["brl","brm","brf"].includes(ext))
+    return <BookOpen className="w-5 h-5 text-amber-600" aria-hidden="true" />;
+  if (["zip","rar","7z","tar","gz"].includes(ext))
+    return <FileText className="w-5 h-5 text-gray-500" aria-hidden="true" />;
+  if (["txt","md"].includes(ext))
+    return <FileText className="w-5 h-5 text-gray-600" aria-hidden="true" />;
+  return <FileText className="w-5 h-5 text-blue-600" aria-hidden="true" />;
 }
 
 function formatSize(bytes?: number | null) {
@@ -341,7 +358,6 @@ function ReplaceFileDialog({
             <Label htmlFor="replace-file">Novo arquivo <span className="text-destructive" aria-label="obrigatório">*</span></Label>
             <Input id="replace-file" type="file" ref={fileInputRef}
               onChange={(e) => setSelectedFile(e.target.files?.[0] ?? null)}
-              accept=".pdf,.mp3,.wav,.xml,.mxl,.brl,.txt,.zip"
               aria-required="true" className="cursor-pointer" />
             {selectedFile && (
               <p className="text-xs text-muted-foreground">
@@ -479,7 +495,7 @@ function MaterialCard({ material, isAuthenticated, currentUserId, currentUserRol
 
           <div className="flex items-start gap-3">
             <div className="flex-shrink-0 mt-0.5">
-              <FileIcon mimeType={material.mimeType} />
+              <FileIcon mimeType={material.mimeType} fileName={material.fileName} />
             </div>
             <div className="flex-1 min-w-0">
               {/* Badges row */}
@@ -521,7 +537,7 @@ function MaterialCard({ material, isAuthenticated, currentUserId, currentUserRol
                   {additionalFiles.map((file) => (
                     <div key={file.id} className="flex items-center justify-between gap-2 p-2 rounded bg-muted/50">
                       <div className="flex items-center gap-2 flex-1 min-w-0">
-                        <FileIcon mimeType={file.mimeType} />
+                        <FileIcon mimeType={file.mimeType} fileName={file.fileName} />
                         <div className="flex-1 min-w-0">
                           <p className="text-xs font-medium text-foreground truncate">{file.fileName}</p>
                           <p className="text-xs text-muted-foreground">{formatSize(file.fileSize)}</p>
@@ -829,7 +845,6 @@ function AddFileDialog({
             <Label htmlFor="add-file">Arquivo <span className="text-destructive" aria-label="obrigatório">*</span></Label>
             <Input id="add-file" type="file" ref={fileInputRef}
               onChange={(e) => setSelectedFile(e.target.files?.[0] ?? null)}
-              accept=".pdf,.mp3,.wav,.xml,.mxl,.brl,.txt,.zip"
               aria-required="true" className="cursor-pointer" />
             {selectedFile && (
               <p className="text-xs text-muted-foreground">

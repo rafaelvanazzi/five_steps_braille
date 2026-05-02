@@ -1097,7 +1097,7 @@ export default function Admin() {
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="mat-file">Arquivo <span className="text-destructive" aria-label="obrigatório">*</span></Label>
-                  <Input id="mat-file" type="file" ref={fileInputRef} onChange={handleFileChange} accept=".pdf,.mp3,.wav,.xml,.mxl,.brl,.txt,.zip" className="cursor-pointer" />
+                  <Input id="mat-file" type="file" ref={fileInputRef} onChange={handleFileChange} className="cursor-pointer" />
                   {selectedFile && (
                     <p className="text-xs text-muted-foreground mt-1">
                       <FileText className="w-3 h-3 inline mr-1" aria-hidden="true" />
