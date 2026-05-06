@@ -23,7 +23,7 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
 import { useLanguage } from "@/contexts/LanguageContext";
-import { CalendarDays, Clock, Globe, Users, MapPin, CheckCircle, AlertCircle } from "lucide-react";
+import { CalendarDays, Clock, Globe, Users, MapPin, CheckCircle, AlertCircle, Video } from "lucide-react";
 import SiteLayout from "@/components/SiteLayout";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -75,6 +75,7 @@ const t = {
     cancelSuccess: "Inscrição cancelada.",
     errorMsg: "Ocorreu um erro. Tente novamente.",
     alreadyRegistered: "Você já está inscrito neste evento.",
+    watchRecording: "Assistir à gravação",
   },
   en: {
     pageTitle: "Classes & Activities",
@@ -108,6 +109,7 @@ const t = {
     cancelSuccess: "Registration cancelled.",
     errorMsg: "An error occurred. Please try again.",
     alreadyRegistered: "You are already registered for this event.",
+    watchRecording: "Watch recording",
   },
   es: {
     pageTitle: "Clases y Actividades",
@@ -141,6 +143,7 @@ const t = {
     cancelSuccess: "Inscripción cancelada.",
     errorMsg: "Ocurrió un error. Inténtalo de nuevo.",
     alreadyRegistered: "Ya estás inscrito en este evento.",
+    watchRecording: "Ver grabación",
   },
 };
 
@@ -458,6 +461,17 @@ export default function Activities() {
                     </div>
                   ) : (
                     <p className="text-sm text-muted-foreground">{ev.description}</p>
+                  )}
+                  {ev.meetingLink && (
+                    <a
+                      href={ev.meetingLink}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline mt-1"
+                    >
+                      <Video className="h-4 w-4" aria-hidden="true" />
+                      {tx.watchRecording}
+                    </a>
                   )}
                 </article>
               ))}
