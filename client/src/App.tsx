@@ -16,6 +16,7 @@ import Contact from "./pages/Contact";
 import Admin from "./pages/Admin";
 import Activities from "./pages/Activities";
 import Forum from "./pages/Forum";
+import AboutRafael from "./pages/AboutRafael";
 import ForumCategory from "./pages/ForumCategory";
 import ForumTopic from "./pages/ForumTopic";
 
@@ -25,6 +26,7 @@ function Router() {
     <Switch>
       <Route path="/" component={Home} />
       <Route path="/sobre" component={About} />
+      <Route path="/sobre-rafael" component={AboutRafael} />
       <Route path="/para-instituicoes" component={ForInstitutions} />
       <Route path="/para-musicos-dv" component={ForMusiciansDV} />
       <Route path="/para-musicos-sem-dv" component={ForMusiciansNoDV} />

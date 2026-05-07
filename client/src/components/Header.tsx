@@ -26,6 +26,7 @@ export default function Header() {
     { href: "/atividades", label: t.nav_activities },
     { href: "/forum", label: t.nav_forum },
     { href: "/contato", label: t.nav_contact },
+    { href: "/sobre-rafael", label: language === "pt" ? "Rafa Vanazzi" : language === "en" ? "Rafa Vanazzi" : "Rafa Vanazzi" },
   ];
 
   const isActive = (href: string) => location === href;
