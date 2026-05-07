@@ -4,8 +4,9 @@ import { Button } from "@/components/ui/button";
 import { Link } from "wouter";
 import {
   GraduationCap, BookOpen, Mic, Music2, Globe,
-  ArrowRight, FileText, Users, Award,
+  ArrowRight, FileText, Users, Award, Camera,
 } from "lucide-react";
+import { useAuth } from "@/_core/hooks/useAuth";
 
 // ─── Static multilingual content ────────────────────────────────────────────
 
@@ -222,6 +223,42 @@ const content = {
   },
 };
 
+// ─── Photo Slot Component ──────────────────────────────────────────────────
+
+function PhotoSlot({ language }: { language: string }) {
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
+
+  const altText =
+    language === "en"
+      ? "Professional photo of Rafael Vanazzi"
+      : language === "es"
+      ? "Foto profesional de Rafael Vanazzi"
+      : "Foto profissional de Rafael Vanazzi";
+
+  const uploadHint =
+    language === "en"
+      ? "Upload photo via Admin panel"
+      : language === "es"
+      ? "Sube la foto desde el panel de Administración"
+      : "Envie a foto pelo painel de Administração";
+
+  return (
+    <div
+      className="relative w-48 h-48 md:w-64 md:h-64 rounded-full overflow-hidden border-4 border-secondary/60 shadow-xl bg-primary-foreground/10 flex items-center justify-center"
+      aria-label={altText}
+    >
+      {/* Placeholder shown until a real photo is set */}
+      <div className="flex flex-col items-center justify-center gap-3 text-primary-foreground/50 px-4 text-center">
+        <Camera className="w-12 h-12" aria-hidden="true" />
+        {isAdmin && (
+          <span className="text-xs leading-snug">{uploadHint}</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export default function AboutRafael() {
@@ -233,17 +270,25 @@ export default function AboutRafael() {
       {/* Hero */}
       <section className="bg-primary text-primary-foreground py-16 md:py-20" aria-labelledby="rafael-heading">
         <div className="container">
-          <div className="max-w-3xl">
-            <div className="inline-flex items-center gap-2 bg-secondary/20 text-secondary px-4 py-1.5 rounded-full text-sm font-semibold mb-6 border border-secondary/30">
-              <Music2 className="w-4 h-4" aria-hidden="true" />
-              <span>Musicografia Braille</span>
+          <div className="flex flex-col md:flex-row items-center gap-10 md:gap-16">
+            {/* Text */}
+            <div className="flex-1 min-w-0">
+              <div className="inline-flex items-center gap-2 bg-secondary/20 text-secondary px-4 py-1.5 rounded-full text-sm font-semibold mb-6 border border-secondary/30">
+                <Music2 className="w-4 h-4" aria-hidden="true" />
+                <span>Musicografia Braille</span>
+              </div>
+              <h1 id="rafael-heading" className="text-4xl md:text-6xl font-bold mb-4 leading-tight">
+                {c.hero_title}
+              </h1>
+              <p className="text-xl text-primary-foreground/80 leading-relaxed">
+                {c.hero_subtitle}
+              </p>
             </div>
-            <h1 id="rafael-heading" className="text-4xl md:text-6xl font-bold mb-4 leading-tight">
-              {c.hero_title}
-            </h1>
-            <p className="text-xl text-primary-foreground/80 leading-relaxed">
-              {c.hero_subtitle}
-            </p>
+
+            {/* Photo */}
+            <div className="flex-shrink-0">
+              <PhotoSlot language={language} />
+            </div>
           </div>
         </div>
       </section>
