@@ -22,6 +22,8 @@ const content = {
         title: "Mestrado em Música — UNICAMP",
         detail: "Dissertação: Particularidades da Musicografia Braille para o Auxílio de Novas Metodologias de Ensino (2014). Trabalho pioneiro que mapeia os processos cognitivos da leitura musical em Braille célula por célula, fundamentando novas abordagens pedagógicas para músicos com e sem deficiência visual.",
         year: "2014",
+        url: "https://d2xsxph8kpxj0f.cloudfront.net/310519663185498023/nVUTu2sZHxzgC6GJeZdNgr/dissertacao_mestrado_rafael_vanazzi_051fb0c3.pdf",
+        url_label: "Ler a dissertação (PDF)",
       },
       {
         title: "Diplomado em Metodologia Rítmica Jaques-Dalcroze",
@@ -92,6 +94,8 @@ const content = {
         title: "Master's Degree in Music — UNICAMP",
         detail: "Dissertation: Particularities of Braille Music Notation for the Support of New Teaching Methodologies (2014). Pioneering work that maps the cognitive processes of Braille music reading cell by cell, grounding new pedagogical approaches for musicians with and without visual impairment.",
         year: "2014",
+        url: "https://d2xsxph8kpxj0f.cloudfront.net/310519663185498023/nVUTu2sZHxzgC6GJeZdNgr/dissertacao_mestrado_rafael_vanazzi_051fb0c3.pdf",
+        url_label: "Read the dissertation (PDF)",
       },
       {
         title: "Diploma in Jacques-Dalcroze Rhythmic Methodology",
@@ -162,6 +166,8 @@ const content = {
         title: "Maestría en Música — UNICAMP",
         detail: "Disertación: Particularidades de la Musicografía Braille para el Auxilio de Nuevas Metodologías de Enseñanza (2014). Trabajo pionero que mapea los procesos cognitivos de la lectura musical en Braille célula por célula, fundamentando nuevos enfoques pedagógicos para músicos con y sin discapacidad visual.",
         year: "2014",
+        url: "https://d2xsxph8kpxj0f.cloudfront.net/310519663185498023/nVUTu2sZHxzgC6GJeZdNgr/dissertacao_mestrado_rafael_vanazzi_051fb0c3.pdf",
+        url_label: "Leer la disertación (PDF)",
       },
       {
         title: "Diplomado en Metodología Rítmica Jaques-Dalcroze",
@@ -325,6 +331,18 @@ export default function AboutRafael() {
                   <div className="flex-1 border-l-2 border-primary/20 pl-5">
                     <h3 className="font-bold text-foreground text-base mb-1">{item.title}</h3>
                     <p className="text-sm text-muted-foreground leading-relaxed">{item.detail}</p>
+                    {(item as any).url && (
+                      <a
+                        href={(item as any).url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 mt-2 text-xs font-semibold text-primary hover:underline"
+                        aria-label={(item as any).url_label}
+                      >
+                        <FileText className="w-3.5 h-3.5" aria-hidden="true" />
+                        {(item as any).url_label}
+                      </a>
+                    )}
                   </div>
                 </li>
               ))}
