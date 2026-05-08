@@ -251,16 +251,14 @@ function PhotoSlot({ language }: { language: string }) {
 
   return (
     <div
-      className="relative w-48 h-48 md:w-64 md:h-64 rounded-full overflow-hidden border-4 border-secondary/60 shadow-xl bg-primary-foreground/10 flex items-center justify-center"
+      className="relative w-48 h-48 md:w-64 md:h-64 rounded-full overflow-hidden border-4 border-secondary/60 shadow-xl"
       aria-label={altText}
     >
-      {/* Placeholder shown until a real photo is set */}
-      <div className="flex flex-col items-center justify-center gap-3 text-primary-foreground/50 px-4 text-center">
-        <Camera className="w-12 h-12" aria-hidden="true" />
-        {isAdmin && (
-          <span className="text-xs leading-snug">{uploadHint}</span>
-        )}
-      </div>
+      <img
+        src="https://d2xsxph8kpxj0f.cloudfront.net/310519663185498023/nVUTu2sZHxzgC6GJeZdNgr/rafael_vanazzi_foto_c8e95039.png"
+        alt={altText}
+        className="w-full h-full object-cover object-top"
+      />
     </div>
   );
 }
