@@ -18,7 +18,7 @@ import {
 } from "@/components/ui/dialog";
 import {
   FileDown, Lock, BookOpen, FileText, Music, Star, MessageSquare, Send, Trash2,
-  ChevronDown, ChevronUp, Eye, EyeOff, User, Pencil, Upload, MoreVertical, PlusCircle,
+  ChevronDown, ChevronUp, Eye, EyeOff, User, Pencil, Upload, MoreVertical, PlusCircle, Search,
 } from "lucide-react";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
@@ -661,12 +661,14 @@ export default function Library() {
   const [activeGrade, setActiveGrade] = useState<string>("all");
   const [filterType, setFilterType] = useState<string>("all");
   const [filterCreator, setFilterCreator] = useState<string>("all");
+  const [searchInput, setSearchInput] = useState<string>("");
+  const [searchQuery, setSearchQuery] = useState<string>("");
 
   const isAdmin = user?.role === "admin";
 
   // Admin/owner: use listAll to see hidden materials; public: use list
   const publicQuery = trpc.materials.list.useQuery(
-    { grade: activeGrade !== "all" ? parseInt(activeGrade) : undefined },
+    { grade: activeGrade !== "all" ? parseInt(activeGrade) : undefined, search: searchQuery || undefined },
     { enabled: !isAuthenticated }
   );
   const allQuery = trpc.materials.listAll.useQuery(
@@ -682,8 +684,17 @@ export default function Library() {
     let result = materials as MaterialData[];
     if (filterType !== "all") result = result.filter((m) => m.materialType === filterType);
     if (filterCreator !== "all") result = result.filter((m) => m.creatorVision === filterCreator);
+    // Client-side search for authenticated users (listAll doesn't support server-side search)
+    if (isAuthenticated && searchQuery.trim()) {
+      const term = searchQuery.trim().toLowerCase();
+      result = result.filter((m) =>
+        m.title?.toLowerCase().includes(term) ||
+        m.description?.toLowerCase().includes(term) ||
+        m.creatorName?.toLowerCase().includes(term)
+      );
+    }
     return result;
-  }, [materials, filterType, filterCreator]);
+  }, [materials, filterType, filterCreator, searchQuery, isAuthenticated]);
 
   useEffect(() => {
     if (!isLoading && (materials as MaterialData[]).length > 0) {
@@ -740,6 +751,39 @@ export default function Library() {
         <div className="container">
           <h2 id="materials-heading" className="sr-only">Materiais do Acervo</h2>
 
+          {/* Search bar */}
+          <div className="mb-4">
+            <div className="relative max-w-md">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" aria-hidden="true" />
+              <Input
+                type="search"
+                placeholder={language === "en" ? "Search by title, description or author..." : language === "es" ? "Buscar por título, descripción o autor..." : "Buscar por título, descrição ou autor..."}
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") setSearchQuery(searchInput); }}
+                className="pl-9 h-10 text-sm"
+                aria-label={language === "en" ? "Search materials" : language === "es" ? "Buscar materiales" : "Buscar materiais"}
+              />
+              {searchInput && (
+                <button
+                  onClick={() => { setSearchInput(""); setSearchQuery(""); }}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground text-xs"
+                  aria-label="Limpar busca"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+            {searchInput !== searchQuery && searchInput && (
+              <p className="text-xs text-muted-foreground mt-1 ml-1">Pressione Enter para buscar</p>
+            )}
+            {searchQuery && (
+              <p className="text-xs text-primary mt-1 ml-1">
+                {language === "en" ? `Showing results for "${searchQuery}"` : language === "es" ? `Mostrando resultados para "${searchQuery}"` : `Exibindo resultados para "${searchQuery}"`}
+              </p>
+            )}
+          </div>
+
           {/* Filters row */}
           <div className="flex flex-wrap items-end gap-4 mb-6">
             <div className="space-y-1">
@@ -764,9 +808,9 @@ export default function Library() {
                 </SelectContent>
               </Select>
             </div>
-            {(filterType !== "all" || filterCreator !== "all") && (
+            {(filterType !== "all" || filterCreator !== "all" || searchQuery) && (
               <Button variant="ghost" size="sm"
-                onClick={() => { setFilterType("all"); setFilterCreator("all"); }}
+                onClick={() => { setFilterType("all"); setFilterCreator("all"); setSearchInput(""); setSearchQuery(""); }}
                 className="text-xs text-muted-foreground hover:text-foreground">
                 Limpar filtros
               </Button>

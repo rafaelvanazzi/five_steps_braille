@@ -1,0 +1,94 @@
+{
+  "query": "SELECT id, title, pinned, createdAt FROM forum_topics WHERE language = 'en' ORDER BY createdAt ASC;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 2bnF3bxVbYXoRHY.1e0acdd6cbba --database nVUTu2sZHxzgC6GJeZdNgr --execute SELECT id, title, pinned, createdAt FROM forum_topics WHERE language = 'en' ORDER BY createdAt ASC;",
+  "rows": [
+    {
+      "id": "60011",
+      "title": "Why is Braille music notation not just for blind people?",
+      "pinned": "0",
+      "createdAt": "2026-04-17 15:22:07"
+    },
+    {
+      "id": "60012",
+      "title": "The difference between \"adapting\" and \"creating from within\"",
+      "pinned": "0",
+      "createdAt": "2026-04-18 18:47:56"
+    },
+    {
+      "id": "60013",
+      "title": "The Dalcroze method and music education for blind people",
+      "pinned": "0",
+      "createdAt": "2026-04-19 20:03:08"
+    },
+    {
+      "id": "60014",
+      "title": "How to assess a blind student musically without excluding them?",
+      "pinned": "0",
+      "createdAt": "2026-04-20 19:17:29"
+    },
+    {
+      "id": "60015",
+      "title": "When a blind student explains to another: peer pedagogy",
+      "pinned": "0",
+      "createdAt": "2026-04-21 18:14:23"
+    },
+    {
+      "id": "60016",
+      "title": "Resistance to Braille: why does it happen and how to address it?",
+      "pinned": "0",
+      "createdAt": "2026-04-22 17:25:25"
+    },
+    {
+      "id": "60017",
+      "title": "What software do you use to write and read Braille music notation?",
+      "pinned": "0",
+      "createdAt": "2026-04-23 19:38:10"
+    },
+    {
+      "id": "9",
+      "title": "Our community — values and expectations",
+      "pinned": "1",
+      "createdAt": "2026-04-24 08:16:46"
+    },
+    {
+      "id": "8",
+      "title": "Languages in the forum — how we communicate",
+      "pinned": "1",
+      "createdAt": "2026-04-24 08:16:46"
+    },
+    {
+      "id": "7",
+      "title": "How this forum works — please read before posting",
+      "pinned": "1",
+      "createdAt": "2026-04-24 08:16:46"
+    },
+    {
+      "id": "6",
+      "title": "Welcome to the Five Steps Community Forum!",
+      "pinned": "1",
+      "createdAt": "2026-04-24 08:16:46"
+    },
+    {
+      "id": "60018",
+      "title": "Classifying materials by difficulty: how do you do it in your context?",
+      "pinned": "0",
+      "createdAt": "2026-04-24 15:16:05"
+    },
+    {
+      "id": "60019",
+      "title": "What should every music educator know about Braille music notation?",
+      "pinned": "0",
+      "createdAt": "2026-04-25 14:20:22"
+    },
+    {
+      "id": "60020",
+      "title": "The dream of schools led by teachers with visual impairment",
+      "pinned": "0",
+      "createdAt": "2026-04-26 20:08:32"
+    }
+  ],
+  "messages": [],
+  "stdout": "id\ttitle\tpinned\tcreatedAt\n60011\tWhy is Braille music notation not just for blind people?\t0\t2026-04-17 15:22:07\n60012\tThe difference between \"adapting\" and \"creating from within\"\t0\t2026-04-18 18:47:56\n60013\tThe Dalcroze method and music education for blind people\t0\t2026-04-19 20:03:08\n60014\tHow to assess a blind student musically without excluding them?\t0\t2026-04-20 19:17:29\n60015\tWhen a blind student explains to another: peer pedagogy\t0\t2026-04-21 18:14:23\n60016\tResistance to Braille: why does it happen and how to address it?\t0\t2026-04-22 17:25:25\n60017\tWhat software do you use to write and read Braille music notation?\t0\t2026-04-23 19:38:10\n9\tOur community — values and expectations\t1\t2026-04-24 08:16:46\n8\tLanguages in the forum — how we communicate\t1\t2026-04-24 08:16:46\n7\tHow this forum works — please read before posting\t1\t2026-04-24 08:16:46\n6\tWelcome to the Five Steps Community Forum!\t1\t2026-04-24 08:16:46\n60018\tClassifying materials by difficulty: how do you do it in your context?\t0\t2026-04-24 15:16:05\n60019\tWhat should every music educator know about Braille music notation?\t0\t2026-04-25 14:20:22\n60020\tThe dream of schools led by teachers with visual impairment\t0\t2026-04-26 20:08:32\n",
+  "stderr": "",
+  "execution_time_ms": 388
+}

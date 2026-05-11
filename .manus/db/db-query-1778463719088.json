@@ -1,0 +1,9 @@
+{
+  "query": "\n-- Primeiro deletar os posts dos tópicos que serão removidos\nDELETE FROM forum_posts WHERE topicId IN (7, 8, 9, 60011, 60012, 60013, 60014, 60015, 60016, 60017, 60018, 60019, 60020);\n\n-- Depois deletar os tópicos\nDELETE FROM forum_topics WHERE id IN (7, 8, 9, 60011, 60012, 60013, 60014, 60015, 60016, 60017, 60018, 60019, 60020);\n",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 2bnF3bxVbYXoRHY.1e0acdd6cbba --database nVUTu2sZHxzgC6GJeZdNgr --execute \n-- Primeiro deletar os posts dos tópicos que serão removidos\nDELETE FROM forum_posts WHERE topicId IN (7, 8, 9, 60011, 60012, 60013, 60014, 60015, 60016, 60017, 60018, 60019, 60020);\n\n-- Depois deletar os tópicos\nDELETE FROM forum_topics WHERE id IN (7, 8, 9, 60011, 60012, 60013, 60014, 60015, 60016, 60017, 60018, 60019, 60020);\n",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 274
+}

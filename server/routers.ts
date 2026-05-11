@@ -320,10 +320,13 @@ export const appRouter = router({
 
   // ─── Materials (Library/Archive) ─────────────────────────────────────────
   materials: router({
-    // Public: list visible materials (hidden=false). Grade filter optional.
+    // Public: list visible materials (hidden=false). Grade and search filters optional.
     list: publicProcedure
-      .input(z.object({ grade: z.number().min(1).max(5).optional() }))
-      .query(({ input }) => getMaterials(input.grade)),
+      .input(z.object({
+        grade: z.number().min(1).max(5).optional(),
+        search: z.string().max(100).optional(),
+      }))
+      .query(({ input }) => getMaterials(input.grade, input.search)),
 
     // Protected (owner/admin): list all materials including hidden ones
     listAll: protectedProcedure

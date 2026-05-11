@@ -1,0 +1,15 @@
+{
+  "query": "SELECT id, title, pinned FROM forum_topics WHERE language = 'en' ORDER BY createdAt ASC;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 2bnF3bxVbYXoRHY.1e0acdd6cbba --database nVUTu2sZHxzgC6GJeZdNgr --execute SELECT id, title, pinned FROM forum_topics WHERE language = 'en' ORDER BY createdAt ASC;",
+  "rows": [
+    {
+      "id": "6",
+      "title": "Welcome to the Five Steps Community Forum!",
+      "pinned": "1"
+    }
+  ],
+  "messages": [],
+  "stdout": "id\ttitle\tpinned\n6\tWelcome to the Five Steps Community Forum!\t1\n",
+  "stderr": "",
+  "execution_time_ms": 342
+}

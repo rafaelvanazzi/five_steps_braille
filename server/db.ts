@@ -60,17 +60,24 @@ export async function getUserByOpenId(openId: string) {
 // ─── Materials ───────────────────────────────────────────────────────────────
 
 /** Public listing: excludes hidden materials. Admin/owner listing uses getMaterialsAll. */
-export async function getMaterials(grade?: number) {
+export async function getMaterials(grade?: number, search?: string) {
   const db = await getDb();
   if (!db) return [];
   const visibleOnly = eq(materials.hidden, false);
-  if (grade) {
-    return db.select().from(materials)
-      .where(and(eq(materials.grade, grade), visibleOnly))
-      .orderBy(asc(materials.grade), asc(materials.stage));
+  const conditions = [visibleOnly];
+  if (grade) conditions.push(eq(materials.grade, grade));
+  if (search && search.trim()) {
+    const term = `%${search.trim()}%`;
+    conditions.push(
+      or(
+        like(materials.title, term),
+        like(materials.description, term),
+        like(materials.creatorName, term)
+      )!
+    );
   }
   return db.select().from(materials)
-    .where(visibleOnly)
+    .where(and(...conditions))
     .orderBy(asc(materials.grade), asc(materials.stage));
 }
 
