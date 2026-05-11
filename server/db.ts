@@ -31,7 +31,7 @@ export async function upsertUser(user: InsertUser): Promise<void> {
   try {
     const values: InsertUser = { openId: user.openId };
     const updateSet: Record<string, unknown> = {};
-    const textFields = ["name", "email", "loginMethod"] as const;
+    const textFields = ["name", "email", "loginMethod", "country", "countryCode", "regionName", "city"] as const;
     type TextField = (typeof textFields)[number];
     const assignNullable = (field: TextField) => {
       const value = user[field];
@@ -268,6 +268,10 @@ export async function getAllUsers() {
     email: users.email,
     role: users.role,
     loginMethod: users.loginMethod,
+    country: users.country,
+    countryCode: users.countryCode,
+    regionName: users.regionName,
+    city: users.city,
     createdAt: users.createdAt,
     lastSignedIn: users.lastSignedIn,
   }).from(users).orderBy(desc(users.createdAt));

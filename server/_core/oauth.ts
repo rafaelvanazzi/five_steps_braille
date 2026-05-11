@@ -3,6 +3,7 @@ import type { Express, Request, Response } from "express";
 import * as db from "../db";
 import { getSessionCookieOptions } from "./cookies";
 import { sdk } from "./sdk";
+import { getGeoFromIp, getClientIp } from "./geoip";
 
 function getQueryParam(req: Request, key: string): string | undefined {
   const value = req.query[key];
@@ -28,12 +29,23 @@ export function registerOAuthRoutes(app: Express) {
         return;
       }
 
+      // Detect geolocation from client IP (only on first sign-up; skip if already set)
+      const existingUser = await db.getUserByOpenId(userInfo.openId);
+      const isNewUser = !existingUser;
+      let geoData: { country?: string | null; countryCode?: string | null; regionName?: string | null; city?: string | null } = {};
+      if (isNewUser) {
+        const clientIp = getClientIp(req as any);
+        const geo = await getGeoFromIp(clientIp);
+        if (geo) geoData = geo;
+      }
+
       await db.upsertUser({
         openId: userInfo.openId,
         name: userInfo.name || null,
         email: userInfo.email ?? null,
         loginMethod: userInfo.loginMethod ?? userInfo.platform ?? null,
         lastSignedIn: new Date(),
+        ...(isNewUser ? geoData : {}),
       });
 
       const sessionToken = await sdk.createSessionToken(userInfo.openId, {

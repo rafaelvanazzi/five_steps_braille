@@ -672,6 +672,7 @@ export default function Admin() {
                       <TableHead>ID</TableHead>
                       <TableHead>Nome</TableHead>
                       <TableHead>Email</TableHead>
+                      <TableHead>Localização</TableHead>
                       <TableHead>Método Login</TableHead>
                       <TableHead>Papel</TableHead>
                       <TableHead>Cadastro</TableHead>
@@ -686,6 +687,23 @@ export default function Admin() {
                         <TableCell className="text-sm">
                           {u.email ? (
                             <a href={`mailto:${u.email}`} className="text-primary hover:underline">{u.email}</a>
+                          ) : "—"}
+                        </TableCell>
+                        <TableCell className="text-sm">
+                          {u.country ? (
+                            <span className="flex items-center gap-1">
+                              {u.countryCode && (
+                                <img
+                                  src={`https://flagcdn.com/16x12/${u.countryCode.toLowerCase()}.png`}
+                                  alt={u.countryCode}
+                                  width={16} height={12}
+                                  className="inline-block"
+                                />
+                              )}
+                              <span className="text-muted-foreground">
+                                {[u.city, u.regionName, u.country].filter(Boolean).join(", ")}
+                              </span>
+                            </span>
                           ) : "—"}
                         </TableCell>
                         <TableCell className="text-sm text-muted-foreground">{u.loginMethod ?? "—"}</TableCell>
