@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://braille5steps.com/sitemap.xml
