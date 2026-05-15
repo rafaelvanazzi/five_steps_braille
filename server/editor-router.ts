@@ -212,7 +212,7 @@ export const editorRouter = router({
 
       try {
         const { url } = await storagePut(fileKey, buffer, mimeType);
-        return { success: true, url, fileName };
+        return { success: true, url, fileName, content: fileContent, filename: fileName };
       } catch (err) {
         console.error("Export failed:", err);
         throw new TRPCError({

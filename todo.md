@@ -228,3 +228,15 @@
 - [ ] Materiais enviados por usuários ficam ocultos (hidden=true) até aprovação do admin
 - [ ] Adicionar formulário de upload na página Acervo (Library.tsx) para usuários logados
 - [ ] Notificação ao admin quando novo material for enviado por usuário
+
+## Melhorias do Editor de Musicografia Braille
+- [x] Botão "Voltar ao Início" no editor de Braille
+- [x] Download funcional no botão Exportar (.brf, .txt, MusicXML)
+- [x] Redesign visual do editor seguindo o estilo do site (cores, tipografia, layout)
+- [x] Reescrita completa do engine de parsing de Musicografia Braille (norma internacional)
+- [x] Renderização de partitura em tempo real com VexFlow (notas, pausas, oitavas, alterações)
+- [x] Teclado Perkins funcional (F,D,S = pontos 1,2,3 / J,K,L = pontos 4,5,6)
+- [x] Visualizador de celas Braille em tempo real
+- [x] Painel de referência rápida de símbolos clicáveis
+- [x] Análise em tempo real (notas, pausas, compassos, caracteres)
+- [x] Auto-save a cada 2 segundos

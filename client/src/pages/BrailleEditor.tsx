@@ -1,453 +1,747 @@
-import React, { useState, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
-import { Link } from "wouter";
+import { getLoginUrl } from "@/const";
+import SiteLayout from "@/components/SiteLayout";
+import ScoreRenderer from "@/components/ScoreRenderer";
+import {
+  parseBrailleMusic,
+  perkinsDotsToUnicode,
+  describeBrailleChar,
+  unicodeToDots,
+  getQuickReference,
+  type ParsedElement,
+  type PerkinsKeyState,
+} from "@/lib/brailleMusic";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { AlertCircle, Save, Download, Plus, Trash2 } from "lucide-react";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import SheetMusicRenderer from "@/components/SheetMusicRenderer";
+import { toast } from "sonner";
+import {
+  ArrowLeft,
+  Plus,
+  Trash2,
+  Download,
+  FileText,
+  Music,
+  Keyboard,
+  Info,
+} from "lucide-react";
 
-// Mapeamento de teclado Perkins para pontos Braille
-// Perkins: F=1, D=2, S=3, J=4, K=5, L=6
-const PERKINS_MAP: Record<string, number[]> = {
-  f: [1],
-  d: [2],
-  s: [3],
-  j: [4],
-  k: [5],
-  l: [6],
-  fd: [1, 2],
-  fs: [1, 3],
-  fj: [1, 4],
-  fk: [1, 5],
-  fl: [1, 6],
-  ds: [2, 3],
-  dj: [2, 4],
-  dk: [2, 5],
-  dl: [2, 6],
-  sj: [3, 4],
-  sk: [3, 5],
-  sl: [3, 6],
-  jk: [4, 5],
-  jl: [4, 6],
-  kl: [5, 6],
-  fds: [1, 2, 3],
-  fdj: [1, 2, 4],
-  fdk: [1, 2, 5],
-  fdl: [1, 2, 6],
-  fsj: [1, 3, 4],
-  fsk: [1, 3, 5],
-  fsl: [1, 3, 6],
-  fjk: [1, 4, 5],
-  fjl: [1, 4, 6],
-  fkl: [1, 5, 6],
-  dsj: [2, 3, 4],
-  dsk: [2, 3, 5],
-  dsl: [2, 3, 6],
-  djk: [2, 4, 5],
-  djl: [2, 4, 6],
-  dkl: [2, 5, 6],
-  sjk: [3, 4, 5],
-  sjl: [3, 4, 6],
-  skl: [3, 5, 6],
-  jkl: [4, 5, 6],
-  fdsj: [1, 2, 3, 4],
-  fdsk: [1, 2, 3, 5],
-  fdsl: [1, 2, 3, 6],
-  fdjk: [1, 2, 4, 5],
-  fdjl: [1, 2, 4, 6],
-  fdkl: [1, 2, 5, 6],
-  fsjk: [1, 3, 4, 5],
-  fsjl: [1, 3, 4, 6],
-  fskl: [1, 3, 5, 6],
-  fjkl: [1, 4, 5, 6],
-  dsjk: [2, 3, 4, 5],
-  dsjl: [2, 3, 4, 6],
-  dskl: [2, 3, 5, 6],
-  djkl: [2, 4, 5, 6],
-  sjkl: [3, 4, 5, 6],
-  fdsjk: [1, 2, 3, 4, 5],
-  fdsjl: [1, 2, 3, 4, 6],
-  fdskl: [1, 2, 3, 5, 6],
-  fdjkl: [1, 2, 4, 5, 6],
-  dsjkl: [2, 3, 4, 5, 6],
-  fdsjkl: [1, 2, 3, 4, 5, 6],
-};
+// ─── BRAILLE CELL VISUAL ───────────────────────────────────────────────────────
 
-// Converter pontos Braille para caractere Unicode
-function pointsToUnicode(points: number[]): string {
-  if (points.length === 0) return "\u2800"; // Espaço Braille vazio
-  let code = 0x2800;
-  points.forEach((p) => {
-    const bitMap = [0, 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80];
-    code += bitMap[p] || 0;
-  });
-  return String.fromCharCode(code);
+function BrailleCell({ char, size = 32 }: { char: string; size?: number }) {
+  const dots = unicodeToDots(char);
+  const dotSize = size * 0.18;
+  const gap = size * 0.28;
+  const offsetX = size * 0.28;
+  const offsetY = size * 0.12;
+
+  return (
+    <svg
+      width={size}
+      height={size * 1.3}
+      viewBox={`0 0 ${size} ${size * 1.3}`}
+      className="inline-block"
+      role="img"
+      aria-label={describeBrailleChar(char)}
+    >
+      <rect width={size} height={size * 1.3} rx={3} fill="transparent" />
+      {[1, 2, 3, 4, 5, 6].map((dot) => {
+        const col = dot <= 3 ? 0 : 1;
+        const row = dot <= 3 ? dot - 1 : dot - 4;
+        const cx = offsetX + col * gap;
+        const cy = offsetY + row * gap;
+        const active = dots.includes(dot);
+        return (
+          <circle
+            key={dot}
+            cx={cx}
+            cy={cy}
+            r={dotSize}
+            fill={active ? "oklch(0.28 0.09 255)" : "#d1d5db"}
+            stroke={active ? "oklch(0.28 0.09 255)" : "#9ca3af"}
+            strokeWidth={0.5}
+          />
+        );
+      })}
+    </svg>
+  );
 }
 
-// Converter caractere Unicode para pontos Braille
-function unicodeToPoints(char: string): number[] {
-  const code = char.charCodeAt(0);
-  if (code < 0x2800 || code > 0x28ff) return [];
-  const offset = code - 0x2800;
-  const points: number[] = [];
-  const bitMap = [1, 2, 3, 4, 5, 6, 7, 8];
-  bitMap.forEach((p, i) => {
-    if (offset & (1 << i)) points.push(p);
+// ─── PERKINS KEYBOARD COMPONENT ────────────────────────────────────────────────
+
+function PerkinsKeyboard({
+  onChar,
+  onSpace,
+  onBackspace,
+}: {
+  onChar: (char: string) => void;
+  onSpace: () => void;
+  onBackspace: () => void;
+}) {
+  const [pressed, setPressed] = useState<Set<string>>(new Set());
+  const pressedRef = useRef<Set<string>>(new Set());
+  const activeDotsRef = useRef<PerkinsKeyState>({
+    dot1: false,
+    dot2: false,
+    dot3: false,
+    dot4: false,
+    dot5: false,
+    dot6: false,
   });
-  return points;
+
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => {
+      const key = e.key.toLowerCase();
+      if (["f", "d", "s", "j", "k", "l"].includes(key)) {
+        e.preventDefault();
+        if (key === "f") activeDotsRef.current.dot1 = true;
+        if (key === "d") activeDotsRef.current.dot2 = true;
+        if (key === "s") activeDotsRef.current.dot3 = true;
+        if (key === "j") activeDotsRef.current.dot4 = true;
+        if (key === "k") activeDotsRef.current.dot5 = true;
+        if (key === "l") activeDotsRef.current.dot6 = true;
+        pressedRef.current.add(key);
+        setPressed(new Set(pressedRef.current));
+      }
+      if (key === " ") e.preventDefault();
+      if (key === "backspace") e.preventDefault();
+    };
+
+    const up = (e: KeyboardEvent) => {
+      const key = e.key.toLowerCase();
+      if (key === " ") {
+        e.preventDefault();
+        onSpace();
+        return;
+      }
+      if (key === "backspace") {
+        e.preventDefault();
+        onBackspace();
+        return;
+      }
+      if (["f", "d", "s", "j", "k", "l"].includes(key)) {
+        e.preventDefault();
+        pressedRef.current.delete(key);
+        setPressed(new Set(pressedRef.current));
+
+        if (pressedRef.current.size === 0) {
+          const dots = { ...activeDotsRef.current };
+          if (dots.dot1 || dots.dot2 || dots.dot3 || dots.dot4 || dots.dot5 || dots.dot6) {
+            const char = perkinsDotsToUnicode(dots);
+            onChar(char);
+          }
+          activeDotsRef.current = {
+            dot1: false, dot2: false, dot3: false,
+            dot4: false, dot5: false, dot6: false,
+          };
+        }
+      }
+    };
+
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
+    return () => {
+      window.removeEventListener("keydown", down);
+      window.removeEventListener("keyup", up);
+    };
+  }, [onChar, onSpace, onBackspace]);
+
+  const keys = [
+    { label: "S", sub: "Ponto 3", key: "s" },
+    { label: "D", sub: "Ponto 2", key: "d" },
+    { label: "F", sub: "Ponto 1", key: "f" },
+    { label: "J", sub: "Ponto 4", key: "j" },
+    { label: "K", sub: "Ponto 5", key: "k" },
+    { label: "L", sub: "Ponto 6", key: "l" },
+  ];
+
+  return (
+    <div className="flex flex-col items-center gap-3 py-4">
+      <p className="text-sm text-muted-foreground">
+        Pressione as teclas simultaneamente e solte para gerar o caractere Braille
+      </p>
+      <div className="flex gap-2 items-center">
+        {keys.map((k, i) => (
+          <div key={k.key} className="flex items-center">
+            {i === 3 && <span className="inline-block w-8" />}
+            <button
+              className={`w-14 h-16 rounded-lg border-2 flex flex-col items-center justify-center transition-colors font-bold text-lg ${
+                pressed.has(k.key)
+                  ? "bg-primary text-primary-foreground border-primary"
+                  : "bg-card text-card-foreground border-border hover:border-primary/50"
+              }`}
+              aria-label={`Tecla ${k.label} - ${k.sub}`}
+              tabIndex={-1}
+            >
+              <span>{k.label}</span>
+              <span className="text-[10px] font-normal opacity-70">{k.sub}</span>
+            </button>
+          </div>
+        ))}
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Espaço = Barra de compasso · Backspace = Apagar
+      </p>
+    </div>
+  );
 }
+
+// ─── QUICK REFERENCE PANEL ─────────────────────────────────────────────────────
+
+function QuickReferencePanel({ onInsert }: { onInsert: (char: string) => void }) {
+  const ref = useMemo(() => getQuickReference(), []);
+  const [filter, setFilter] = useState<string>("all");
+
+  const categories = [
+    { key: "all", label: "Todos" },
+    { key: "note-quarter", label: "Semínimas" },
+    { key: "note-eighth", label: "Colcheias" },
+    { key: "note-half", label: "Mínimas" },
+    { key: "note-whole", label: "Semibreves" },
+    { key: "rest", label: "Pausas" },
+    { key: "octave", label: "Oitavas" },
+    { key: "accidental", label: "Alterações" },
+  ];
+
+  const filtered = filter === "all" ? ref : ref.filter((e) => e.category === filter);
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap gap-1">
+        {categories.map((cat) => (
+          <button
+            key={cat.key}
+            onClick={() => setFilter(cat.key)}
+            className={`px-2 py-1 text-xs rounded-md transition-colors ${
+              filter === cat.key
+                ? "bg-primary text-primary-foreground"
+                : "bg-muted text-muted-foreground hover:bg-accent"
+            }`}
+          >
+            {cat.label}
+          </button>
+        ))}
+      </div>
+      <div className="grid grid-cols-4 sm:grid-cols-6 gap-1 max-h-64 overflow-y-auto">
+        {filtered.map((entry, i) => (
+          <button
+            key={i}
+            onClick={() => onInsert(entry.char)}
+            className="flex flex-col items-center p-2 rounded-md border border-border hover:bg-accent transition-colors"
+            title={`${entry.description} (Pontos ${entry.dots})`}
+          >
+            <span className="text-2xl leading-none">{entry.char}</span>
+            <span className="text-[9px] text-muted-foreground mt-1 truncate w-full text-center">
+              {entry.description}
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── MAIN EDITOR PAGE ──────────────────────────────────────────────────────────
 
 export default function BrailleEditor() {
-  // === TODOS OS HOOKS DEVEM VIR PRIMEIRO, ANTES DE QUALQUER RETURN ===
-  const { user, loading } = useAuth({ redirectOnUnauthenticated: true });
-  const [inputMode, setInputMode] = useState<"standard" | "perkins">("standard");
-  const [projectTitle, setProjectTitle] = useState("Novo Projeto");
-  const [language, setLanguage] = useState<"pt" | "en" | "es">("pt");
-  const [brailleContent, setBrailleContent] = useState("");
-  const [textContent, setTextContent] = useState("");
-  const [musicContent, setMusicContent] = useState("");
-  const [currentProjectId, setCurrentProjectId] = useState<number | null>(null);
-  const [isSaving, setIsSaving] = useState(false);
-  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
-  const [perkinsPressedKeys, setPerkinsPressedKeys] = useState<Set<string>>(new Set());
-  const textInputRef = useRef<HTMLTextAreaElement>(null);
-  const brailleInputRef = useRef<HTMLTextAreaElement>(null);
-
-  // Queries e mutations — DEVEM vir antes de qualquer early return
-  const { data: projects = [] } = trpc.editor.list.useQuery(undefined, {
-    enabled: !!user,
-  });
+  // ALL hooks before any conditional return
+  const { user, loading: authLoading } = useAuth({ redirectOnUnauthenticated: true });
+  const projectsQuery = trpc.editor.list.useQuery(undefined, { enabled: !!user });
   const createMutation = trpc.editor.create.useMutation();
   const updateMutation = trpc.editor.update.useMutation();
   const deleteMutation = trpc.editor.delete.useMutation();
-  const importMusicXMLMutation = trpc.editor.importMusicXML.useMutation();
-  const generateScaleMutation = trpc.editor.generateScale.useMutation();
+  const exportMutation = trpc.editor.export.useMutation();
+  const utils = trpc.useUtils();
 
-  // Auto-save a cada 3 segundos se houver mudanças
+  const [currentProjectId, setCurrentProjectId] = useState<number | null>(null);
+  const [projectTitle, setProjectTitle] = useState("");
+  const [brailleContent, setBrailleContent] = useState("");
+  const [inputMode, setInputMode] = useState<"perkins" | "standard">("standard");
+  const [showReference, setShowReference] = useState(false);
+  const [showProjects, setShowProjects] = useState(true);
+  const [parsedElements, setParsedElements] = useState<ParsedElement[]>([]);
+  const [saveStatus, setSaveStatus] = useState<"saved" | "saving" | "unsaved">("saved");
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [scoreWidth, setScoreWidth] = useState(800);
+  const scoreContainerRef = useRef<HTMLDivElement>(null);
+
+  // Parse braille content whenever it changes
   useEffect(() => {
-    if (!user) return;
-    const timer = setTimeout(async () => {
-      if (!currentProjectId || (brailleContent === "" && textContent === "")) return;
-
-      setIsSaving(true);
-      setSaveStatus("saving");
+    if (brailleContent.trim()) {
       try {
-        await updateMutation.mutateAsync({
-          id: currentProjectId,
-          title: projectTitle,
-          contentBraille: brailleContent,
-          contentText: textContent,
-          contentMusicXml: musicContent,
-        });
-        setSaveStatus("saved");
-        setTimeout(() => setSaveStatus("idle"), 2000);
-      } catch (err) {
-        console.error("Auto-save failed:", err);
-        setSaveStatus("idle");
-      } finally {
-        setIsSaving(false);
+        const result = parseBrailleMusic(brailleContent);
+        setParsedElements(result.elements);
+      } catch {
+        setParsedElements([]);
       }
-    }, 3000);
+    } else {
+      setParsedElements([]);
+    }
+  }, [brailleContent]);
 
-    return () => clearTimeout(timer);
-  }, [brailleContent, textContent, musicContent, projectTitle, currentProjectId, user]);
+  // Auto-save
+  useEffect(() => {
+    if (!currentProjectId || !brailleContent) return;
+    setSaveStatus("unsaved");
 
-  // === EARLY RETURNS APÓS TODOS OS HOOKS ===
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    autoSaveTimerRef.current = setTimeout(() => {
+      setSaveStatus("saving");
+      updateMutation.mutate(
+        { id: currentProjectId, contentBraille: brailleContent, title: projectTitle },
+        {
+          onSuccess: () => {
+            setSaveStatus("saved");
+            utils.editor.list.invalidate();
+          },
+          onError: () => setSaveStatus("unsaved"),
+        }
+      );
+    }, 2000);
 
-  // Mostrar loading enquanto verifica autenticação
-  if (loading) {
+    return () => {
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    };
+  }, [brailleContent, currentProjectId, projectTitle]);
+
+  // Measure score container width
+  useEffect(() => {
+    if (!scoreContainerRef.current) return;
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setScoreWidth(Math.max(400, entry.contentRect.width - 16));
+      }
+    });
+    observer.observe(scoreContainerRef.current);
+    return () => observer.disconnect();
+  }, []);
+
+  // ─── HANDLERS ──────────────────────────────────────────────────────────────
+
+  const insertChar = useCallback((char: string) => {
+    setBrailleContent((prev) => prev + char);
+  }, []);
+
+  const insertSpace = useCallback(() => {
+    setBrailleContent((prev) => prev + " ");
+  }, []);
+
+  const handleBackspace = useCallback(() => {
+    setBrailleContent((prev) => prev.slice(0, -1));
+  }, []);
+
+  const handleCreateProject = useCallback(async () => {
+    const title = "Novo Projeto " + new Date().toLocaleDateString("pt-BR");
+    try {
+      const project = await createMutation.mutateAsync({ title, language: "pt" });
+      setCurrentProjectId(project.id);
+      setProjectTitle(title);
+      setBrailleContent("");
+      setShowProjects(false);
+      utils.editor.list.invalidate();
+      toast.success("Projeto criado com sucesso!");
+    } catch {
+      toast.error("Erro ao criar projeto");
+    }
+  }, [createMutation, utils]);
+
+  const handleOpenProject = useCallback(
+    (project: { id: number; title: string; contentBraille: string | null }) => {
+      setCurrentProjectId(project.id);
+      setProjectTitle(project.title);
+      setBrailleContent(project.contentBraille || "");
+      setShowProjects(false);
+      setSaveStatus("saved");
+    },
+    []
+  );
+
+  const handleDeleteProject = useCallback(
+    async (id: number) => {
+      if (!confirm("Tem certeza que deseja excluir este projeto?")) return;
+      try {
+        await deleteMutation.mutateAsync({ id });
+        if (currentProjectId === id) {
+          setCurrentProjectId(null);
+          setBrailleContent("");
+          setShowProjects(true);
+        }
+        utils.editor.list.invalidate();
+        toast.success("Projeto excluído");
+      } catch {
+        toast.error("Erro ao excluir projeto");
+      }
+    },
+    [deleteMutation, currentProjectId, utils]
+  );
+
+  const handleExport = useCallback(
+    async (format: "brf" | "txt" | "musicxml") => {
+      if (!currentProjectId) return;
+      try {
+        const result = await exportMutation.mutateAsync({ id: currentProjectId, format });
+        const blob = new Blob([result.content], { type: "text/plain;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = result.filename;
+        a.click();
+        URL.revokeObjectURL(url);
+        toast.success(`Exportado como ${format.toUpperCase()}`);
+      } catch {
+        toast.error("Erro ao exportar");
+      }
+    },
+    [currentProjectId, exportMutation]
+  );
+
+  // ─── LOADING / AUTH STATES ─────────────────────────────────────────────────
+
+  if (authLoading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
-          <p className="text-gray-600">Carregando...</p>
+      <SiteLayout>
+        <div className="flex items-center justify-center min-h-[60vh]">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
         </div>
-      </div>
+      </SiteLayout>
     );
   }
 
-  if (!user) return null;
-
-  // Handler para teclado Perkins
-  const handlePerkinsPressDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    const key = e.key.toLowerCase();
-    if (!["f", "d", "s", "j", "k", "l"].includes(key)) return;
-
-    e.preventDefault();
-    const newKeys = new Set(perkinsPressedKeys);
-    newKeys.add(key);
-    setPerkinsPressedKeys(newKeys);
-  };
-
-  const handlePerkinsKeyUp = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    const key = e.key.toLowerCase();
-    if (!["f", "d", "s", "j", "k", "l"].includes(key)) return;
-
-    e.preventDefault();
-    const newKeys = new Set(perkinsPressedKeys);
-    newKeys.delete(key);
-    setPerkinsPressedKeys(newKeys);
-
-    // Se todas as teclas foram soltas, processar a combinação
-    if (newKeys.size === 0 && perkinsPressedKeys.size > 0) {
-      const combination = Array.from(perkinsPressedKeys).sort().join("");
-      const points = PERKINS_MAP[combination];
-      if (points) {
-        const brailleChar = pointsToUnicode(points);
-        setBrailleContent((prev) => prev + brailleChar);
-      }
-    }
-  };
-
-  // Handler para input de texto padrão
-  const handleTextInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setTextContent(e.target.value);
-  };
-
-  // Handler para input de Braille direto
-  const handleBrailleInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setBrailleContent(e.target.value);
-  };
-
-  // Criar novo projeto
-  const handleNewProject = async () => {
-    try {
-      await createMutation.mutateAsync({
-        title: "Novo Projeto",
-        language: "pt",
-        contentBraille: "",
-        contentText: "",
-        contentMusicXml: "",
-      });
-    } catch (err) {
-      console.error("Failed to create project:", err);
-    }
-  };
-
-  // Deletar projeto
-  const handleDeleteProject = async (projectId: number) => {
-    if (!confirm("Tem certeza que deseja deletar este projeto?")) return;
-    try {
-      await deleteMutation.mutateAsync({ id: projectId });
-      setCurrentProjectId(null);
-      setBrailleContent("");
-      setTextContent("");
-      setMusicContent("");
-      setProjectTitle("Novo Projeto");
-    } catch (err) {
-      console.error("Failed to delete project:", err);
-    }
-  };
-
-  // Renderizar grade Braille
-  const renderBrailleGrid = () => {
+  if (!user) {
     return (
-      <div className="grid gap-2">
-        {brailleContent.split("").map((char, idx) => {
-          const points = unicodeToPoints(char);
-          return (
-            <div key={idx} className="flex gap-2 p-2 border rounded bg-slate-50">
-              <div className="text-2xl font-bold">{char}</div>
-              <div className="grid grid-cols-2 gap-1">
-                {[1, 2, 3, 4, 5, 6].map((p) => (
-                  <div
-                    key={p}
-                    className={`w-4 h-4 rounded-full border-2 ${
-                      points.includes(p)
-                        ? "bg-blue-600 border-blue-600"
-                        : "bg-white border-gray-300"
-                    }`}
-                  />
-                ))}
-              </div>
-            </div>
-          );
-        })}
-      </div>
+      <SiteLayout>
+        <div className="container max-w-2xl py-20 text-center space-y-6">
+          <Music className="w-16 h-16 mx-auto text-primary" />
+          <h1 className="text-3xl font-bold">Editor de Musicografia Braille</h1>
+          <p className="text-muted-foreground text-lg">
+            Escreva em Braille musical e veja a partitura aparecer em tempo real.
+            Faça login para começar.
+          </p>
+          <Button asChild size="lg">
+            <a href={getLoginUrl()}>Fazer Login</a>
+          </Button>
+        </div>
+      </SiteLayout>
     );
-  };
+  }
 
-  return (
-    <div className="min-h-screen bg-gray-50 p-6">
-      <div className="max-w-7xl mx-auto">
-        {/* Header */}
-        <div className="mb-6">
-          <h1 className="text-3xl font-bold text-gray-900">Editor de Musicografia Braille</h1>
-          <p className="text-gray-600 mt-2">Crie e edite partituras em Braille com suporte Perkins</p>
-        </div>
+  // ─── PROJECT LIST VIEW ─────────────────────────────────────────────────────
 
-        {/* Status de salvamento */}
-        {saveStatus !== "idle" && (
-          <Alert className="mb-4">
-            <AlertCircle className="h-4 w-4" />
-            <AlertDescription>
-              {saveStatus === "saving" ? "Salvando..." : "Salvo com sucesso!"}
-            </AlertDescription>
-          </Alert>
-        )}
+  if (showProjects) {
+    return (
+      <SiteLayout>
+        <div className="container max-w-4xl py-10 space-y-6">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <a href="/" className="text-muted-foreground hover:text-foreground transition-colors">
+                <ArrowLeft className="w-5 h-5" />
+              </a>
+              <h1 className="text-2xl font-bold">Editor de Musicografia Braille</h1>
+            </div>
+            <Button onClick={handleCreateProject} disabled={createMutation.isPending}>
+              <Plus className="w-4 h-4 mr-2" />
+              Novo Projeto
+            </Button>
+          </div>
 
-        {/* Barra de ferramentas */}
-        <div className="flex gap-4 mb-6">
-          <Input
-            type="text"
-            value={projectTitle}
-            onChange={(e) => setProjectTitle(e.target.value)}
-            placeholder="Título do projeto"
-            className="flex-1"
-          />
-          <select
-            value={language}
-            onChange={(e) => setLanguage(e.target.value as "pt" | "en" | "es")}
-            className="px-4 py-2 border rounded"
-          >
-            <option value="pt">Português</option>
-            <option value="en">English</option>
-            <option value="es">Español</option>
-          </select>
-          <Button onClick={handleNewProject} variant="outline">
-            <Plus className="w-4 h-4 mr-2" />
-            Novo
-          </Button>
-          <Button variant="outline">
-            <Download className="w-4 h-4 mr-2" />
-            Exportar
-          </Button>
-        </div>
+          <p className="text-muted-foreground">
+            Escreva em Braille musical usando o teclado Perkins ou o teclado padrão.
+            A partitura é renderizada em tempo real conforme você digita.
+          </p>
 
-        {/* Conteúdo principal */}
-        <div className="grid grid-cols-3 gap-6">
-          {/* Painel de Entrada */}
-          <Card className="p-6 col-span-1">
-            <h2 className="text-xl font-bold mb-4">Entrada</h2>
-
-            <Tabs value={inputMode} onValueChange={(v) => setInputMode(v as "standard" | "perkins")}>
-              <TabsList className="w-full mb-4">
-                <TabsTrigger value="standard" className="flex-1">Padrão</TabsTrigger>
-                <TabsTrigger value="perkins" className="flex-1">Perkins</TabsTrigger>
-              </TabsList>
-
-              <TabsContent value="standard">
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium mb-2">Texto em tinta</label>
-                    <textarea
-                      ref={textInputRef}
-                      value={textContent}
-                      onChange={handleTextInput}
-                      placeholder="Digite o texto em tinta..."
-                      className="w-full h-32 p-3 border rounded font-mono text-sm"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium mb-2">Braille Unicode</label>
-                    <textarea
-                      ref={brailleInputRef}
-                      value={brailleContent}
-                      onChange={handleBrailleInput}
-                      placeholder="Cole caracteres Braille Unicode..."
-                      className="w-full h-32 p-3 border rounded font-mono text-sm"
-                    />
-                  </div>
-                </div>
-              </TabsContent>
-
-              <TabsContent value="perkins">
-                <div className="space-y-4">
-                  <div className="bg-blue-50 p-4 rounded border border-blue-200">
-                    <p className="text-sm font-medium mb-3">Combinações de teclas:</p>
-                    <div className="grid grid-cols-2 gap-2 text-xs">
-                      <div>F = Ponto 1</div>
-                      <div>D = Ponto 2</div>
-                      <div>S = Ponto 3</div>
-                      <div>J = Ponto 4</div>
-                      <div>K = Ponto 5</div>
-                      <div>L = Ponto 6</div>
+          {projectsQuery.isLoading ? (
+            <div className="flex justify-center py-10">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+            </div>
+          ) : projectsQuery.data && projectsQuery.data.length > 0 ? (
+            <div className="grid gap-3">
+              {projectsQuery.data.map((project: any) => (
+                <Card
+                  key={project.id}
+                  className="cursor-pointer hover:border-primary/50 transition-colors"
+                  onClick={() => handleOpenProject(project)}
+                >
+                  <CardContent className="flex items-center justify-between py-4">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <FileText className="w-5 h-5 text-muted-foreground shrink-0" />
+                      <div className="min-w-0">
+                        <p className="font-medium truncate">{project.title}</p>
+                        <p className="text-sm text-muted-foreground">
+                          {project.contentBraille
+                            ? `${project.contentBraille.length} caracteres`
+                            : "Vazio"}
+                          {" · "}
+                          {new Date(project.updatedAt).toLocaleDateString("pt-BR")}
+                        </p>
+                      </div>
                     </div>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium mb-2">Entrada Perkins</label>
-                    <textarea
-                      onKeyDown={handlePerkinsPressDown}
-                      onKeyUp={handlePerkinsKeyUp}
-                      placeholder="Pressione as teclas Perkins (F, D, S, J, K, L)..."
-                      className="w-full h-32 p-3 border rounded font-mono text-sm"
-                      readOnly
-                    />
-                  </div>
-                  <div className="text-xs text-gray-600">
-                    Teclas pressionadas: {Array.from(perkinsPressedKeys).join(", ") || "nenhuma"}
-                  </div>
-                </div>
-              </TabsContent>
-            </Tabs>
-          </Card>
-
-          {/* Grade Braille */}
-          <Card className="p-6 col-span-1">
-            <h2 className="text-xl font-bold mb-4">Grade Braille</h2>
-            <div className="max-h-96 overflow-y-auto">
-              {brailleContent.length > 0 ? (
-                renderBrailleGrid()
-              ) : (
-                <p className="text-gray-500 text-center py-8">Nenhum conteúdo Braille ainda</p>
-              )}
-            </div>
-          </Card>
-
-          {/* Partitura */}
-          <Card className="p-6 col-span-1">
-            <h2 className="text-xl font-bold mb-4">Partitura</h2>
-            <div className="bg-gray-100 h-96 rounded">
-              <SheetMusicRenderer brailleContent={brailleContent} language={language} />
-            </div>
-          </Card>
-        </div>
-
-        {/* Projetos salvos */}
-        <Card className="mt-6 p-6">
-          <h2 className="text-xl font-bold mb-4">Meus Projetos</h2>
-          {projects && projects.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-             {projects?.map((proj: any) => (
-                <Card key={proj.id} className="p-4 hover:shadow-lg cursor-pointer transition">
-                  <h3 className="font-bold text-lg mb-2">{proj.title}</h3>
-                  <p className="text-sm text-gray-600 mb-3">
-                    {proj.contentBraille?.length || 0} caracteres Braille
-                  </p>
-                  <div className="flex gap-2">
                     <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => {
-                        setCurrentProjectId(proj.id);
-                        setProjectTitle(proj.title);
-                        setBrailleContent(proj.contentBraille || "");
-                        setTextContent(proj.contentText || "");
-                        setMusicContent(proj.contentMusicXml || "");
+                      variant="ghost"
+                      size="icon"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteProject(project.id);
                       }}
+                      aria-label="Excluir projeto"
                     >
-                      Abrir
+                      <Trash2 className="w-4 h-4 text-destructive" />
                     </Button>
-                    <Button
-                      size="sm"
-                      variant="destructive"
-                      onClick={() => handleDeleteProject(proj.id)}
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
-                  </div>
+                  </CardContent>
                 </Card>
               ))}
             </div>
           ) : (
-            <p className="text-gray-500">Nenhum projeto salvo ainda</p>
+            <Card>
+              <CardContent className="py-12 text-center">
+                <Music className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
+                <p className="text-muted-foreground">
+                  Nenhum projeto ainda. Crie um novo para começar!
+                </p>
+              </CardContent>
+            </Card>
           )}
+        </div>
+      </SiteLayout>
+    );
+  }
+
+  // ─── EDITOR VIEW ───────────────────────────────────────────────────────────
+
+  const noteCount = parsedElements.filter((e) => e.type === "note").length;
+  const restCount = parsedElements.filter((e) => e.type === "rest").length;
+
+  return (
+    <SiteLayout>
+      <div className="container max-w-7xl py-6 space-y-4">
+        {/* Header */}
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setShowProjects(true)}
+              className="text-muted-foreground hover:text-foreground transition-colors"
+              aria-label="Voltar aos projetos"
+            >
+              <ArrowLeft className="w-5 h-5" />
+            </button>
+            <Input
+              value={projectTitle}
+              onChange={(e) => setProjectTitle(e.target.value)}
+              className="text-lg font-semibold border-none bg-transparent px-0 h-auto focus-visible:ring-0 max-w-xs"
+              aria-label="Nome do projeto"
+            />
+            <span
+              className={`text-xs px-2 py-0.5 rounded-full ${
+                saveStatus === "saved"
+                  ? "bg-green-100 text-green-700"
+                  : saveStatus === "saving"
+                  ? "bg-yellow-100 text-yellow-700"
+                  : "bg-red-100 text-red-700"
+              }`}
+            >
+              {saveStatus === "saved" ? "Salvo" : saveStatus === "saving" ? "Salvando..." : "Não salvo"}
+            </span>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Button variant="outline" size="sm" onClick={() => setShowReference(!showReference)}>
+              <Info className="w-4 h-4 mr-1" />
+              Referência
+            </Button>
+            <div className="flex border rounded-lg overflow-hidden">
+              <button
+                onClick={() => setInputMode("standard")}
+                className={`px-3 py-1.5 text-sm flex items-center gap-1 transition-colors ${
+                  inputMode === "standard"
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-card text-card-foreground hover:bg-accent"
+                }`}
+              >
+                <Keyboard className="w-3.5 h-3.5" />
+                Padrão
+              </button>
+              <button
+                onClick={() => setInputMode("perkins")}
+                className={`px-3 py-1.5 text-sm flex items-center gap-1 transition-colors ${
+                  inputMode === "perkins"
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-card text-card-foreground hover:bg-accent"
+                }`}
+              >
+                <Keyboard className="w-3.5 h-3.5" />
+                Perkins
+              </button>
+            </div>
+            <div className="flex border rounded-lg overflow-hidden">
+              <button
+                onClick={() => handleExport("brf")}
+                className="px-3 py-1.5 text-sm flex items-center gap-1 bg-card text-card-foreground hover:bg-accent transition-colors"
+                title="Exportar como BRF"
+              >
+                <Download className="w-3.5 h-3.5" />
+                .brf
+              </button>
+              <button
+                onClick={() => handleExport("txt")}
+                className="px-3 py-1.5 text-sm flex items-center gap-1 bg-card text-card-foreground hover:bg-accent transition-colors border-l"
+                title="Exportar como TXT"
+              >
+                .txt
+              </button>
+              <button
+                onClick={() => handleExport("musicxml")}
+                className="px-3 py-1.5 text-sm flex items-center gap-1 bg-card text-card-foreground hover:bg-accent transition-colors border-l"
+                title="Exportar como MusicXML"
+              >
+                .xml
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Quick Reference */}
+        {showReference && (
+          <Card>
+            <CardHeader className="py-3">
+              <CardTitle className="text-sm">Referência Rápida de Símbolos</CardTitle>
+            </CardHeader>
+            <CardContent className="pt-0">
+              <QuickReferencePanel onInsert={insertChar} />
+            </CardContent>
+          </Card>
+        )}
+
+        {/* ── SCORE RENDERING (FULL WIDTH ON TOP) ── */}
+        <Card>
+          <CardHeader className="py-3">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <Music className="w-4 h-4" />
+              Partitura
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div ref={scoreContainerRef} className="min-h-[160px]">
+              {parsedElements.length > 0 ? (
+                <ScoreRenderer elements={parsedElements} width={scoreWidth} height={200} />
+              ) : (
+                <div className="flex flex-col items-center justify-center h-[160px] text-muted-foreground">
+                  <Music className="w-12 h-12 mb-3 opacity-30" />
+                  <p className="text-sm">Digite em Braille musical para ver a partitura aqui</p>
+                  <p className="text-xs mt-1 font-mono">
+                    Ex: ⠐⠹⠱⠫⠻ (Sinal de 4ª oitava + C D E F semínimas)
+                  </p>
+                </div>
+              )}
+            </div>
+          </CardContent>
         </Card>
+
+        {/* ── MAIN EDITOR AREA (TWO COLUMNS) ── */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          {/* Left: Braille Input (2/3) */}
+          <div className="lg:col-span-2 space-y-3">
+            <Card>
+              <CardHeader className="py-3">
+                <CardTitle className="text-sm flex items-center gap-2">
+                  <Keyboard className="w-4 h-4" />
+                  Entrada em Braille Musical
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {inputMode === "perkins" && (
+                  <PerkinsKeyboard onChar={insertChar} onSpace={insertSpace} onBackspace={handleBackspace} />
+                )}
+
+                <textarea
+                  value={brailleContent}
+                  onChange={(e) => setBrailleContent(e.target.value)}
+                  className="w-full h-40 p-3 border rounded-lg bg-card text-card-foreground font-mono text-2xl leading-relaxed resize-none focus:outline-none focus:ring-2 focus:ring-primary/50"
+                  placeholder={
+                    inputMode === "perkins"
+                      ? "Use o teclado Perkins acima (F,D,S,J,K,L)..."
+                      : "Digite ou cole texto em Braille Unicode aqui..."
+                  }
+                  aria-label="Área de entrada em Braille musical"
+                  readOnly={inputMode === "perkins"}
+                />
+                <div className="flex justify-between text-xs text-muted-foreground">
+                  <span>{brailleContent.length} caracteres</span>
+                  <span>{noteCount} notas · {restCount} pausas</span>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Right: Braille Cell Visualization + Stats (1/3) */}
+          <div className="space-y-3">
+            {brailleContent.trim() ? (
+              <>
+                <Card>
+                  <CardHeader className="py-3">
+                    <CardTitle className="text-sm">Celas Braille</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex flex-wrap gap-1 max-h-48 overflow-y-auto">
+                      {Array.from(brailleContent).map((char, i) => {
+                        if (char === " " || char === "\u2800") {
+                          return (
+                            <div key={i} className="w-0.5 h-10 bg-border mx-1 self-center" title="Barra de compasso" />
+                          );
+                        }
+                        return (
+                          <div key={i} className="flex flex-col items-center" title={describeBrailleChar(char)}>
+                            <BrailleCell char={char} size={28} />
+                            <span className="text-[8px] text-muted-foreground truncate max-w-[28px]">
+                              {describeBrailleChar(char).split(" ")[0]}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader className="py-3">
+                    <CardTitle className="text-sm">Análise</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-2 gap-2 text-sm">
+                      <div className="bg-muted rounded-lg p-3 text-center">
+                        <p className="text-xl font-bold text-primary">{noteCount}</p>
+                        <p className="text-muted-foreground text-xs">Notas</p>
+                      </div>
+                      <div className="bg-muted rounded-lg p-3 text-center">
+                        <p className="text-xl font-bold text-primary">{restCount}</p>
+                        <p className="text-muted-foreground text-xs">Pausas</p>
+                      </div>
+                      <div className="bg-muted rounded-lg p-3 text-center">
+                        <p className="text-xl font-bold text-primary">
+                          {parsedElements.filter((e) => e.type === "barline").length + 1}
+                        </p>
+                        <p className="text-muted-foreground text-xs">Compassos</p>
+                      </div>
+                      <div className="bg-muted rounded-lg p-3 text-center">
+                        <p className="text-xl font-bold text-primary">{brailleContent.length}</p>
+                        <p className="text-muted-foreground text-xs">Caracteres</p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              </>
+            ) : (
+              <Card>
+                <CardContent className="py-8 text-center">
+                  <Info className="w-8 h-8 mx-auto text-muted-foreground mb-3 opacity-50" />
+                  <p className="text-sm text-muted-foreground">
+                    As celas Braille e a análise aparecerão aqui quando você começar a digitar.
+                  </p>
+                </CardContent>
+              </Card>
+            )}
+          </div>
+        </div>
       </div>
-    </div>
+    </SiteLayout>
   );
 }

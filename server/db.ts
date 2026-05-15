@@ -875,7 +875,8 @@ export async function createBrailleProject(data: InsertBrailleProject) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   const result = await db.insert(brailleProjects).values(data);
-  return result;
+  const insertId = Number((result as any)[0]?.insertId ?? 0);
+  return { id: insertId, ...data };
 }
 
 export async function updateBrailleProject(id: number, data: Partial<InsertBrailleProject>) {
