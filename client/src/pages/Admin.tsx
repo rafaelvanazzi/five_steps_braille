@@ -14,15 +14,16 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import {
   Trash2, Upload, FileText, Mail, ShieldAlert, Users, BarChart3,
   Download, MessageSquare, Star, Activity, Search, ArrowUpDown,
-  Pencil, Eye, EyeOff, CalendarDays, UserCheck, Plus, X as XIcon, MessagesSquare,
+  Pencil, Eye, EyeOff, CalendarDays, UserCheck, Plus, X as XIcon, MessagesSquare, FileMusic,
 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { Link } from "wouter";
+import BrailleProjectsAdmin from "@/components/BrailleProjectsAdmin";
 
 const gradeStages: Record<number, number> = { 1: 2, 2: 5, 3: 5, 4: 3, 5: 8 };
 
-type AdminTab = "dashboard" | "users" | "materials" | "downloads" | "comments" | "ratings" | "messages" | "upload" | "events" | "registrations" | "forum";
+type AdminTab = "dashboard" | "users" | "materials" | "downloads" | "comments" | "ratings" | "messages" | "upload" | "events" | "registrations" | "forum" | "braille-projects";
 
 // ─── AdminForumTab ────────────────────────────────────────────────────────────
 function AdminForumTab() {
@@ -1029,6 +1030,21 @@ export default function Admin() {
 
         {/* ═══ Forum ═══ */}
         {activeTab === "forum" && <AdminForumTab />}
+
+        {/* ═══ Braille Projects ═══ */}
+        {activeTab === "braille-projects" && (
+          <Card className="w-full border-border shadow-sm">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-lg">
+                <FileMusic className="w-5 h-5 text-primary" aria-hidden="true" />
+                Projetos de Musicografia Braille
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <BrailleProjectsAdmin />
+            </CardContent>
+          </Card>
+        )}
 
         {/* ═══ Upload ═══ */}
         {activeTab === "upload" && (

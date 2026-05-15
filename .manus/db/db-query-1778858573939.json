@@ -1,0 +1,9 @@
+{
+  "query": "CREATE TABLE `braille_projects` (\n\t`id` int AUTO_INCREMENT NOT NULL,\n\t`userId` int NOT NULL,\n\t`title` varchar(255) NOT NULL,\n\t`contentBraille` longtext,\n\t`contentText` longtext,\n\t`contentMusicXml` longtext,\n\t`language` enum('pt','en','es') NOT NULL DEFAULT 'pt',\n\t`createdAt` timestamp NOT NULL DEFAULT (now()),\n\t`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,\n\tCONSTRAINT `braille_projects_id` PRIMARY KEY(`id`)\n);",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 2bnF3bxVbYXoRHY.1e0acdd6cbba --database nVUTu2sZHxzgC6GJeZdNgr --execute CREATE TABLE `braille_projects` (\n\t`id` int AUTO_INCREMENT NOT NULL,\n\t`userId` int NOT NULL,\n\t`title` varchar(255) NOT NULL,\n\t`contentBraille` longtext,\n\t`contentText` longtext,\n\t`contentMusicXml` longtext,\n\t`language` enum('pt','en','es') NOT NULL DEFAULT 'pt',\n\t`createdAt` timestamp NOT NULL DEFAULT (now()),\n\t`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,\n\tCONSTRAINT `braille_projects_id` PRIMARY KEY(`id`)\n);",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 1524
+}

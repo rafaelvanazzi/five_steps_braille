@@ -19,6 +19,7 @@ import Forum from "./pages/Forum";
 import AboutRafael from "./pages/AboutRafael";
 import ForumCategory from "./pages/ForumCategory";
 import ForumTopic from "./pages/ForumTopic";
+import BrailleEditor from "./pages/BrailleEditor";
 
 function Router() {
   useRouteA11y();
@@ -36,6 +37,7 @@ function Router() {
       <Route path="/forum/:slug" component={ForumCategory} />
       <Route path="/forum" component={Forum} />
       <Route path="/contato" component={Contact} />
+      <Route path="/editor-musicografia-braille" component={BrailleEditor} />
       <Route path="/admin" component={Admin} />
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />

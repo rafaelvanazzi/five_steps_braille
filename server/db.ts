@@ -7,6 +7,7 @@ import {
   InsertMaterialRating, InsertMaterialComment, InsertDownloadLog, InsertMaterialFile,
   events, eventRegistrations, InsertEvent, InsertEventRegistration,
   forumTopicViews, forumReactions,
+  brailleProjects, InsertBrailleProject, BrailleProject,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -866,4 +867,65 @@ export async function seedForumCategories() {
       sortOrder: 5,
     },
   ]);
+}
+
+// ─── Braille Editor Projects ────────────────────────────────────────────────
+
+export async function createBrailleProject(data: InsertBrailleProject) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(brailleProjects).values(data);
+  return result;
+}
+
+export async function updateBrailleProject(id: number, data: Partial<InsertBrailleProject>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(brailleProjects).set(data).where(eq(brailleProjects.id, id));
+}
+
+export async function deleteBrailleProject(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(brailleProjects).where(eq(brailleProjects.id, id));
+}
+
+export async function getBrailleProjectById(id: number): Promise<BrailleProject | undefined> {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(brailleProjects).where(eq(brailleProjects.id, id)).limit(1);
+  return result[0];
+}
+
+export async function listBrailleProjectsByUser(userId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(brailleProjects)
+    .where(eq(brailleProjects.userId, userId))
+    .orderBy(desc(brailleProjects.updatedAt));
+}
+
+export async function getAllBrailleProjects() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select({
+    id: brailleProjects.id,
+    userId: brailleProjects.userId,
+    title: brailleProjects.title,
+    language: brailleProjects.language,
+    createdAt: brailleProjects.createdAt,
+    updatedAt: brailleProjects.updatedAt,
+    userName: users.name,
+    userEmail: users.email,
+  })
+    .from(brailleProjects)
+    .leftJoin(users, eq(brailleProjects.userId, users.id))
+    .orderBy(desc(brailleProjects.updatedAt));
+}
+
+export async function getTotalBrailleProjects() {
+  const db = await getDb();
+  if (!db) return 0;
+  const result = await db.select({ total: count(brailleProjects.id) }).from(brailleProjects);
+  return result[0]?.total ?? 0;
 }

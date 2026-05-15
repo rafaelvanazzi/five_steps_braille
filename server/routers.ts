@@ -72,6 +72,7 @@ import {
 import { storagePut, storageGet } from "./storage";
 import { notifyOwner } from "./_core/notification";
 import { sendContactEmail } from "./email";
+import { editorRouter } from "./editor-router";
 
 // ─── Permission helpers ───────────────────────────────────────────────────────
 
@@ -308,6 +309,7 @@ export const appRouter = router({
   system: systemRouter,
   events: eventsRouter,
   forum: forumRouter,
+  editor: editorRouter,
 
   auth: router({
     me: publicProcedure.query((opts) => opts.ctx.user),

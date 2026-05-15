@@ -1,4 +1,4 @@
-import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, bigint, uniqueIndex, boolean } from "drizzle-orm/mysql-core";
+import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, bigint, uniqueIndex, boolean, longtext } from "drizzle-orm/mysql-core";
 
 export const users = mysqlTable("users", {
   id: int("id").autoincrement().primaryKey(),
@@ -233,3 +233,19 @@ export const downloadLogs = mysqlTable("download_logs", {
 
 export type DownloadLog = typeof downloadLogs.$inferSelect;
 export type InsertDownloadLog = typeof downloadLogs.$inferInsert;
+
+// ─── Braille Editor Projects ────────────────────────────────────────────────
+export const brailleProjects = mysqlTable("braille_projects", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  title: varchar("title", { length: 255 }).notNull(),
+  contentBraille: longtext("contentBraille"), // Braille content (celas Unicode)
+  contentText: longtext("contentText"), // Text content (tinta)
+  contentMusicXml: longtext("contentMusicXml"), // MusicXML representation
+  language: mysqlEnum("language", ["pt", "en", "es"]).default("pt").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type BrailleProject = typeof brailleProjects.$inferSelect;
+export type InsertBrailleProject = typeof brailleProjects.$inferInsert;
