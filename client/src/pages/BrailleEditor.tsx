@@ -26,6 +26,7 @@ import {
   Music,
   Keyboard,
   Info,
+  Upload,
 } from "lucide-react";
 
 // ─── BRAILLE CELL VISUAL ───────────────────────────────────────────────────────
@@ -266,6 +267,9 @@ export default function BrailleEditor() {
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [scoreWidth, setScoreWidth] = useState(800);
   const scoreContainerRef = useRef<HTMLDivElement>(null);
+  const [importing, setImporting] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const importMusicXMLMutation = trpc.editor.importMusicXML.useMutation();
 
   // Parse braille content whenever it changes
   useEffect(() => {
@@ -397,6 +401,120 @@ export default function BrailleEditor() {
     [currentProjectId, exportMutation]
   );
 
+  // ─── IMPORT HANDLER ────────────────────────────────────────────────────────
+
+  const handleImportFile = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const fileName = file.name.toLowerCase();
+    const isBrf = fileName.endsWith('.brf');
+    const isMusicXML = fileName.endsWith('.musicxml') || fileName.endsWith('.xml') || fileName.endsWith('.mxl');
+
+    if (!isBrf && !isMusicXML) {
+      toast.error('Formato não suportado. Use .brf ou .musicxml');
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
+
+    setImporting(true);
+
+    try {
+      const text = await file.text();
+
+      if (isBrf) {
+        // BRF files contain Braille Unicode directly — load into editor
+        // Strip any BRF header lines (lines starting with ⠠ repeated)
+        const lines = text.split('\n');
+        const contentLines: string[] = [];
+        let headerDone = false;
+        for (const line of lines) {
+          if (!headerDone) {
+            // Skip header separator lines and metadata lines
+            const trimmed = line.trim();
+            if (trimmed === '' || /^⠠{3,}/.test(trimmed) || /^⠠⠞|^⠠⠁|^⠠⠇/.test(trimmed)) {
+              continue;
+            }
+            headerDone = true;
+          }
+          if (headerDone) {
+            // Skip page break lines
+            if (/^⠠{10,}/.test(line.trim())) continue;
+            contentLines.push(line);
+          }
+        }
+        const brailleText = contentLines.join('\n').trim();
+
+        if (!brailleText) {
+          toast.error('O arquivo BRF está vazio ou não contém conteúdo Braille válido');
+          return;
+        }
+
+        // If no project is open, create one
+        if (!currentProjectId) {
+          const title = file.name.replace(/\.(brf)$/i, '');
+          const project = await createMutation.mutateAsync({ title, language: 'pt', contentBraille: brailleText });
+          setCurrentProjectId(project.id);
+          setProjectTitle(title);
+          setBrailleContent(brailleText);
+          setShowProjects(false);
+          utils.editor.list.invalidate();
+          toast.success(`Arquivo BRF importado: ${file.name}`);
+        } else {
+          // Load into current project
+          setBrailleContent(brailleText);
+          toast.success(`Conteúdo BRF carregado: ${file.name}`);
+        }
+      } else {
+        // MusicXML — send to server for parsing
+        if (!currentProjectId) {
+          // Create a new project first
+          const title = file.name.replace(/\.(musicxml|xml|mxl)$/i, '');
+          const project = await createMutation.mutateAsync({ title, language: 'pt' });
+          setCurrentProjectId(project.id);
+          setProjectTitle(title);
+          setShowProjects(false);
+          utils.editor.list.invalidate();
+
+          // Now import
+          const result = await importMusicXMLMutation.mutateAsync({
+            projectId: project.id,
+            xmlContent: text,
+            fileName: file.name,
+          });
+
+          if (result.metadata?.title) setProjectTitle(result.metadata.title);
+          // Reload project content
+          const updated = await utils.editor.get.fetch({ id: project.id });
+          setBrailleContent(updated?.contentBraille || '');
+          toast.success(
+            `MusicXML importado: ${result.metadata?.notesCount || 0} notas convertidas para Braille`
+          );
+        } else {
+          const result = await importMusicXMLMutation.mutateAsync({
+            projectId: currentProjectId,
+            xmlContent: text,
+            fileName: file.name,
+          });
+
+          if (result.metadata?.title) setProjectTitle(result.metadata.title);
+          const updated = await utils.editor.get.fetch({ id: currentProjectId });
+          setBrailleContent(updated?.contentBraille || '');
+          utils.editor.list.invalidate();
+          toast.success(
+            `MusicXML importado: ${result.metadata?.notesCount || 0} notas convertidas para Braille`
+          );
+        }
+      }
+    } catch (err: any) {
+      console.error('Import error:', err);
+      toast.error(err?.message || 'Erro ao importar arquivo');
+    } finally {
+      setImporting(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  }, [currentProjectId, createMutation, importMusicXMLMutation, utils]);
+
   // ─── LOADING / AUTH STATES ─────────────────────────────────────────────────
 
   if (authLoading) {
@@ -440,15 +558,36 @@ export default function BrailleEditor() {
               </a>
               <h1 className="text-2xl font-bold">Editor de Musicografia Braille</h1>
             </div>
-            <Button onClick={handleCreateProject} disabled={createMutation.isPending}>
-              <Plus className="w-4 h-4 mr-2" />
-              Novo Projeto
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={importing}
+              >
+                <Upload className="w-4 h-4 mr-2" />
+                {importing ? 'Importando...' : 'Importar Arquivo'}
+              </Button>
+              <Button onClick={handleCreateProject} disabled={createMutation.isPending}>
+                <Plus className="w-4 h-4 mr-2" />
+                Novo Projeto
+              </Button>
+            </div>
           </div>
+
+          {/* Hidden file input for import */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".brf,.musicxml,.xml,.mxl"
+            onChange={handleImportFile}
+            className="hidden"
+            aria-label="Importar arquivo BRF ou MusicXML"
+          />
 
           <p className="text-muted-foreground">
             Escreva em Braille musical usando o teclado Perkins ou o teclado padrão.
             A partitura é renderizada em tempo real conforme você digita.
+            Você também pode <strong>importar arquivos .brf</strong> (Braille Ready Format) ou <strong>.musicxml</strong> para edição.
           </p>
 
           {projectsQuery.isLoading ? (
@@ -544,10 +683,28 @@ export default function BrailleEditor() {
             </span>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={importing}
+            >
+              <Upload className="w-4 h-4 mr-1" />
+              {importing ? 'Importando...' : 'Importar'}
+            </Button>
             <Button variant="outline" size="sm" onClick={() => setShowReference(!showReference)}>
               <Info className="w-4 h-4 mr-1" />
               Referência
             </Button>
+            {/* Hidden file input for import (editor view) */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".brf,.musicxml,.xml,.mxl"
+              onChange={handleImportFile}
+              className="hidden"
+              aria-label="Importar arquivo BRF ou MusicXML"
+            />
             <div className="flex border rounded-lg overflow-hidden">
               <button
                 onClick={() => setInputMode("standard")}

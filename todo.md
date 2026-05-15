@@ -240,3 +240,10 @@
 - [x] Painel de referência rápida de símbolos clicáveis
 - [x] Análise em tempo real (notas, pausas, compassos, caracteres)
 - [x] Auto-save a cada 2 segundos
+
+## Importação de Arquivos no Editor de Braille
+- [x] Botão de importação de arquivo .brf no editor (carrega conteúdo Braille para edição)
+- [x] Botão de importação de arquivo .musicxml no editor (converte para Braille e carrega para edição)
+- [x] Feedback visual durante importação (loading, sucesso, erro)
+- [x] Criação automática de projeto ao importar sem projeto aberto
+- [x] Botão de importação disponível tanto na lista de projetos quanto dentro do editor

@@ -180,8 +180,8 @@ export function validateBrailleContent(content: string): {
   for (let i = 0; i < content.length; i++) {
     const code = content.charCodeAt(i);
     // Valid Braille Unicode range: U+2800 to U+28FF
-    if ((code < 0x2800 || code > 0x28ff) && code !== 10 && code !== 13) {
-      // Allow newlines (10) and carriage returns (13)
+    if ((code < 0x2800 || code > 0x28ff) && code !== 10 && code !== 13 && code !== 32 && code !== 9) {
+      // Allow newlines (10), carriage returns (13), spaces (32), tabs (9)
       errors.push(`Invalid character at position ${i}: U+${code.toString(16).toUpperCase()}`);
     }
   }

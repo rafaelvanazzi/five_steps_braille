@@ -197,19 +197,19 @@ describe("materials.upload", () => {
     expect(result.success).toBe(true);
   });
 
-  it("throws FORBIDDEN for non-admin user", async () => {
+  it("allows non-admin user upload with pending approval", async () => {
     const caller = appRouter.createCaller(createUserContext());
-    await expect(
-      caller.materials.upload({
-        title: "Novo Material",
-        grade: 2,
-        language: "pt",
-        fileBase64: Buffer.from("test").toString("base64"),
-        fileName: "material.pdf",
-        mimeType: "application/pdf",
-        fileSize: 512,
-      })
-    ).rejects.toThrow();
+    const result = await caller.materials.upload({
+      title: "Novo Material",
+      grade: 2,
+      language: "pt",
+      fileBase64: Buffer.from("test").toString("base64"),
+      fileName: "material.pdf",
+      mimeType: "application/pdf",
+      fileSize: 512,
+    });
+    expect(result.success).toBe(true);
+    expect(result.pendingApproval).toBe(true);
   });
 });
 
