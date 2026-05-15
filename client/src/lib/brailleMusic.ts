@@ -6,6 +6,10 @@
  * 
  * Based on the International Manual of Braille Music Notation and
  * the BANA 2015 Music Braille Code specification.
+ * 
+ * KEY FEATURE: Automatic disambiguation of semibreve/semicolcheia (and
+ * mínima/fusa) based on measure context. If a whole note doesn't fit
+ * in the remaining beats of a measure, it's interpreted as a 16th note.
  */
 
 // ─── NOTE TABLES ───────────────────────────────────────────────────────────────
@@ -26,52 +30,57 @@ interface NoteInfo {
 /**
  * Map from Unicode Braille character to note info.
  * Each character encodes pitch + one of 4 duration groups.
+ * 
+ * Group 1: Colcheia (8th) / Quartifusa (128th) — no dot 3 or 6
+ * Group 2: Semínima (quarter) / Semifusa (64th) — dot 6 only
+ * Group 3: Mínima (half) / Fusa (32nd) — dot 3 only
+ * Group 4: Semibreve (whole) / Semicolcheia (16th) — dots 3 and 6
  */
 const NOTE_MAP: Record<string, NoteInfo> = {
-  // Eighth notes (and 128th notes) — no dot 3 or 6
-  '\u2819': { pitch: 'C', duration: '8', altDuration: '128' },  // ⠙
-  '\u2811': { pitch: 'D', duration: '8', altDuration: '128' },  // ⠑
-  '\u280B': { pitch: 'E', duration: '8', altDuration: '128' },  // ⠋
-  '\u281B': { pitch: 'F', duration: '8', altDuration: '128' },  // ⠛
-  '\u2813': { pitch: 'G', duration: '8', altDuration: '128' },  // ⠓
-  '\u280A': { pitch: 'A', duration: '8', altDuration: '128' },  // ⠊
-  '\u281A': { pitch: 'B', duration: '8', altDuration: '128' },  // ⠚
+  // Eighth notes (colcheias) / 128th notes (quartifusas) — no dot 3 or 6
+  '\u2819': { pitch: 'C', duration: '8', altDuration: '128' },  // ⠙ = D
+  '\u2811': { pitch: 'D', duration: '8', altDuration: '128' },  // ⠑ = E
+  '\u280B': { pitch: 'E', duration: '8', altDuration: '128' },  // ⠋ = F
+  '\u281B': { pitch: 'F', duration: '8', altDuration: '128' },  // ⠛ = G
+  '\u2813': { pitch: 'G', duration: '8', altDuration: '128' },  // ⠓ = H
+  '\u280A': { pitch: 'A', duration: '8', altDuration: '128' },  // ⠊ = I
+  '\u281A': { pitch: 'B', duration: '8', altDuration: '128' },  // ⠚ = J
 
-  // Quarter notes (and 64th notes) — dot 6 only
-  '\u2839': { pitch: 'C', duration: 'q', altDuration: '64' },   // ⠹
-  '\u2831': { pitch: 'D', duration: 'q', altDuration: '64' },   // ⠱
-  '\u282B': { pitch: 'E', duration: 'q', altDuration: '64' },   // ⠫
-  '\u283B': { pitch: 'F', duration: 'q', altDuration: '64' },   // ⠻
-  '\u2833': { pitch: 'G', duration: 'q', altDuration: '64' },   // ⠳
-  '\u282A': { pitch: 'A', duration: 'q', altDuration: '64' },   // ⠪
-  '\u283A': { pitch: 'B', duration: 'q', altDuration: '64' },   // ⠺
+  // Quarter notes (semínimas) / 64th notes (semifusas) — dot 6 only
+  '\u2839': { pitch: 'C', duration: 'q', altDuration: '64' },   // ⠹ = ?
+  '\u2831': { pitch: 'D', duration: 'q', altDuration: '64' },   // ⠱ = :
+  '\u282B': { pitch: 'E', duration: 'q', altDuration: '64' },   // ⠫ = $
+  '\u283B': { pitch: 'F', duration: 'q', altDuration: '64' },   // ⠻ = ]
+  '\u2833': { pitch: 'G', duration: 'q', altDuration: '64' },   // ⠳ = backslash
+  '\u282A': { pitch: 'A', duration: 'q', altDuration: '64' },   // ⠪ = [
+  '\u283A': { pitch: 'B', duration: 'q', altDuration: '64' },   // ⠺ = W
 
-  // Half notes (and 32nd notes) — dot 3 only
-  '\u281D': { pitch: 'C', duration: 'h', altDuration: '32' },   // ⠝
-  '\u2815': { pitch: 'D', duration: 'h', altDuration: '32' },   // ⠕
-  '\u280F': { pitch: 'E', duration: 'h', altDuration: '32' },   // ⠏
-  '\u281F': { pitch: 'F', duration: 'h', altDuration: '32' },   // ⠟
-  '\u2817': { pitch: 'G', duration: 'h', altDuration: '32' },   // ⠗
-  '\u280E': { pitch: 'A', duration: 'h', altDuration: '32' },   // ⠎
-  '\u281E': { pitch: 'B', duration: 'h', altDuration: '32' },   // ⠞
+  // Half notes (mínimas) / 32nd notes (fusas) — dot 3 only
+  '\u281D': { pitch: 'C', duration: 'h', altDuration: '32' },   // ⠝ = N
+  '\u2815': { pitch: 'D', duration: 'h', altDuration: '32' },   // ⠕ = O
+  '\u280F': { pitch: 'E', duration: 'h', altDuration: '32' },   // ⠏ = P
+  '\u281F': { pitch: 'F', duration: 'h', altDuration: '32' },   // ⠟ = Q
+  '\u2817': { pitch: 'G', duration: 'h', altDuration: '32' },   // ⠗ = R
+  '\u280E': { pitch: 'A', duration: 'h', altDuration: '32' },   // ⠎ = S
+  '\u281E': { pitch: 'B', duration: 'h', altDuration: '32' },   // ⠞ = T
 
-  // Whole notes (and 16th notes) — dots 3 and 6
-  '\u283D': { pitch: 'C', duration: 'w', altDuration: '16' },   // ⠽
-  '\u2835': { pitch: 'D', duration: 'w', altDuration: '16' },   // ⠵
-  '\u282F': { pitch: 'E', duration: 'w', altDuration: '16' },   // ⠯
-  '\u283F': { pitch: 'F', duration: 'w', altDuration: '16' },   // ⠿
-  '\u2837': { pitch: 'G', duration: 'w', altDuration: '16' },   // ⠷
-  '\u282E': { pitch: 'A', duration: 'w', altDuration: '16' },   // ⠮
-  '\u283E': { pitch: 'B', duration: 'w', altDuration: '16' },   // ⠾
+  // Whole notes (semibreves) / 16th notes (semicolcheias) — dots 3 and 6
+  '\u283D': { pitch: 'C', duration: 'w', altDuration: '16' },   // ⠽ = Y
+  '\u2835': { pitch: 'D', duration: 'w', altDuration: '16' },   // ⠵ = Z
+  '\u282F': { pitch: 'E', duration: 'w', altDuration: '16' },   // ⠯ = &
+  '\u283F': { pitch: 'F', duration: 'w', altDuration: '16' },   // ⠿ = =
+  '\u2837': { pitch: 'G', duration: 'w', altDuration: '16' },   // ⠷ = (
+  '\u282E': { pitch: 'A', duration: 'w', altDuration: '16' },   // ⠮ = !
+  '\u283E': { pitch: 'B', duration: 'w', altDuration: '16' },   // ⠾ = )
 };
 
 // ─── REST TABLE ────────────────────────────────────────────────────────────────
 
 const REST_MAP: Record<string, { duration: Duration; altDuration: Duration }> = {
-  '\u282D': { duration: '8', altDuration: '128' },   // ⠭ eighth rest
-  '\u2827': { duration: 'q', altDuration: '64' },     // ⠧ quarter rest
-  '\u2825': { duration: 'h', altDuration: '32' },     // ⠥ half rest
-  '\u280D': { duration: 'w', altDuration: '16' },     // ⠍ whole rest
+  '\u282D': { duration: '8', altDuration: '128' },   // ⠭ eighth rest = X
+  '\u2827': { duration: 'q', altDuration: '64' },     // ⠧ quarter rest = V
+  '\u2825': { duration: 'h', altDuration: '32' },     // ⠥ half rest = U
+  '\u280D': { duration: 'w', altDuration: '16' },     // ⠍ whole rest = M
 };
 
 // ─── OCTAVE SIGNS ──────────────────────────────────────────────────────────────
@@ -144,10 +153,12 @@ export interface ParsedNote {
   accidental?: Accidental;
   dotted: boolean;
   articulation?: string;
-  /** VexFlow key string like "c/4", "d#/5" */
+  /** VexFlow key string like "c/4", "b/4" */
   vexKey: string;
-  /** VexFlow duration string like "q", "h", "8" */
+  /** VexFlow duration string like "q", "h", "8", "16" */
   vexDuration: string;
+  /** Index in the original input string (for cursor tracking) */
+  sourceIndex?: number;
 }
 
 export interface ParsedRest {
@@ -155,10 +166,12 @@ export interface ParsedRest {
   duration: Duration;
   dotted: boolean;
   vexDuration: string;
+  sourceIndex?: number;
 }
 
 export interface ParsedBarline {
   type: 'barline';
+  sourceIndex?: number;
 }
 
 export type ParsedElement = ParsedNote | ParsedRest | ParsedBarline;
@@ -166,6 +179,26 @@ export type ParsedElement = ParsedNote | ParsedRest | ParsedBarline;
 export interface ParseResult {
   elements: ParsedElement[];
   errors: string[];
+}
+
+// ─── DURATION HELPERS ──────────────────────────────────────────────────────────
+
+/** Convert a duration string to its beat value (in quarter-note beats) */
+export function durationToBeats(dur: Duration, dotted = false): number {
+  let beats = 0;
+  switch (dur) {
+    case 'w': beats = 4; break;
+    case 'h': beats = 2; break;
+    case 'q': beats = 1; break;
+    case '8': beats = 0.5; break;
+    case '16': beats = 0.25; break;
+    case '32': beats = 0.125; break;
+    case '64': beats = 0.0625; break;
+    case '128': beats = 0.03125; break;
+    default: beats = 1;
+  }
+  if (dotted) beats *= 1.5;
+  return beats;
 }
 
 // ─── HELPER: pitch → MIDI-like number for octave inference ─────────────────────
@@ -198,7 +231,6 @@ function inferOctave(prevPitch: NoteName, prevOctave: number, newPitch: NoteName
     if (oct < 1 || oct > 7) continue;
     const abs = pitchToAbsolute(newPitch, oct);
     const dist = Math.abs(abs - prevAbs);
-    // For intervals up to a 5th (7 semitones), pick closest
     if (dist < bestDist) {
       bestDist = dist;
       bestOctave = oct;
@@ -215,13 +247,71 @@ function inferOctave(prevPitch: NoteName, prevOctave: number, newPitch: NoteName
   return bestOctave;
 }
 
+// ─── DISAMBIGUATION: semibreve vs semicolcheia ─────────────────────────────────
+
+/**
+ * Determine whether a note with ambiguous duration should use the primary
+ * (longer) or alternative (shorter) duration based on measure context.
+ * 
+ * Rules:
+ * - Group 4 (whole/16th): If a whole note (4 beats) fits in the remaining
+ *   beats of the measure, use whole. Otherwise, use 16th.
+ * - Group 3 (half/32nd): If a half note (2 beats) fits, use half. Otherwise, use 32nd.
+ * - Group 1 (8th/128th): Always use 8th (128th is extremely rare).
+ * - Group 2 (quarter/64th): Always use quarter (64th is extremely rare).
+ * 
+ * @param primaryDur The primary (longer) duration
+ * @param altDur The alternative (shorter) duration
+ * @param beatsUsedInMeasure Beats already used in the current measure
+ * @param beatsPerMeasure Total beats in the measure (from time signature)
+ * @param dotted Whether the note has an augmentation dot
+ */
+function disambiguateDuration(
+  primaryDur: Duration,
+  altDur: Duration,
+  beatsUsedInMeasure: number,
+  beatsPerMeasure: number,
+  dotted: boolean,
+): Duration {
+  // Only disambiguate for groups that share the same Braille cell
+  // Group 4: whole (w=4 beats) vs 16th (16=0.25 beats)
+  // Group 3: half (h=2 beats) vs 32nd (32=0.125 beats)
+  
+  if (primaryDur === 'w' || primaryDur === 'h') {
+    const primaryBeats = durationToBeats(primaryDur, dotted);
+    const remaining = beatsPerMeasure - beatsUsedInMeasure;
+    
+    // If the primary (longer) duration fits in the remaining beats, use it
+    if (primaryBeats <= remaining + 0.001) {
+      return primaryDur;
+    }
+    // Otherwise, use the alternative (shorter) duration
+    return altDur;
+  }
+  
+  // For 8th/128th and quarter/64th, always use the primary (common) duration
+  return primaryDur;
+}
+
 // ─── MAIN PARSER ───────────────────────────────────────────────────────────────
+
+export interface ParseOptions {
+  /** Beats per measure (default: 4 for 4/4 time) */
+  beatsPerMeasure?: number;
+  /** Beat value (default: 4 = quarter note) */
+  beatValue?: number;
+}
 
 /**
  * Parse a string of Unicode Braille music notation into structured elements.
  * This is the core engine that powers the real-time score rendering.
+ * 
+ * Now includes automatic disambiguation of semibreve/semicolcheia based
+ * on measure context.
  */
-export function parseBrailleMusic(input: string): ParseResult {
+export function parseBrailleMusic(input: string, options?: ParseOptions): ParseResult {
+  const beatsPerMeasure = options?.beatsPerMeasure ?? 4;
+  
   const elements: ParsedElement[] = [];
   const errors: string[] = [];
   
@@ -235,6 +325,9 @@ export function parseBrailleMusic(input: string): ParseResult {
   let pendingArticulation: string | undefined;
   let pendingOctave: number | undefined;
   
+  // Measure context for disambiguation
+  let beatsUsedInMeasure = 0;
+  
   let i = 0;
   while (i < input.length) {
     const ch = input[i];
@@ -242,10 +335,11 @@ export function parseBrailleMusic(input: string): ParseResult {
     
     // Skip literal spaces (barlines in braille music)
     if (ch === ' ' || ch === '\u2800') {
-      // A space can be a barline separator
       if (elements.length > 0 && elements[elements.length - 1].type !== 'barline') {
-        elements.push({ type: 'barline' });
+        elements.push({ type: 'barline', sourceIndex: i });
       }
+      // Reset measure beat counter
+      beatsUsedInMeasure = 0;
       i++;
       continue;
     }
@@ -258,9 +352,7 @@ export function parseBrailleMusic(input: string): ParseResult {
     
     // Check for octave sign
     if (OCTAVE_MAP[ch] !== undefined) {
-      // Check for double octave signs (below first / above seventh)
       if (nextCh === ch) {
-        // Double sign - skip for now
         i += 2;
         continue;
       }
@@ -290,9 +382,6 @@ export function parseBrailleMusic(input: string): ParseResult {
       continue;
     }
     
-    // Check for augmentation dot (after a note)
-    // Handled below after note parsing
-    
     // Check for note
     if (NOTE_MAP[ch]) {
       const noteInfo = NOTE_MAP[ch];
@@ -304,11 +393,9 @@ export function parseBrailleMusic(input: string): ParseResult {
         pendingOctave = undefined;
         octaveSet = true;
       } else if (!octaveSet && prevPitch === null) {
-        // First note without octave sign — default to 4
         octave = currentOctave;
         octaveSet = true;
       } else if (prevPitch !== null) {
-        // Infer octave from previous note
         octave = inferOctave(prevPitch, prevOctave, noteInfo.pitch);
       } else {
         octave = currentOctave;
@@ -318,25 +405,37 @@ export function parseBrailleMusic(input: string): ParseResult {
       let dotted = false;
       if (i + 1 < input.length && input[i + 1] === AUGMENTATION_DOT) {
         dotted = true;
-        // Don't advance i here, we'll do it after
       }
       
-      // Build VexFlow key — accidentals are added as modifiers in ScoreRenderer,
-      // NOT as part of the key string. Key is always just "c/4", "b/4", etc.
+      // ── DISAMBIGUATION ──
+      // Determine the actual duration based on measure context
+      const actualDuration = disambiguateDuration(
+        noteInfo.duration,
+        noteInfo.altDuration,
+        beatsUsedInMeasure,
+        beatsPerMeasure,
+        dotted,
+      );
+      
+      // Update beats used in measure
+      beatsUsedInMeasure += durationToBeats(actualDuration, dotted);
+      
+      // Build VexFlow key
       const vexKey = `${noteInfo.pitch.toLowerCase()}/${octave}`;
-      let vexDuration = noteInfo.duration;
-      if (dotted) vexDuration = (vexDuration + 'd') as any;
+      let vexDuration: string = actualDuration;
+      if (dotted) vexDuration = actualDuration + 'd';
       
       const parsedNote: ParsedNote = {
         type: 'note',
         pitch: noteInfo.pitch,
         octave,
-        duration: noteInfo.duration,
+        duration: actualDuration,
         accidental: pendingAccidental,
         dotted,
         articulation: pendingArticulation,
         vexKey,
-        vexDuration: vexDuration as string,
+        vexDuration,
+        sourceIndex: i,
       };
       
       elements.push(parsedNote);
@@ -349,7 +448,6 @@ export function parseBrailleMusic(input: string): ParseResult {
       pendingArticulation = undefined;
       
       i++;
-      // Skip augmentation dot if present
       if (dotted && i < input.length && input[i] === AUGMENTATION_DOT) {
         i++;
       }
@@ -365,14 +463,26 @@ export function parseBrailleMusic(input: string): ParseResult {
         dotted = true;
       }
       
-      let vexDuration = restInfo.duration + 'r';
-      if (dotted) vexDuration = restInfo.duration + 'dr';
+      // Disambiguate rest duration too
+      const actualDuration = disambiguateDuration(
+        restInfo.duration,
+        restInfo.altDuration,
+        beatsUsedInMeasure,
+        beatsPerMeasure,
+        dotted,
+      );
+      
+      beatsUsedInMeasure += durationToBeats(actualDuration, dotted);
+      
+      let vexDuration = actualDuration + 'r';
+      if (dotted) vexDuration = actualDuration + 'dr';
       
       elements.push({
         type: 'rest',
-        duration: restInfo.duration,
+        duration: actualDuration,
         dotted,
         vexDuration,
+        sourceIndex: i,
       });
       
       i++;
@@ -384,17 +494,20 @@ export function parseBrailleMusic(input: string): ParseResult {
     
     // Check for number sign (time signature prefix)
     if (ch === NUMBER_SIGN) {
-      // Skip time signature for now (just consume digits)
       i++;
+      // Parse time signature digits
+      let digits = '';
       while (i < input.length && BRAILLE_DIGITS[input[i]] !== undefined) {
+        digits += BRAILLE_DIGITS[input[i]];
         i++;
       }
+      // If we got digits, we could use them for time signature
+      // (For now, just skip — the user sets beatsPerMeasure via options)
       continue;
     }
     
     // Check for word sign (dynamics prefix)
     if (ch === WORD_SIGN) {
-      // Skip dynamics text for now
       i++;
       while (i < input.length && input[i] !== ' ' && input[i] !== '\u2800' && !NOTE_MAP[input[i]] && !REST_MAP[input[i]]) {
         i++;
@@ -404,7 +517,6 @@ export function parseBrailleMusic(input: string): ParseResult {
     
     // Check for slur
     if (ch === SLUR) {
-      // Skip slur for now (visual rendering can be added later)
       i++;
       continue;
     }
@@ -414,6 +526,45 @@ export function parseBrailleMusic(input: string): ParseResult {
   }
   
   return { elements, errors };
+}
+
+// ─── LINE-BASED PARSING ────────────────────────────────────────────────────────
+
+/**
+ * Parse only a specific line of braille text.
+ * Used for rendering only the line where the cursor is.
+ */
+export function parseBrailleLine(fullText: string, cursorPosition: number, options?: ParseOptions): ParseResult {
+  // Find the line that contains the cursor
+  const lines = fullText.split('\n');
+  let charCount = 0;
+  let targetLine = '';
+  
+  for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
+    const lineStart = charCount;
+    const lineEnd = charCount + lines[lineIdx].length;
+    
+    if (cursorPosition >= lineStart && cursorPosition <= lineEnd) {
+      targetLine = lines[lineIdx];
+      break;
+    }
+    charCount = lineEnd + 1; // +1 for the newline character
+  }
+  
+  if (!targetLine) {
+    // Fallback: use last line
+    targetLine = lines[lines.length - 1] || '';
+  }
+  
+  return parseBrailleMusic(targetLine, options);
+}
+
+/**
+ * Parse a selected range of braille text.
+ */
+export function parseBrailleSelection(fullText: string, selStart: number, selEnd: number, options?: ParseOptions): ParseResult {
+  const selectedText = fullText.slice(selStart, selEnd);
+  return parseBrailleMusic(selectedText, options);
 }
 
 // ─── PERKINS KEYBOARD MAPPING ──────────────────────────────────────────────────
@@ -468,7 +619,8 @@ export function describeBrailleChar(char: string): string {
       'w': 'semibreve', 'h': 'mínima', 'q': 'semínima', '8': 'colcheia',
       '16': 'semicolcheia', '32': 'fusa', '64': 'semifusa', '128': 'quartifusa',
     };
-    return `${n.pitch} ${durNames[n.duration]}`;
+    const altName = durNames[n.altDuration];
+    return `${n.pitch} ${durNames[n.duration]} / ${altName}`;
   }
   if (REST_MAP[char]) {
     const r = REST_MAP[char];
@@ -476,7 +628,7 @@ export function describeBrailleChar(char: string): string {
       'w': 'semibreve', 'h': 'mínima', 'q': 'semínima', '8': 'colcheia',
       '16': 'semicolcheia', '32': 'fusa', '64': 'semifusa', '128': 'quartifusa',
     };
-    return `Pausa de ${durNames[r.duration]}`;
+    return `Pausa ${durNames[r.duration]} / ${durNames[r.altDuration]}`;
   }
   if (OCTAVE_MAP[char] !== undefined) return `Oitava ${OCTAVE_MAP[char]}`;
   if (ACCIDENTAL_MAP[char]) {
@@ -485,6 +637,7 @@ export function describeBrailleChar(char: string): string {
   }
   if (char === AUGMENTATION_DOT) return 'Ponto de aumento';
   if (char === SLUR) return 'Ligadura';
+  if (char === NUMBER_SIGN) return 'Sinal de número';
   if (char === '\u2800' || char === ' ') return 'Barra de compasso';
   
   const dots = unicodeToDots(char);
@@ -498,35 +651,39 @@ export interface QuickRefEntry {
   char: string;
   dots: string;
   description: string;
-  category: 'note-eighth' | 'note-quarter' | 'note-half' | 'note-whole' | 'rest' | 'octave' | 'accidental' | 'other';
+  category: string;
 }
 
 export function getQuickReference(): QuickRefEntry[] {
   const entries: QuickRefEntry[] = [];
   
-  // Notes
-  const durationCategories: [string, 'note-eighth' | 'note-quarter' | 'note-half' | 'note-whole'][] = [
-    ['8', 'note-eighth'], ['q', 'note-quarter'], ['h', 'note-half'], ['w', 'note-whole'],
-  ];
-  
+  // Notes — organized by duration group
   for (const [char, info] of Object.entries(NOTE_MAP)) {
-    const cat = info.duration === '8' ? 'note-eighth' : info.duration === 'q' ? 'note-quarter' : info.duration === 'h' ? 'note-half' : 'note-whole';
+    const durNames: Record<Duration, string> = {
+      'w': 'Semibreve/Semicolcheia', 'h': 'Mínima/Fusa', 'q': 'Semínima', '8': 'Colcheia',
+      '16': 'Semicolcheia', '32': 'Fusa', '64': 'Semifusa', '128': 'Quartifusa',
+    };
+    const cat = info.duration === '8' ? 'note-eighth' : info.duration === 'q' ? 'note-quarter' : info.duration === 'h' ? 'note-half' : 'note-whole-16th';
     const dots = unicodeToDots(char);
     entries.push({
       char,
       dots: dots.join(','),
-      description: describeBrailleChar(char),
+      description: `${info.pitch} ${durNames[info.duration]}`,
       category: cat,
     });
   }
   
   // Rests
-  for (const [char] of Object.entries(REST_MAP)) {
+  for (const [char, info] of Object.entries(REST_MAP)) {
+    const durNames: Record<Duration, string> = {
+      'w': 'Semibreve/Semicolcheia', 'h': 'Mínima/Fusa', 'q': 'Semínima', '8': 'Colcheia',
+      '16': 'Semicolcheia', '32': 'Fusa', '64': 'Semifusa', '128': 'Quartifusa',
+    };
     const dots = unicodeToDots(char);
     entries.push({
       char,
       dots: dots.join(','),
-      description: describeBrailleChar(char),
+      description: `Pausa ${durNames[info.duration]}`,
       category: 'rest',
     });
   }
@@ -554,13 +711,13 @@ export function getQuickReference(): QuickRefEntry[] {
     });
   }
   
-  // Other
-  entries.push({
-    char: AUGMENTATION_DOT,
-    dots: '3',
-    description: 'Ponto de aumento',
-    category: 'other',
-  });
+  // Other symbols
+  entries.push(
+    { char: AUGMENTATION_DOT, dots: '3', description: 'Ponto de aumento', category: 'other' },
+    { char: SLUR, dots: unicodeToDots(SLUR).join(','), description: 'Ligadura', category: 'other' },
+    { char: NUMBER_SIGN, dots: unicodeToDots(NUMBER_SIGN).join(','), description: 'Sinal de número (fórmula de compasso)', category: 'other' },
+    { char: ' ', dots: '-', description: 'Barra de compasso (espaço)', category: 'other' },
+  );
   
   return entries;
 }

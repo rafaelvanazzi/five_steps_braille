@@ -6,12 +6,15 @@ import SiteLayout from "@/components/SiteLayout";
 import ScoreRenderer from "@/components/ScoreRenderer";
 import {
   parseBrailleMusic,
+  parseBrailleLine,
+  parseBrailleSelection,
   perkinsDotsToUnicode,
   describeBrailleChar,
   unicodeToDots,
   getQuickReference,
   type ParsedElement,
   type PerkinsKeyState,
+  type ParseOptions,
 } from "@/lib/brailleMusic";
 import { brailleToRoman, romanToBraille, getRomanFormatHelp } from "@/lib/brailleRomano";
 import { asciiToUnicodeBraille, detectBrailleFormat } from "@/lib/brailleAscii";
@@ -150,11 +153,12 @@ function QuickReferencePanel({ onInsert }: { onInsert: (char: string) => void })
     { key: "all", label: "Todos" },
     { key: "note-quarter", label: "Semínimas" },
     { key: "note-eighth", label: "Colcheias" },
-    { key: "note-half", label: "Mínimas" },
-    { key: "note-whole", label: "Semibreves" },
+    { key: "note-half", label: "Mínimas/Fusas" },
+    { key: "note-whole-16th", label: "Semibreves/Semicolcheias" },
     { key: "rest", label: "Pausas" },
     { key: "octave", label: "Oitavas" },
     { key: "accidental", label: "Alterações" },
+    { key: "other", label: "Outros" },
   ];
 
   const filtered = filter === "all" ? ref : ref.filter((e) => e.category === filter);
@@ -226,14 +230,33 @@ export default function BrailleEditor() {
   const brailleTextareaRef = useRef<HTMLTextAreaElement>(null);
   const romanTextareaRef = useRef<HTMLTextAreaElement>(null);
   
+  // Cursor position tracking for line-based rendering
+  const [cursorPos, setCursorPos] = useState(0);
+  const [selectionRange, setSelectionRange] = useState<[number, number] | null>(null);
+  
+  // Time signature for disambiguation
+  const [beatsPerMeasure, setBeatsPerMeasure] = useState(4);
+  
   // Track which panel last changed content to avoid infinite sync loops
   const syncSourceRef = useRef<"braille" | "romano" | "none">("none");
 
-  // Parse braille content whenever it changes → update partitura
+  // Parse options
+  const parseOptions = useMemo<ParseOptions>(() => ({
+    beatsPerMeasure,
+  }), [beatsPerMeasure]);
+
+  // Parse braille content based on cursor position → render only current line
   useEffect(() => {
     if (brailleContent.trim()) {
       try {
-        const result = parseBrailleMusic(brailleContent);
+        let result;
+        if (selectionRange && selectionRange[0] !== selectionRange[1]) {
+          // If there's a selection, parse only the selected text
+          result = parseBrailleSelection(brailleContent, selectionRange[0], selectionRange[1], parseOptions);
+        } else {
+          // Parse only the line where the cursor is
+          result = parseBrailleLine(brailleContent, cursorPos, parseOptions);
+        }
         setParsedElements(result.elements);
       } catch {
         setParsedElements([]);
@@ -241,7 +264,7 @@ export default function BrailleEditor() {
     } else {
       setParsedElements([]);
     }
-  }, [brailleContent]);
+  }, [brailleContent, cursorPos, selectionRange, parseOptions]);
 
   // Sync: Braille → Romano (when braille changes and was the source)
   useEffect(() => {
@@ -298,6 +321,19 @@ export default function BrailleEditor() {
     return () => observer.disconnect();
   }, []);
 
+  // ─── CURSOR TRACKING ──────────────────────────────────────────────────────
+
+  const updateCursorPosition = useCallback((textarea: HTMLTextAreaElement) => {
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    setCursorPos(start);
+    if (start !== end) {
+      setSelectionRange([start, end]);
+    } else {
+      setSelectionRange(null);
+    }
+  }, []);
+
   // ─── BRAILLE INPUT HANDLERS ────────────────────────────────────────────────
 
   const handleBrailleChange = useCallback((newContent: string) => {
@@ -313,9 +349,11 @@ export default function BrailleEditor() {
       const newContent = brailleContent.slice(0, start) + char + brailleContent.slice(end);
       syncSourceRef.current = "braille";
       setBrailleContent(newContent);
-      // Restore cursor position after React re-render
+      const newPos = start + char.length;
+      setCursorPos(newPos);
+      setSelectionRange(null);
       requestAnimationFrame(() => {
-        textarea.selectionStart = textarea.selectionEnd = start + char.length;
+        textarea.selectionStart = textarea.selectionEnd = newPos;
         textarea.focus();
       });
     } else {
@@ -338,19 +376,21 @@ export default function BrailleEditor() {
       const start = textarea.selectionStart;
       const end = textarea.selectionEnd;
       if (start !== end) {
-        // Delete selection
         const newContent = brailleContent.slice(0, start) + brailleContent.slice(end);
         syncSourceRef.current = "braille";
         setBrailleContent(newContent);
+        setCursorPos(start);
+        setSelectionRange(null);
         requestAnimationFrame(() => {
           textarea.selectionStart = textarea.selectionEnd = start;
           textarea.focus();
         });
       } else if (start > 0) {
-        // Delete char before cursor
         const newContent = brailleContent.slice(0, start - 1) + brailleContent.slice(start);
         syncSourceRef.current = "braille";
         setBrailleContent(newContent);
+        setCursorPos(start - 1);
+        setSelectionRange(null);
         requestAnimationFrame(() => {
           textarea.selectionStart = textarea.selectionEnd = start - 1;
           textarea.focus();
@@ -392,11 +432,13 @@ export default function BrailleEditor() {
       setCurrentProjectId(project.id);
       setProjectTitle(project.title);
       const braille = project.contentBraille || "";
+      syncSourceRef.current = "braille";
       setBrailleContent(braille);
-      // Convert to romano for the romano panel
       setRomanContent(brailleToRoman(braille));
       setShowProjects(false);
       setSaveStatus("saved");
+      setCursorPos(0);
+      setSelectionRange(null);
     },
     []
   );
@@ -465,18 +507,15 @@ export default function BrailleEditor() {
       const text = await file.text();
 
       if (isBrf) {
-        // Detect if BRF is ASCII or Unicode
         const format = detectBrailleFormat(text);
         let brailleText: string;
         
         if (format === 'ascii' || format === 'mixed') {
-          // Convert ASCII Braille to Unicode
           brailleText = asciiToUnicodeBraille(text);
         } else {
           brailleText = text;
         }
         
-        // Clean up: remove excessive blank lines
         brailleText = brailleText.replace(/\n{3,}/g, '\n\n').trim();
 
         if (!brailleText) {
@@ -484,24 +523,25 @@ export default function BrailleEditor() {
           return;
         }
 
-        // If no project is open, create one
         if (!currentProjectId) {
           const title = file.name.replace(/\.(brf)$/i, '');
           const project = await createMutation.mutateAsync({ title, language: 'pt', contentBraille: brailleText });
           setCurrentProjectId(project.id);
           setProjectTitle(title);
+          syncSourceRef.current = "braille";
           setBrailleContent(brailleText);
           setRomanContent(brailleToRoman(brailleText));
           setShowProjects(false);
           utils.editor.list.invalidate();
           toast.success(`Arquivo BRF importado: ${file.name}`);
         } else {
+          syncSourceRef.current = "braille";
           setBrailleContent(brailleText);
           setRomanContent(brailleToRoman(brailleText));
           toast.success(`Conteúdo BRF carregado: ${file.name}`);
         }
       } else {
-        // MusicXML — send to server for parsing
+        // MusicXML
         if (!currentProjectId) {
           const title = file.name.replace(/\.(musicxml|xml|mxl)$/i, '');
           const project = await createMutation.mutateAsync({ title, language: 'pt' });
@@ -519,6 +559,7 @@ export default function BrailleEditor() {
           if (result.metadata?.title) setProjectTitle(result.metadata.title);
           const updated = await utils.editor.get.fetch({ id: project.id });
           const braille = updated?.contentBraille || '';
+          syncSourceRef.current = "braille";
           setBrailleContent(braille);
           setRomanContent(brailleToRoman(braille));
           toast.success(
@@ -534,6 +575,7 @@ export default function BrailleEditor() {
           if (result.metadata?.title) setProjectTitle(result.metadata.title);
           const updated = await utils.editor.get.fetch({ id: currentProjectId });
           const braille = updated?.contentBraille || '';
+          syncSourceRef.current = "braille";
           setBrailleContent(braille);
           setRomanContent(brailleToRoman(braille));
           utils.editor.list.invalidate();
@@ -683,9 +725,23 @@ export default function BrailleEditor() {
 
   // ─── EDITOR VIEW (3 PANELS) ────────────────────────────────────────────────
 
-  const noteCount = parsedElements.filter((e) => e.type === "note").length;
-  const restCount = parsedElements.filter((e) => e.type === "rest").length;
-  const barCount = parsedElements.filter((e) => e.type === "barline").length + 1;
+  // Count from full document for stats
+  const fullParse = parseBrailleMusic(brailleContent, parseOptions);
+  const noteCount = fullParse.elements.filter((e) => e.type === "note").length;
+  const restCount = fullParse.elements.filter((e) => e.type === "rest").length;
+  const barCount = fullParse.elements.filter((e) => e.type === "barline").length + 1;
+
+  // Get current line info for display
+  const lines = brailleContent.split('\n');
+  let currentLineNum = 1;
+  let charCount = 0;
+  for (let li = 0; li < lines.length; li++) {
+    if (cursorPos <= charCount + lines[li].length) {
+      currentLineNum = li + 1;
+      break;
+    }
+    charCount += lines[li].length + 1;
+  }
 
   return (
     <SiteLayout>
@@ -707,7 +763,7 @@ export default function BrailleEditor() {
               aria-label="Nome do projeto"
             />
             <span
-              className={`text-xs px-2 py-0.5 rounded-full whitespace-nowrap inline-block min-w-[80px] text-center ${
+              className={`text-xs px-2 py-0.5 rounded-full whitespace-nowrap inline-block min-w-[90px] text-center ${
                 saveStatus === "saved"
                   ? "bg-green-100 text-green-700"
                   : saveStatus === "saving"
@@ -715,13 +771,24 @@ export default function BrailleEditor() {
                   : "bg-red-100 text-red-700"
               }`}
             >
-              {saveStatus === "saved" ? "Salvo" : saveStatus === "saving" ? "Salvando..." : "Não salvo"}
-            </span>
-            <span className="text-xs text-muted-foreground hidden sm:inline">
-              {noteCount} notas · {restCount} pausas · {barCount} compassos
+              {saveStatus === "saved" ? "✓ Salvo" : saveStatus === "saving" ? "Salvando..." : "Não salvo"}
             </span>
           </div>
           <div className="flex items-center gap-1.5 flex-wrap">
+            {/* Time signature selector */}
+            <div className="flex items-center gap-1 border rounded-lg px-2 py-1 bg-card">
+              <span className="text-xs text-muted-foreground">Compasso:</span>
+              <select
+                value={beatsPerMeasure}
+                onChange={(e) => setBeatsPerMeasure(Number(e.target.value))}
+                className="text-xs bg-transparent border-none focus:outline-none cursor-pointer"
+              >
+                <option value={2}>2/4</option>
+                <option value={3}>3/4</option>
+                <option value={4}>4/4</option>
+                <option value={6}>6/8</option>
+              </select>
+            </div>
             <Button
               variant="outline"
               size="sm"
@@ -784,10 +851,18 @@ export default function BrailleEditor() {
         {/* ── PANEL 1: SCORE RENDERING (FULL WIDTH ON TOP) ── */}
         <Card>
           <CardHeader className="py-2">
-            <CardTitle className="text-sm flex items-center gap-2">
-              <Music className="w-4 h-4" />
-              Partitura
-            </CardTitle>
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <Music className="w-4 h-4" />
+                Partitura
+                <span className="text-[10px] font-normal text-muted-foreground">
+                  (Linha {currentLineNum} de {lines.length})
+                </span>
+              </CardTitle>
+              <span className="text-xs text-muted-foreground hidden sm:inline">
+                {noteCount} notas · {restCount} pausas · {barCount} compassos · {beatsPerMeasure}/4
+              </span>
+            </div>
           </CardHeader>
           <CardContent className="pt-0 pb-2">
             <div ref={scoreContainerRef} className="min-h-[140px]">
@@ -836,13 +911,16 @@ export default function BrailleEditor() {
                 value={brailleContent}
                 onChange={(e) => handleBrailleChange(e.target.value)}
                 onFocus={() => setActivePanel("braille")}
+                onSelect={(e) => updateCursorPosition(e.currentTarget)}
+                onClick={(e) => updateCursorPosition(e.currentTarget)}
+                onKeyUp={(e) => updateCursorPosition(e.currentTarget)}
                 className="w-full h-48 p-3 border rounded-lg bg-card text-card-foreground font-mono text-2xl leading-relaxed resize-none focus:outline-none focus:ring-2 focus:ring-primary/50"
                 placeholder="Clique aqui e use o teclado Perkins (F,D,S,J,K,L)..."
                 aria-label="Área de entrada em Braille musical — use teclado Perkins"
                 spellCheck={false}
               />
               <div className="flex justify-between text-[10px] text-muted-foreground">
-                <span>{brailleContent.length} caracteres Braille</span>
+                <span>{brailleContent.length} caracteres Braille · Linha {currentLineNum}</span>
                 <span>Documento oficial para impressão</span>
               </div>
             </CardContent>

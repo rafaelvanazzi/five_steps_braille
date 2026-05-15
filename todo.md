@@ -277,3 +277,11 @@
 - [x] Importação MusicXML inclui barras de compasso entre compassos
 - [x] Layout do status de salvamento com largura fixa (sem pulos)
 - [x] Nota Si (B) corrigida no VexFlow (accidentals como modifiers)
+
+## Editor v3.2 - Renderização por Linha e Desambiguação
+- [ ] Renderizar partitura apenas da linha onde está o cursor
+- [ ] Renderizar partitura do trecho selecionado (se houver seleção)
+- [ ] Desambiguação automática semibreve↔semicolcheia baseada na fórmula de compasso
+- [ ] Desambiguação automática mínima↔fusa (mesma cela Braille)
+- [ ] Atualizar Referência Rápida com semicolcheias, barras de compasso, fórmulas de compasso, ligaduras
+- [ ] Cursor tracking bidirecional entre Texto em Braille e Texto em Romano
