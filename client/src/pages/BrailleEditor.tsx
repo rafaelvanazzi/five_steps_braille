@@ -102,6 +102,7 @@ function unicodeToPoints(char: string): number[] {
 }
 
 export default function BrailleEditor() {
+  // === TODOS OS HOOKS DEVEM VIR PRIMEIRO, ANTES DE QUALQUER RETURN ===
   const { user, loading } = useAuth({ redirectOnUnauthenticated: true });
   const [inputMode, setInputMode] = useState<"standard" | "perkins">("standard");
   const [projectTitle, setProjectTitle] = useState("Novo Projeto");
@@ -116,38 +117,22 @@ export default function BrailleEditor() {
   const textInputRef = useRef<HTMLTextAreaElement>(null);
   const brailleInputRef = useRef<HTMLTextAreaElement>(null);
 
-  // Mostrar loading enquanto verifica autenticação
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
-          <p className="text-gray-600">Carregando...</p>
-        </div>
-      </div>
-    );
-  }
-
-  // Queries e mutations
-  const { data: projects = [] } = trpc.editor.list.useQuery();
+  // Queries e mutations — DEVEM vir antes de qualquer early return
+  const { data: projects = [] } = trpc.editor.list.useQuery(undefined, {
+    enabled: !!user,
+  });
   const createMutation = trpc.editor.create.useMutation();
   const updateMutation = trpc.editor.update.useMutation();
   const deleteMutation = trpc.editor.delete.useMutation();
   const importMusicXMLMutation = trpc.editor.importMusicXML.useMutation();
   const generateScaleMutation = trpc.editor.generateScale.useMutation();
 
-  // Redirecionar se não autenticado
-  useEffect(() => {
-    if (user === null) {
-      window.location.href = "/";
-    }
-  }, [user]);
-
   // Auto-save a cada 3 segundos se houver mudanças
   useEffect(() => {
+    if (!user) return;
     const timer = setTimeout(async () => {
       if (!currentProjectId || (brailleContent === "" && textContent === "")) return;
-      
+
       setIsSaving(true);
       setSaveStatus("saving");
       try {
@@ -169,7 +154,23 @@ export default function BrailleEditor() {
     }, 3000);
 
     return () => clearTimeout(timer);
-  }, [brailleContent, textContent, musicContent, projectTitle, currentProjectId]);
+  }, [brailleContent, textContent, musicContent, projectTitle, currentProjectId, user]);
+
+  // === EARLY RETURNS APÓS TODOS OS HOOKS ===
+
+  // Mostrar loading enquanto verifica autenticação
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+          <p className="text-gray-600">Carregando...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) return null;
 
   // Handler para teclado Perkins
   const handlePerkinsPressDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -270,8 +271,6 @@ export default function BrailleEditor() {
     );
   };
 
-  if (!user) return null;
-
   return (
     <div className="min-h-screen bg-gray-50 p-6">
       <div className="max-w-7xl mx-auto">
@@ -324,7 +323,7 @@ export default function BrailleEditor() {
           {/* Painel de Entrada */}
           <Card className="p-6 col-span-1">
             <h2 className="text-xl font-bold mb-4">Entrada</h2>
-            
+
             <Tabs value={inputMode} onValueChange={(v) => setInputMode(v as "standard" | "perkins")}>
               <TabsList className="w-full mb-4">
                 <TabsTrigger value="standard" className="flex-1">Padrão</TabsTrigger>
