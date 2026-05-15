@@ -196,8 +196,11 @@ export function restToBraille(duration: Duration, dotted?: boolean): string {
  * Convert multiple notes to Braille with proper octave handling.
  * Only emits octave signs when necessary (first note, or when interval
  * is ambiguous — 6th, 7th, or octave+).
+ * 
+ * If measureIndices is provided, barline separators (spaces) are inserted
+ * between measures.
  */
-export function notesToBraille(notes: MusicalNote[]): string {
+export function notesToBraille(notes: MusicalNote[], measureIndices?: number[]): string {
   let result = '';
   let prevPitch: string | null = null;
   let prevOctave: number | null = null;
@@ -206,9 +209,20 @@ export function notesToBraille(notes: MusicalNote[]): string {
     'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11,
   };
 
+  // Build a set of indices where a new measure starts
+  const measureStartSet = new Set(measureIndices || []);
+
   for (let i = 0; i < notes.length; i++) {
     const note = notes[i];
     let braille = '';
+
+    // Insert barline (space) before the first note of a new measure
+    if (i > 0 && measureStartSet.has(i)) {
+      result += BARLINE_SPACE;
+      // After a barline, the next note needs an octave sign
+      prevPitch = null;
+      prevOctave = null;
+    }
 
     // Determine if octave sign is needed
     let needOctave = false;

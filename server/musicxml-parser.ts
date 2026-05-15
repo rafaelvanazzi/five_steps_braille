@@ -185,9 +185,13 @@ export async function parseMusicXML(xmlContent: string): Promise<ParsedMusicXML>
     let key = { fifths: 0, mode: "major" };
     let divisions = 4;
     const notes: MusicalNote[] = [];
+    const measureStartIndices: number[] = []; // Track where each measure starts
 
     // Processar medidas
     for (const measure of measures) {
+      // Track the start index of this measure's notes
+      const measureStartIndex = notes.length;
+
       // Extrair atributos (time signature, key, etc)
       if (measure.attributes) {
         const attrs = measure.attributes[0];
@@ -247,11 +251,16 @@ export async function parseMusicXML(xmlContent: string): Promise<ParsedMusicXML>
           }
         }
       }
+
+      // If this measure added notes, record its start index
+      if (notes.length > measureStartIndex) {
+        measureStartIndices.push(measureStartIndex);
+      }
     }
 
-    // Converter notas para Braille usando a função inteligente que gerencia sinais de oitava
+    // Converter notas para Braille com barras de compasso entre medidas
     const { notesToBraille } = await import("./braille-symbols");
-    const brailleContent = notesToBraille(notes);
+    const brailleContent = notesToBraille(notes, measureStartIndices);
 
     return {
       title: movementTitle,

@@ -321,13 +321,9 @@ export function parseBrailleMusic(input: string): ParseResult {
         // Don't advance i here, we'll do it after
       }
       
-      // Build VexFlow key
-      let accidentalSuffix = '';
-      if (pendingAccidental === 'sharp') accidentalSuffix = '#';
-      else if (pendingAccidental === 'flat') accidentalSuffix = 'b';
-      else if (pendingAccidental === 'natural') accidentalSuffix = 'n';
-      
-      const vexKey = `${noteInfo.pitch.toLowerCase()}${accidentalSuffix}/${octave}`;
+      // Build VexFlow key — accidentals are added as modifiers in ScoreRenderer,
+      // NOT as part of the key string. Key is always just "c/4", "b/4", etc.
+      const vexKey = `${noteInfo.pitch.toLowerCase()}/${octave}`;
       let vexDuration = noteInfo.duration;
       if (dotted) vexDuration = (vexDuration + 'd') as any;
       

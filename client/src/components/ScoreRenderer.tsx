@@ -53,13 +53,15 @@ function durationToBeats(dur: string): number {
 
 /**
  * Extract a clean VexFlow key from a ParsedNote.
- * VexFlow expects keys like "c/4", "b/4", "f#/5" etc.
+ * VexFlow expects keys like "c/4", "b/4" etc.
  * The accidental is added separately via Accidental modifier.
  * 
- * IMPORTANT: We must NOT strip 'b' from the key because 'b' is the note name for Si.
- * Instead, we build the key cleanly from pitch and octave.
+ * IMPORTANT: We must NOT include accidentals in the key string.
+ * VexFlow uses modifiers for accidentals, not key names.
+ * The key is always just the base note letter + octave.
  */
 function noteToVexKey(note: ParsedNote): string {
+  // Always use just the base pitch letter (no accidental suffix)
   return `${note.pitch.toLowerCase()}/${note.octave}`;
 }
 

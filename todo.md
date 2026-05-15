@@ -271,3 +271,9 @@
 - [x] Sincronização bidirecional: editar num atualiza o outro
 - [x] Textos romanos no Braille não devem causar erro na partitura
 - [x] Remover janela "Celas Braille" desnecessária
+
+## Correções v3.1
+- [x] Texto Romano mostra letras ASCII Braille (NABCC) corretas
+- [x] Importação MusicXML inclui barras de compasso entre compassos
+- [x] Layout do status de salvamento com largura fixa (sem pulos)
+- [x] Nota Si (B) corrigida no VexFlow (accidentals como modifiers)

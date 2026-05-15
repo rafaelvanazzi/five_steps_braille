@@ -707,7 +707,7 @@ export default function BrailleEditor() {
               aria-label="Nome do projeto"
             />
             <span
-              className={`text-xs px-2 py-0.5 rounded-full ${
+              className={`text-xs px-2 py-0.5 rounded-full whitespace-nowrap inline-block min-w-[80px] text-center ${
                 saveStatus === "saved"
                   ? "bg-green-100 text-green-700"
                   : saveStatus === "saving"
@@ -878,7 +878,7 @@ export default function BrailleEditor() {
                 onChange={(e) => handleRomanChange(e.target.value)}
                 onFocus={() => setActivePanel("romano")}
                 className="w-full h-48 p-3 border rounded-lg bg-card text-card-foreground font-mono text-base leading-relaxed resize-none focus:outline-none focus:ring-2 focus:ring-primary/50"
-                placeholder="Clique aqui e digite com teclado padrão (ex: O4 Cq Dq Eq Fq)..."
+                placeholder="Clique aqui e digite com teclado padrão (letras ASCII Braille)..."
                 aria-label="Área de entrada em texto Romano — use teclado padrão"
                 spellCheck={false}
               />
