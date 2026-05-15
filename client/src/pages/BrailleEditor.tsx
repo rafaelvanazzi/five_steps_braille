@@ -102,7 +102,7 @@ function unicodeToPoints(char: string): number[] {
 }
 
 export default function BrailleEditor() {
-  const { user } = useAuth();
+  const { user, loading } = useAuth({ redirectOnUnauthenticated: true });
   const [inputMode, setInputMode] = useState<"standard" | "perkins">("standard");
   const [projectTitle, setProjectTitle] = useState("Novo Projeto");
   const [language, setLanguage] = useState<"pt" | "en" | "es">("pt");
@@ -116,6 +116,18 @@ export default function BrailleEditor() {
   const textInputRef = useRef<HTMLTextAreaElement>(null);
   const brailleInputRef = useRef<HTMLTextAreaElement>(null);
 
+  // Mostrar loading enquanto verifica autenticação
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+          <p className="text-gray-600">Carregando...</p>
+        </div>
+      </div>
+    );
+  }
+
   // Queries e mutations
   const { data: projects = [] } = trpc.editor.list.useQuery();
   const createMutation = trpc.editor.create.useMutation();
@@ -126,7 +138,9 @@ export default function BrailleEditor() {
 
   // Redirecionar se não autenticado
   useEffect(() => {
-    if (!user) window.location.href = "/";
+    if (user === null) {
+      window.location.href = "/";
+    }
   }, [user]);
 
   // Auto-save a cada 3 segundos se houver mudanças

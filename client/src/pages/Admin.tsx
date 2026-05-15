@@ -531,6 +531,7 @@ export default function Admin() {
     { key: "events", label: "Eventos", icon: CalendarDays },
     { key: "registrations", label: "Inscrições", icon: UserCheck },
     { key: "forum", label: "Fórum", icon: MessagesSquare },
+    { key: "braille-projects", label: "Musicografia Braille", icon: FileMusic },
     { key: "upload", label: "Enviar", icon: Upload },
   ];
 
