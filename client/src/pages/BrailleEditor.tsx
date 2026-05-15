@@ -121,6 +121,8 @@ export default function BrailleEditor() {
   const createMutation = trpc.editor.create.useMutation();
   const updateMutation = trpc.editor.update.useMutation();
   const deleteMutation = trpc.editor.delete.useMutation();
+  const importMusicXMLMutation = trpc.editor.importMusicXML.useMutation();
+  const generateScaleMutation = trpc.editor.generateScale.useMutation();
 
   // Redirecionar se não autenticado
   useEffect(() => {
