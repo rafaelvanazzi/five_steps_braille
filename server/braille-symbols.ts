@@ -1,281 +1,369 @@
 /**
- * Advanced Braille Music Symbols Module
- * Handles accidentals, dynamics, articulation, and other musical symbols
+ * Braille Music Symbols Module (Server-side)
+ * 
+ * Correct implementation based on the International Manual of Braille Music Notation.
+ * In Braille music, each note character encodes BOTH pitch and duration in a single cell:
+ *   - Dots 1,2,4,5 encode the pitch (C through B)
+ *   - Dots 3,6 encode the duration group
  */
 
-// Mapeamento de símbolos musicais para Braille Unicode
-export const BRAILLE_SYMBOLS = {
-  // Notas básicas (7 notas naturais)
-  notes: {
-    C: "\u2801", // Ponto 1
-    D: "\u2802", // Ponto 2
-    E: "\u2804", // Ponto 3
-    F: "\u2808", // Ponto 4
-    G: "\u2810", // Ponto 5
-    A: "\u2820", // Ponto 6
-    B: "\u2840", // Ponto 7
-  },
+// ─── NOTE CHARACTER TABLE ──────────────────────────────────────────────────────
+// Each note is a SINGLE Unicode Braille character encoding pitch + duration.
+// Duration groups by dots 3,6:
+//   No dot 3/6 = eighth (or 128th)
+//   Dot 6 only = quarter (or 64th)
+//   Dot 3 only = half (or 32nd)
+//   Dots 3+6   = whole (or 16th)
 
-  // Alterações (Accidentals)
-  accidentals: {
-    sharp: "\u2843", // Sustenido (pontos 1,2,4)
-    flat: "\u2863", // Bemol (pontos 1,2,3,4,6)
-    natural: "\u2823", // Bequadro (pontos 1,2,6)
-    doubleSharp: "\u2847", // Duplo sustenido (pontos 1,2,3,4)
-    doubleFlat: "\u2867", // Duplo bemol (pontos 1,2,3,4,5,6)
-  },
+type NoteName = 'C' | 'D' | 'E' | 'F' | 'G' | 'A' | 'B';
+type Duration = 'whole' | 'half' | 'quarter' | 'eighth' | 'sixteenth' | 'thirtysecond' | 'sixtyfourth';
 
-  // Durações (Note Durations)
-  durations: {
-    whole: "\u2806", // Semibreve (pontos 2,3)
-    half: "\u2803", // Mínima (pontos 1,2)
-    quarter: "\u2809", // Semínima (pontos 1,4)
-    eighth: "\u280c", // Colcheia (pontos 3,4)
-    sixteenth: "\u2818", // Semicolcheia (pontos 4,5)
-    thirtysecond: "\u2830", // Fusa (pontos 5,6)
-    sixtyfourth: "\u2860", // Semifusa (pontos 6,7)
-    dotted: "\u2805", // Ponto de aumento (pontos 1,3)
-  },
+// Map from (pitch, duration) → Unicode Braille character
+const NOTE_CHAR_MAP: Record<string, string> = {
+  // Eighth notes (colcheias)
+  'C-eighth':   '\u2819', // ⠙
+  'D-eighth':   '\u2811', // ⠑
+  'E-eighth':   '\u280B', // ⠋
+  'F-eighth':   '\u281B', // ⠛
+  'G-eighth':   '\u2813', // ⠓
+  'A-eighth':   '\u280A', // ⠊
+  'B-eighth':   '\u281A', // ⠚
 
-  // Dinâmica (Dynamics)
-  dynamics: {
-    ppp: "\u2842", // Pianíssimo (pontos 1,4)
-    pp: "\u2844", // Pianíssimo (pontos 1,3,4)
-    p: "\u2840", // Piano (pontos 7)
-    mp: "\u2848", // Mezzo-piano (pontos 1,4,5)
-    mf: "\u2850", // Mezzo-forte (pontos 5,6)
-    f: "\u2852", // Forte (pontos 2,4,5)
-    ff: "\u2854", // Fortíssimo (pontos 1,2,4,5)
-    fff: "\u2856", // Fortíssimo (pontos 1,2,3,4,5)
-    sfz: "\u2858", // Sforzando (pontos 4,5,6)
-  },
+  // Quarter notes (semínimas)
+  'C-quarter':  '\u2839', // ⠹
+  'D-quarter':  '\u2831', // ⠱
+  'E-quarter':  '\u282B', // ⠫
+  'F-quarter':  '\u283B', // ⠻
+  'G-quarter':  '\u2833', // ⠳
+  'A-quarter':  '\u282A', // ⠪
+  'B-quarter':  '\u283A', // ⠺
 
-  // Articulação (Articulation)
-  articulation: {
-    staccato: "\u2801", // Staccato (pontos 1)
-    legato: "\u2802", // Ligado (pontos 2)
-    tenuto: "\u2804", // Tenuto (pontos 3)
-    marcato: "\u2808", // Marcato (pontos 4)
-    accent: "\u2810", // Acento (pontos 5)
-    heavyAccent: "\u2820", // Acento pesado (pontos 6)
-    portato: "\u2840", // Portato (pontos 7)
-  },
+  // Half notes (mínimas)
+  'C-half':     '\u281D', // ⠝
+  'D-half':     '\u2815', // ⠕
+  'E-half':     '\u280F', // ⠏
+  'F-half':     '\u281F', // ⠟
+  'G-half':     '\u2817', // ⠗
+  'A-half':     '\u280E', // ⠎
+  'B-half':     '\u281E', // ⠞
 
-  // Pausas (Rests)
-  rests: {
-    wholeRest: "\u2806", // Pausa de semibreve
-    halfRest: "\u2803", // Pausa de mínima
-    quarterRest: "\u2809", // Pausa de semínima
-    eighthRest: "\u280c", // Pausa de colcheia
-    sixteenthRest: "\u2818", // Pausa de semicolcheia
-  },
+  // Whole notes (semibreves)
+  'C-whole':    '\u283D', // ⠽
+  'D-whole':    '\u2835', // ⠵
+  'E-whole':    '\u282F', // ⠯
+  'F-whole':    '\u283F', // ⠿
+  'G-whole':    '\u2837', // ⠷
+  'A-whole':    '\u282E', // ⠮
+  'B-whole':    '\u283E', // ⠾
 
-  // Sinais de compasso (Time Signatures)
-  timeSignatures: {
-    common: "\u2807", // Compasso comum (C) - pontos 1,2,3
-    cut: "\u2815", // Compasso cortado (C/) - pontos 1,2,4,5
-    duple: "\u2809", // Binário - pontos 1,4
-    triple: "\u2811", // Ternário - pontos 1,4,5
-    quadruple: "\u2819", // Quaternário - pontos 1,4,5,6
-  },
+  // Sixteenth notes (semicolcheias) — same as whole notes (context determines)
+  'C-sixteenth': '\u283D', // ⠽
+  'D-sixteenth': '\u2835', // ⠵
+  'E-sixteenth': '\u282F', // ⠯
+  'F-sixteenth': '\u283F', // ⠿
+  'G-sixteenth': '\u2837', // ⠷
+  'A-sixteenth': '\u282E', // ⠮
+  'B-sixteenth': '\u283E', // ⠾
 
-  // Símbolos de repetição (Repeat Symbols)
-  repeats: {
-    repeat: "\u2825", // Repetição - pontos 1,2,6
-    ending1: "\u282d", // 1ª vez - pontos 1,2,3,6
-    ending2: "\u282e", // 2ª vez - pontos 1,2,3,4,6
-    coda: "\u2835", // Coda - pontos 1,2,3,5,6
-    segno: "\u2836", // Segno - pontos 1,2,3,5,6,7
-  },
+  // Thirty-second notes (fusas) — same as half notes
+  'C-thirtysecond': '\u281D', // ⠝
+  'D-thirtysecond': '\u2815', // ⠕
+  'E-thirtysecond': '\u280F', // ⠏
+  'F-thirtysecond': '\u281F', // ⠟
+  'G-thirtysecond': '\u2817', // ⠗
+  'A-thirtysecond': '\u280E', // ⠎
+  'B-thirtysecond': '\u281E', // ⠞
 
-  // Símbolos de expressão (Expression Marks)
-  expression: {
-    crescendo: "\u2843", // Crescendo (pontos 1,2,4)
-    diminuendo: "\u2845", // Diminuendo (pontos 1,2,3,5)
-    fermata: "\u2849", // Fermata (pontos 1,3,4,5)
-    breath: "\u284b", // Respiração (pontos 1,2,3,4,5)
-    caesura: "\u284d", // Cesura (pontos 1,2,3,5,6)
-  },
-
-  // Claves (Clefs)
-  clefs: {
-    treble: "\u2801", // Clave de sol (pontos 1)
-    bass: "\u2802", // Clave de fá (pontos 2)
-    alto: "\u2804", // Clave de dó (pontos 3)
-  },
-
-  // Acidentes de oitava (Octave Indicators)
-  octaves: {
-    octave0: "\u2800", // Oitava 0
-    octave1: "\u2801", // Oitava 1
-    octave2: "\u2802", // Oitava 2
-    octave3: "\u2804", // Oitava 3
-    octave4: "\u2808", // Oitava 4
-    octave5: "\u2810", // Oitava 5
-    octave6: "\u2820", // Oitava 6
-    octave7: "\u2840", // Oitava 7
-  },
+  // Sixty-fourth notes (semifusas) — same as quarter notes
+  'C-sixtyfourth': '\u2839', // ⠹
+  'D-sixtyfourth': '\u2831', // ⠱
+  'E-sixtyfourth': '\u282B', // ⠫
+  'F-sixtyfourth': '\u283B', // ⠻
+  'G-sixtyfourth': '\u2833', // ⠳
+  'A-sixtyfourth': '\u282A', // ⠪
+  'B-sixtyfourth': '\u283A', // ⠺
 };
 
-// Estrutura para representar uma nota com todos os modificadores
+// ─── REST CHARACTER TABLE ──────────────────────────────────────────────────────
+
+const REST_CHAR_MAP: Record<string, string> = {
+  'eighth':       '\u282D', // ⠭
+  'quarter':      '\u2827', // ⠧
+  'half':         '\u2825', // ⠥
+  'whole':        '\u280D', // ⠍
+};
+
+// ─── OCTAVE SIGNS ──────────────────────────────────────────────────────────────
+
+const OCTAVE_SIGN_MAP: Record<number, string> = {
+  1: '\u2808', // ⠈
+  2: '\u2818', // ⠘
+  3: '\u2838', // ⠸
+  4: '\u2810', // ⠐
+  5: '\u2828', // ⠨
+  6: '\u2830', // ⠰
+  7: '\u2820', // ⠠
+};
+
+// ─── ACCIDENTAL SIGNS ──────────────────────────────────────────────────────────
+
+const ACCIDENTAL_SIGN_MAP: Record<string, string> = {
+  'sharp':   '\u2829', // ⠩
+  'flat':    '\u2823', // ⠣
+  'natural': '\u2821', // ⠡
+};
+
+// ─── OTHER SIGNS ───────────────────────────────────────────────────────────────
+
+const AUGMENTATION_DOT = '\u2804'; // ⠄
+const BARLINE_SPACE = ' ';         // space = barline separator
+const SLUR_SIGN = '\u2809';       // ⠉
+
+// ─── EXPORTED INTERFACE ────────────────────────────────────────────────────────
+
 export interface MusicalNote {
   pitch: string; // C, D, E, F, G, A, B
-  octave: number; // 0-7
-  accidental?: "sharp" | "flat" | "natural" | "doubleSharp" | "doubleFlat";
-  duration: "whole" | "half" | "quarter" | "eighth" | "sixteenth" | "thirtysecond" | "sixtyfourth";
+  octave: number; // 1-7
+  accidental?: 'sharp' | 'flat' | 'natural' | 'doubleSharp' | 'doubleFlat';
+  duration: Duration;
   dotted?: boolean;
-  articulation?: keyof typeof BRAILLE_SYMBOLS.articulation;
-  dynamic?: keyof typeof BRAILLE_SYMBOLS.dynamics;
+  articulation?: string;
+  dynamic?: string;
   fermata?: boolean;
 }
 
 /**
- * Converter nota musical para Braille
+ * Convert a musical note to its correct Braille Unicode representation.
+ * Uses the international standard where pitch + duration are encoded
+ * in a SINGLE Braille character.
  */
 export function noteTobraille(note: MusicalNote): string {
-  let braille = "";
+  let braille = '';
 
-  // Adicionar indicador de oitava
-  const octaveKey = `octave${note.octave}` as keyof typeof BRAILLE_SYMBOLS.octaves;
-  braille += BRAILLE_SYMBOLS.octaves[octaveKey] || "";
-
-  // Adicionar alteração se houver
-  if (note.accidental) {
-    braille += BRAILLE_SYMBOLS.accidentals[note.accidental];
+  // 0. Dynamic marking (before octave sign)
+  if (note.dynamic && DYNAMICS_MAP[note.dynamic]) {
+    braille += DYNAMICS_MAP[note.dynamic];
   }
 
-  // Adicionar nota
-  const noteKey = note.pitch as keyof typeof BRAILLE_SYMBOLS.notes;
-  braille += BRAILLE_SYMBOLS.notes[noteKey];
+  // 1. Octave sign (always added for first note; for subsequent notes
+  //    the caller should decide based on interval rules)
+  const octSign = OCTAVE_SIGN_MAP[note.octave];
+  if (octSign) {
+    braille += octSign;
+  }
 
-  // Adicionar duração
-  const durationKey = note.duration as keyof typeof BRAILLE_SYMBOLS.durations;
-  braille += BRAILLE_SYMBOLS.durations[durationKey];
+  // 2. Accidental (before the note)
+  if (note.accidental && note.accidental !== 'doubleSharp' && note.accidental !== 'doubleFlat') {
+    const accSign = ACCIDENTAL_SIGN_MAP[note.accidental];
+    if (accSign) braille += accSign;
+  }
 
-  // Adicionar ponto de aumento se for dotted
+  // 2b. Articulation (before the note)
+  if (note.articulation && ARTICULATION_MAP[note.articulation]) {
+    braille += ARTICULATION_MAP[note.articulation];
+  }
+
+  // 3. The note character itself (encodes pitch + duration in one cell)
+  const key = `${note.pitch}-${note.duration}`;
+  const noteChar = NOTE_CHAR_MAP[key];
+  if (noteChar) {
+    braille += noteChar;
+  }
+
+  // 4. Augmentation dot (after the note)
   if (note.dotted) {
-    braille += BRAILLE_SYMBOLS.durations.dotted;
+    braille += AUGMENTATION_DOT;
   }
 
-  // Adicionar articulação se houver
-  if (note.articulation) {
-    braille += BRAILLE_SYMBOLS.articulation[note.articulation];
-  }
-
-  // Adicionar dinâmica se houver
-  if (note.dynamic) {
-    braille += BRAILLE_SYMBOLS.dynamics[note.dynamic];
-  }
-
-  // Adicionar fermata se houver
-  if (note.fermata) {
-    braille += BRAILLE_SYMBOLS.expression.fermata;
+  // 5. Fermata (after the note)
+  if (note.fermata && EXPRESSION_MAP['fermata']) {
+    braille += EXPRESSION_MAP['fermata'];
   }
 
   return braille;
 }
 
 /**
- * Converter múltiplas notas para Braille
+ * Convert a rest to its Braille representation.
  */
-export function notesToBraille(notes: MusicalNote[]): string {
-  return notes.map((note) => noteTobraille(note)).join("");
+export function restToBraille(duration: Duration, dotted?: boolean): string {
+  let braille = REST_CHAR_MAP[duration] || '';
+  if (dotted) braille += AUGMENTATION_DOT;
+  return braille;
 }
 
 /**
- * Converter nota MIDI para nota musical
- * MIDI: 0-127, onde 60 = C4 (Dó central)
+ * Convert multiple notes to Braille with proper octave handling.
+ * Only emits octave signs when necessary (first note, or when interval
+ * is ambiguous — 6th, 7th, or octave+).
  */
-export function midiToNote(midiNumber: number): { pitch: string; octave: number } {
-  const pitches = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
-  const pitchIndex = midiNumber % 12;
-  const octave = Math.floor(midiNumber / 12) - 1;
+export function notesToBraille(notes: MusicalNote[]): string {
+  let result = '';
+  let prevPitch: string | null = null;
+  let prevOctave: number | null = null;
 
-  let pitch = pitches[pitchIndex];
-  // Converter sustenido para bemol se necessário
-  if (pitch.includes("#")) {
-    const pitchMap: Record<string, string> = {
-      "C#": "Db",
-      "D#": "Eb",
-      "F#": "Gb",
-      "G#": "Ab",
-      "A#": "Bb",
-    };
-    pitch = pitchMap[pitch] || pitch;
+  const PITCH_SEMITONES: Record<string, number> = {
+    'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11,
+  };
+
+  for (let i = 0; i < notes.length; i++) {
+    const note = notes[i];
+    let braille = '';
+
+    // Determine if octave sign is needed
+    let needOctave = false;
+    if (i === 0 || prevPitch === null || prevOctave === null) {
+      needOctave = true;
+    } else {
+      // Calculate interval
+      const prevAbs = prevOctave * 12 + (PITCH_SEMITONES[prevPitch] || 0);
+      const currAbs = note.octave * 12 + (PITCH_SEMITONES[note.pitch] || 0);
+      const interval = Math.abs(currAbs - prevAbs);
+      // Need octave sign for intervals >= 6th (9+ semitones)
+      if (interval >= 9) needOctave = true;
+    }
+
+    // 1. Octave sign
+    if (needOctave) {
+      const octSign = OCTAVE_SIGN_MAP[note.octave];
+      if (octSign) braille += octSign;
+    }
+
+    // 2. Accidental
+    if (note.accidental && note.accidental !== 'doubleSharp' && note.accidental !== 'doubleFlat') {
+      const accSign = ACCIDENTAL_SIGN_MAP[note.accidental];
+      if (accSign) braille += accSign;
+    }
+
+    // 3. Note character
+    const key = `${note.pitch}-${note.duration}`;
+    const noteChar = NOTE_CHAR_MAP[key];
+    if (noteChar) braille += noteChar;
+
+    // 4. Augmentation dot
+    if (note.dotted) braille += AUGMENTATION_DOT;
+
+    result += braille;
+    prevPitch = note.pitch;
+    prevOctave = note.octave;
   }
 
+  return result;
+}
+
+/**
+ * Convert MIDI number to note name + octave.
+ */
+export function midiToNote(midiNumber: number): { pitch: string; octave: number } {
+  const pitches = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+  const pitchIndex = midiNumber % 12;
+  const octave = Math.floor(midiNumber / 12) - 1;
+  let pitch = pitches[pitchIndex];
+  if (pitch.includes('#')) {
+    const map: Record<string, string> = { 'C#': 'Db', 'D#': 'Eb', 'F#': 'Gb', 'G#': 'Ab', 'A#': 'Bb' };
+    pitch = map[pitch] || pitch;
+  }
   return { pitch: pitch[0], octave };
 }
 
 /**
- * Converter nota para MIDI
+ * Convert note to MIDI number.
  */
 export function noteToMidi(pitch: string, octave: number, accidental?: string): number {
-  const pitches: Record<string, number> = {
-    C: 0,
-    D: 2,
-    E: 4,
-    F: 5,
-    G: 7,
-    A: 9,
-    B: 11,
-  };
-
-  let midiNumber = (octave + 1) * 12 + pitches[pitch];
-
-  if (accidental === "sharp") {
-    midiNumber += 1;
-  } else if (accidental === "flat") {
-    midiNumber -= 1;
-  } else if (accidental === "doubleSharp") {
-    midiNumber += 2;
-  } else if (accidental === "doubleFlat") {
-    midiNumber -= 2;
-  }
-
-  return midiNumber;
+  const pitches: Record<string, number> = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+  let midi = (octave + 1) * 12 + pitches[pitch];
+  if (accidental === 'sharp') midi += 1;
+  else if (accidental === 'flat') midi -= 1;
+  else if (accidental === 'doubleSharp') midi += 2;
+  else if (accidental === 'doubleFlat') midi -= 2;
+  return midi;
 }
 
 /**
- * Validar se uma nota é válida
+ * Validate if a note is valid.
  */
 export function isValidNote(note: MusicalNote): boolean {
-  const validPitches = ["C", "D", "E", "F", "G", "A", "B"];
+  const validPitches = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
   const validOctaves = [0, 1, 2, 3, 4, 5, 6, 7];
-  const validDurations = ["whole", "half", "quarter", "eighth", "sixteenth", "thirtysecond", "sixtyfourth"];
-
-  return (
-    validPitches.includes(note.pitch) &&
-    validOctaves.includes(note.octave) &&
-    validDurations.includes(note.duration)
-  );
+  const validDurations: Duration[] = ['whole', 'half', 'quarter', 'eighth', 'sixteenth', 'thirtysecond', 'sixtyfourth'];
+  return validPitches.includes(note.pitch) && validOctaves.includes(note.octave) && validDurations.includes(note.duration);
 }
 
 /**
- * Gerar escala em Braille
+ * Generate a scale in Braille.
  */
 export function generateScale(
   startPitch: string,
   startOctave: number,
-  scaleType: "major" | "minor" | "pentatonic" = "major",
+  scaleType: 'major' | 'minor' | 'pentatonic' = 'major',
   length: number = 8
 ): MusicalNote[] {
-  const pitches = ["C", "D", "E", "F", "G", "A", "B"];
+  const pitches = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
   const startIndex = pitches.indexOf(startPitch);
-
   const notes: MusicalNote[] = [];
 
   for (let i = 0; i < length; i++) {
     const pitchIndex = (startIndex + i) % 7;
     const octaveOffset = Math.floor((startIndex + i) / 7);
-    const octave = startOctave + octaveOffset;
-
     notes.push({
       pitch: pitches[pitchIndex],
-      octave,
-      duration: "quarter",
+      octave: startOctave + octaveOffset,
+      duration: 'quarter',
     });
   }
 
   return notes;
 }
+
+// ─── DYNAMICS ──────────────────────────────────────────────────────────────────
+
+const DYNAMICS_MAP: Record<string, string> = {
+  'pp':  '\u2810\u2810\u280F', // ⠐⠐⠏
+  'p':   '\u2810\u280F',       // ⠐⠏
+  'mp':  '\u2810\u280D\u280F', // ⠐⠍⠏
+  'mf':  '\u2810\u280D\u280B', // ⠐⠍⠋
+  'f':   '\u2810\u280B',       // ⠐⠋
+  'ff':  '\u2810\u2810\u280B', // ⠐⠐⠋
+  'sfz': '\u2810\u280E\u280B\u2835', // ⠐⠎⠋⠵
+};
+
+// ─── ARTICULATION ──────────────────────────────────────────────────────────────
+
+const ARTICULATION_MAP: Record<string, string> = {
+  'staccato':    '\u2826', // ⠦
+  'legato':      '\u2809', // ⠉ (slur/legato)
+  'tenuto':      '\u2838\u2826', // ⠸⠦
+  'accent':      '\u2828\u2826', // ⠨⠦
+  'marcato':     '\u2830\u2826', // ⠰⠦
+  'fermata':     '\u2828\u2804', // ⠨⠄
+};
+
+// ─── EXPRESSION ────────────────────────────────────────────────────────────────
+
+const EXPRESSION_MAP: Record<string, string> = {
+  'fermata':    '\u2828\u2804', // ⠨⠄
+  'crescendo':  '\u2810\u2823', // ⠐⠣
+  'decrescendo':'\u2810\u2829', // ⠐⠩
+};
+
+// ─── DURATION SYMBOLS ──────────────────────────────────────────────────────────
+
+const DURATION_SYMBOL_MAP: Record<string, string> = {
+  'whole':   '(dots 3+6)',
+  'half':    '(dot 3)',
+  'quarter': '(dot 6)',
+  'eighth':  '(no dots 3/6)',
+  'dotted':  AUGMENTATION_DOT,
+};
+
+// Re-export for backward compatibility
+export const BRAILLE_SYMBOLS = {
+  notes: NOTE_CHAR_MAP,
+  octaves: OCTAVE_SIGN_MAP,
+  accidentals: ACCIDENTAL_SIGN_MAP,
+  rests: REST_CHAR_MAP,
+  durations: DURATION_SYMBOL_MAP,
+  dynamics: DYNAMICS_MAP,
+  articulation: ARTICULATION_MAP,
+  expression: EXPRESSION_MAP,
+};

@@ -210,13 +210,13 @@ describe("Braille Symbols - Advanced Music Notation", () => {
 
   describe("Braille Symbols Constants", () => {
     it("should have all note symbols", () => {
-      expect(BRAILLE_SYMBOLS.notes.C).toBeTruthy();
-      expect(BRAILLE_SYMBOLS.notes.D).toBeTruthy();
-      expect(BRAILLE_SYMBOLS.notes.E).toBeTruthy();
-      expect(BRAILLE_SYMBOLS.notes.F).toBeTruthy();
-      expect(BRAILLE_SYMBOLS.notes.G).toBeTruthy();
-      expect(BRAILLE_SYMBOLS.notes.A).toBeTruthy();
-      expect(BRAILLE_SYMBOLS.notes.B).toBeTruthy();
+      expect(BRAILLE_SYMBOLS.notes['C-quarter']).toBeTruthy();
+      expect(BRAILLE_SYMBOLS.notes['D-quarter']).toBeTruthy();
+      expect(BRAILLE_SYMBOLS.notes['E-quarter']).toBeTruthy();
+      expect(BRAILLE_SYMBOLS.notes['F-quarter']).toBeTruthy();
+      expect(BRAILLE_SYMBOLS.notes['G-quarter']).toBeTruthy();
+      expect(BRAILLE_SYMBOLS.notes['A-quarter']).toBeTruthy();
+      expect(BRAILLE_SYMBOLS.notes['B-quarter']).toBeTruthy();
     });
 
     it("should have all accidental symbols", () => {

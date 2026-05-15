@@ -51,6 +51,33 @@ function durationToBeats(dur: string): number {
   return beats;
 }
 
+/**
+ * Extract a clean VexFlow key from a ParsedNote.
+ * VexFlow expects keys like "c/4", "b/4", "f#/5" etc.
+ * The accidental is added separately via Accidental modifier.
+ * 
+ * IMPORTANT: We must NOT strip 'b' from the key because 'b' is the note name for Si.
+ * Instead, we build the key cleanly from pitch and octave.
+ */
+function noteToVexKey(note: ParsedNote): string {
+  return `${note.pitch.toLowerCase()}/${note.octave}`;
+}
+
+/**
+ * Extract clean VexFlow duration string.
+ * Removes 'd' suffix (dotted is handled by Dot.buildAndAttach).
+ */
+function noteToVexDuration(el: ParsedNote | ParsedRest): string {
+  const dur = el.vexDuration;
+  if (el.type === 'rest') {
+    // Rest durations: "qr", "hr", "8r", "wr", "16r", "qdr" etc.
+    const clean = dur.replace('d', '');
+    return clean;
+  }
+  // Note durations: "q", "h", "8", "w", "16", "qd" etc.
+  return dur.replace('d', '');
+}
+
 export default function ScoreRenderer({ elements, width = 800, height = 200 }: ScoreRendererProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -104,7 +131,7 @@ export default function ScoreRenderer({ elements, width = 800, height = 200 }: S
           // Create VexFlow notes
           const vfNotes = measureNotes.map(el => {
             if (el.type === 'rest') {
-              const dur = el.vexDuration.replace('r', '').replace('d', '') + 'r';
+              const dur = noteToVexDuration(el);
               const note = new StaveNote({
                 keys: ['b/4'],
                 duration: dur,
@@ -114,14 +141,16 @@ export default function ScoreRenderer({ elements, width = 800, height = 200 }: S
               }
               return note;
             } else {
-              // Note
-              const dur = el.vexDuration.replace('d', '');
+              // Note — build key cleanly from pitch and octave
+              const key = noteToVexKey(el);
+              const dur = noteToVexDuration(el);
+              
               const note = new StaveNote({
-                keys: [el.vexKey.replace('#', '').replace('b', '').replace('n', '')],
+                keys: [key],
                 duration: dur,
               });
 
-              // Add accidental
+              // Add accidental as modifier (NOT in the key string)
               if (el.accidental === 'sharp') {
                 note.addModifier(new Accidental('#'));
               } else if (el.accidental === 'flat') {
@@ -142,8 +171,7 @@ export default function ScoreRenderer({ elements, width = 800, height = 200 }: S
           if (vfNotes.length > 0) {
             // Calculate total beats
             const totalBeats = measureNotes.reduce((sum, el) => {
-              const dur = el.type === 'rest' ? el.vexDuration : el.vexDuration;
-              return sum + durationToBeats(dur);
+              return sum + durationToBeats(el.vexDuration);
             }, 0);
 
             // Use a loose voice (no strict time checking)

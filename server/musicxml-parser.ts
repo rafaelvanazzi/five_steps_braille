@@ -117,7 +117,7 @@ function getDynamic(
     mp?: string[];
     sfz?: string[];
   }>
-): keyof typeof BRAILLE_SYMBOLS.dynamics | undefined {
+): string | undefined {
   if (!dynamics || dynamics.length === 0) return undefined;
 
   const dyn = dynamics[0];
@@ -249,8 +249,9 @@ export async function parseMusicXML(xmlContent: string): Promise<ParsedMusicXML>
       }
     }
 
-    // Converter notas para Braille
-    const brailleContent = notes.map((note) => noteTobraille(note)).join("");
+    // Converter notas para Braille usando a função inteligente que gerencia sinais de oitava
+    const { notesToBraille } = await import("./braille-symbols");
+    const brailleContent = notesToBraille(notes);
 
     return {
       title: movementTitle,

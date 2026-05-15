@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
 import { getLoginUrl } from "@/const";
@@ -13,6 +13,8 @@ import {
   type ParsedElement,
   type PerkinsKeyState,
 } from "@/lib/brailleMusic";
+import { brailleToRoman, romanToBraille, getRomanFormatHelp } from "@/lib/brailleRomano";
+import { asciiToUnicodeBraille, detectBrailleFormat } from "@/lib/brailleAscii";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -27,48 +29,8 @@ import {
   Keyboard,
   Info,
   Upload,
+  HelpCircle,
 } from "lucide-react";
-
-// ─── BRAILLE CELL VISUAL ───────────────────────────────────────────────────────
-
-function BrailleCell({ char, size = 32 }: { char: string; size?: number }) {
-  const dots = unicodeToDots(char);
-  const dotSize = size * 0.18;
-  const gap = size * 0.28;
-  const offsetX = size * 0.28;
-  const offsetY = size * 0.12;
-
-  return (
-    <svg
-      width={size}
-      height={size * 1.3}
-      viewBox={`0 0 ${size} ${size * 1.3}`}
-      className="inline-block"
-      role="img"
-      aria-label={describeBrailleChar(char)}
-    >
-      <rect width={size} height={size * 1.3} rx={3} fill="transparent" />
-      {[1, 2, 3, 4, 5, 6].map((dot) => {
-        const col = dot <= 3 ? 0 : 1;
-        const row = dot <= 3 ? dot - 1 : dot - 4;
-        const cx = offsetX + col * gap;
-        const cy = offsetY + row * gap;
-        const active = dots.includes(dot);
-        return (
-          <circle
-            key={dot}
-            cx={cx}
-            cy={cy}
-            r={dotSize}
-            fill={active ? "oklch(0.28 0.09 255)" : "#d1d5db"}
-            stroke={active ? "oklch(0.28 0.09 255)" : "#9ca3af"}
-            strokeWidth={0.5}
-          />
-        );
-      })}
-    </svg>
-  );
-}
 
 // ─── PERKINS KEYBOARD COMPONENT ────────────────────────────────────────────────
 
@@ -76,20 +38,18 @@ function PerkinsKeyboard({
   onChar,
   onSpace,
   onBackspace,
+  onNewline,
 }: {
   onChar: (char: string) => void;
   onSpace: () => void;
   onBackspace: () => void;
+  onNewline: () => void;
 }) {
   const [pressed, setPressed] = useState<Set<string>>(new Set());
   const pressedRef = useRef<Set<string>>(new Set());
   const activeDotsRef = useRef<PerkinsKeyState>({
-    dot1: false,
-    dot2: false,
-    dot3: false,
-    dot4: false,
-    dot5: false,
-    dot6: false,
+    dot1: false, dot2: false, dot3: false,
+    dot4: false, dot5: false, dot6: false,
   });
 
   useEffect(() => {
@@ -108,20 +68,14 @@ function PerkinsKeyboard({
       }
       if (key === " ") e.preventDefault();
       if (key === "backspace") e.preventDefault();
+      if (key === "enter") e.preventDefault();
     };
 
     const up = (e: KeyboardEvent) => {
       const key = e.key.toLowerCase();
-      if (key === " ") {
-        e.preventDefault();
-        onSpace();
-        return;
-      }
-      if (key === "backspace") {
-        e.preventDefault();
-        onBackspace();
-        return;
-      }
+      if (key === " ") { e.preventDefault(); onSpace(); return; }
+      if (key === "backspace") { e.preventDefault(); onBackspace(); return; }
+      if (key === "enter") { e.preventDefault(); onNewline(); return; }
       if (["f", "d", "s", "j", "k", "l"].includes(key)) {
         e.preventDefault();
         pressedRef.current.delete(key);
@@ -147,7 +101,7 @@ function PerkinsKeyboard({
       window.removeEventListener("keydown", down);
       window.removeEventListener("keyup", up);
     };
-  }, [onChar, onSpace, onBackspace]);
+  }, [onChar, onSpace, onBackspace, onNewline]);
 
   const keys = [
     { label: "S", sub: "Ponto 3", key: "s" },
@@ -159,16 +113,13 @@ function PerkinsKeyboard({
   ];
 
   return (
-    <div className="flex flex-col items-center gap-3 py-4">
-      <p className="text-sm text-muted-foreground">
-        Pressione as teclas simultaneamente e solte para gerar o caractere Braille
-      </p>
+    <div className="flex flex-col items-center gap-2 py-2">
       <div className="flex gap-2 items-center">
         {keys.map((k, i) => (
           <div key={k.key} className="flex items-center">
-            {i === 3 && <span className="inline-block w-8" />}
+            {i === 3 && <span className="inline-block w-6" />}
             <button
-              className={`w-14 h-16 rounded-lg border-2 flex flex-col items-center justify-center transition-colors font-bold text-lg ${
+              className={`w-12 h-14 rounded-lg border-2 flex flex-col items-center justify-center transition-colors font-bold text-base ${
                 pressed.has(k.key)
                   ? "bg-primary text-primary-foreground border-primary"
                   : "bg-card text-card-foreground border-border hover:border-primary/50"
@@ -177,13 +128,13 @@ function PerkinsKeyboard({
               tabIndex={-1}
             >
               <span>{k.label}</span>
-              <span className="text-[10px] font-normal opacity-70">{k.sub}</span>
+              <span className="text-[9px] font-normal opacity-70">{k.sub}</span>
             </button>
           </div>
         ))}
       </div>
-      <p className="text-xs text-muted-foreground">
-        Espaço = Barra de compasso · Backspace = Apagar
+      <p className="text-[10px] text-muted-foreground">
+        Espaço = Barra de compasso · Enter = Nova linha · Backspace = Apagar
       </p>
     </div>
   );
@@ -209,13 +160,13 @@ function QuickReferencePanel({ onInsert }: { onInsert: (char: string) => void })
   const filtered = filter === "all" ? ref : ref.filter((e) => e.category === filter);
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-2">
       <div className="flex flex-wrap gap-1">
         {categories.map((cat) => (
           <button
             key={cat.key}
             onClick={() => setFilter(cat.key)}
-            className={`px-2 py-1 text-xs rounded-md transition-colors ${
+            className={`px-2 py-0.5 text-xs rounded-md transition-colors ${
               filter === cat.key
                 ? "bg-primary text-primary-foreground"
                 : "bg-muted text-muted-foreground hover:bg-accent"
@@ -225,16 +176,16 @@ function QuickReferencePanel({ onInsert }: { onInsert: (char: string) => void })
           </button>
         ))}
       </div>
-      <div className="grid grid-cols-4 sm:grid-cols-6 gap-1 max-h-64 overflow-y-auto">
+      <div className="grid grid-cols-4 sm:grid-cols-6 gap-1 max-h-48 overflow-y-auto">
         {filtered.map((entry, i) => (
           <button
             key={i}
             onClick={() => onInsert(entry.char)}
-            className="flex flex-col items-center p-2 rounded-md border border-border hover:bg-accent transition-colors"
+            className="flex flex-col items-center p-1.5 rounded-md border border-border hover:bg-accent transition-colors"
             title={`${entry.description} (Pontos ${entry.dots})`}
           >
-            <span className="text-2xl leading-none">{entry.char}</span>
-            <span className="text-[9px] text-muted-foreground mt-1 truncate w-full text-center">
+            <span className="text-xl leading-none">{entry.char}</span>
+            <span className="text-[8px] text-muted-foreground mt-0.5 truncate w-full text-center">
               {entry.description}
             </span>
           </button>
@@ -254,13 +205,16 @@ export default function BrailleEditor() {
   const updateMutation = trpc.editor.update.useMutation();
   const deleteMutation = trpc.editor.delete.useMutation();
   const exportMutation = trpc.editor.export.useMutation();
+  const importMusicXMLMutation = trpc.editor.importMusicXML.useMutation();
   const utils = trpc.useUtils();
 
   const [currentProjectId, setCurrentProjectId] = useState<number | null>(null);
   const [projectTitle, setProjectTitle] = useState("");
   const [brailleContent, setBrailleContent] = useState("");
-  const [inputMode, setInputMode] = useState<"perkins" | "standard">("standard");
+  const [romanContent, setRomanContent] = useState("");
+  const [activePanel, setActivePanel] = useState<"braille" | "romano">("braille");
   const [showReference, setShowReference] = useState(false);
+  const [showRomanHelp, setShowRomanHelp] = useState(false);
   const [showProjects, setShowProjects] = useState(true);
   const [parsedElements, setParsedElements] = useState<ParsedElement[]>([]);
   const [saveStatus, setSaveStatus] = useState<"saved" | "saving" | "unsaved">("saved");
@@ -269,9 +223,13 @@ export default function BrailleEditor() {
   const scoreContainerRef = useRef<HTMLDivElement>(null);
   const [importing, setImporting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const importMusicXMLMutation = trpc.editor.importMusicXML.useMutation();
+  const brailleTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const romanTextareaRef = useRef<HTMLTextAreaElement>(null);
+  
+  // Track which panel last changed content to avoid infinite sync loops
+  const syncSourceRef = useRef<"braille" | "romano" | "none">("none");
 
-  // Parse braille content whenever it changes
+  // Parse braille content whenever it changes → update partitura
   useEffect(() => {
     if (brailleContent.trim()) {
       try {
@@ -284,6 +242,24 @@ export default function BrailleEditor() {
       setParsedElements([]);
     }
   }, [brailleContent]);
+
+  // Sync: Braille → Romano (when braille changes and was the source)
+  useEffect(() => {
+    if (syncSourceRef.current === "braille") {
+      const roman = brailleToRoman(brailleContent);
+      setRomanContent(roman);
+      syncSourceRef.current = "none";
+    }
+  }, [brailleContent]);
+
+  // Sync: Romano → Braille (when romano changes and was the source)
+  useEffect(() => {
+    if (syncSourceRef.current === "romano") {
+      const braille = romanToBraille(romanContent);
+      setBrailleContent(braille);
+      syncSourceRef.current = "none";
+    }
+  }, [romanContent]);
 
   // Auto-save
   useEffect(() => {
@@ -322,19 +298,78 @@ export default function BrailleEditor() {
     return () => observer.disconnect();
   }, []);
 
-  // ─── HANDLERS ──────────────────────────────────────────────────────────────
+  // ─── BRAILLE INPUT HANDLERS ────────────────────────────────────────────────
 
-  const insertChar = useCallback((char: string) => {
-    setBrailleContent((prev) => prev + char);
+  const handleBrailleChange = useCallback((newContent: string) => {
+    syncSourceRef.current = "braille";
+    setBrailleContent(newContent);
   }, []);
 
-  const insertSpace = useCallback(() => {
-    setBrailleContent((prev) => prev + " ");
+  const insertCharAtCursor = useCallback((char: string) => {
+    const textarea = brailleTextareaRef.current;
+    if (textarea) {
+      const start = textarea.selectionStart;
+      const end = textarea.selectionEnd;
+      const newContent = brailleContent.slice(0, start) + char + brailleContent.slice(end);
+      syncSourceRef.current = "braille";
+      setBrailleContent(newContent);
+      // Restore cursor position after React re-render
+      requestAnimationFrame(() => {
+        textarea.selectionStart = textarea.selectionEnd = start + char.length;
+        textarea.focus();
+      });
+    } else {
+      syncSourceRef.current = "braille";
+      setBrailleContent((prev) => prev + char);
+    }
+  }, [brailleContent]);
+
+  const insertSpaceAtCursor = useCallback(() => {
+    insertCharAtCursor(" ");
+  }, [insertCharAtCursor]);
+
+  const insertNewlineAtCursor = useCallback(() => {
+    insertCharAtCursor("\n");
+  }, [insertCharAtCursor]);
+
+  const handleBackspaceAtCursor = useCallback(() => {
+    const textarea = brailleTextareaRef.current;
+    if (textarea) {
+      const start = textarea.selectionStart;
+      const end = textarea.selectionEnd;
+      if (start !== end) {
+        // Delete selection
+        const newContent = brailleContent.slice(0, start) + brailleContent.slice(end);
+        syncSourceRef.current = "braille";
+        setBrailleContent(newContent);
+        requestAnimationFrame(() => {
+          textarea.selectionStart = textarea.selectionEnd = start;
+          textarea.focus();
+        });
+      } else if (start > 0) {
+        // Delete char before cursor
+        const newContent = brailleContent.slice(0, start - 1) + brailleContent.slice(start);
+        syncSourceRef.current = "braille";
+        setBrailleContent(newContent);
+        requestAnimationFrame(() => {
+          textarea.selectionStart = textarea.selectionEnd = start - 1;
+          textarea.focus();
+        });
+      }
+    } else {
+      syncSourceRef.current = "braille";
+      setBrailleContent((prev) => prev.slice(0, -1));
+    }
+  }, [brailleContent]);
+
+  // ─── ROMANO INPUT HANDLER ──────────────────────────────────────────────────
+
+  const handleRomanChange = useCallback((newContent: string) => {
+    syncSourceRef.current = "romano";
+    setRomanContent(newContent);
   }, []);
 
-  const handleBackspace = useCallback(() => {
-    setBrailleContent((prev) => prev.slice(0, -1));
-  }, []);
+  // ─── PROJECT HANDLERS ──────────────────────────────────────────────────────
 
   const handleCreateProject = useCallback(async () => {
     const title = "Novo Projeto " + new Date().toLocaleDateString("pt-BR");
@@ -343,6 +378,7 @@ export default function BrailleEditor() {
       setCurrentProjectId(project.id);
       setProjectTitle(title);
       setBrailleContent("");
+      setRomanContent("");
       setShowProjects(false);
       utils.editor.list.invalidate();
       toast.success("Projeto criado com sucesso!");
@@ -355,7 +391,10 @@ export default function BrailleEditor() {
     (project: { id: number; title: string; contentBraille: string | null }) => {
       setCurrentProjectId(project.id);
       setProjectTitle(project.title);
-      setBrailleContent(project.contentBraille || "");
+      const braille = project.contentBraille || "";
+      setBrailleContent(braille);
+      // Convert to romano for the romano panel
+      setRomanContent(brailleToRoman(braille));
       setShowProjects(false);
       setSaveStatus("saved");
     },
@@ -370,6 +409,7 @@ export default function BrailleEditor() {
         if (currentProjectId === id) {
           setCurrentProjectId(null);
           setBrailleContent("");
+          setRomanContent("");
           setShowProjects(true);
         }
         utils.editor.list.invalidate();
@@ -391,7 +431,9 @@ export default function BrailleEditor() {
         const a = document.createElement("a");
         a.href = url;
         a.download = result.filename;
+        document.body.appendChild(a);
         a.click();
+        document.body.removeChild(a);
         URL.revokeObjectURL(url);
         toast.success(`Exportado como ${format.toUpperCase()}`);
       } catch {
@@ -423,27 +465,19 @@ export default function BrailleEditor() {
       const text = await file.text();
 
       if (isBrf) {
-        // BRF files contain Braille Unicode directly — load into editor
-        // Strip any BRF header lines (lines starting with ⠠ repeated)
-        const lines = text.split('\n');
-        const contentLines: string[] = [];
-        let headerDone = false;
-        for (const line of lines) {
-          if (!headerDone) {
-            // Skip header separator lines and metadata lines
-            const trimmed = line.trim();
-            if (trimmed === '' || /^⠠{3,}/.test(trimmed) || /^⠠⠞|^⠠⠁|^⠠⠇/.test(trimmed)) {
-              continue;
-            }
-            headerDone = true;
-          }
-          if (headerDone) {
-            // Skip page break lines
-            if (/^⠠{10,}/.test(line.trim())) continue;
-            contentLines.push(line);
-          }
+        // Detect if BRF is ASCII or Unicode
+        const format = detectBrailleFormat(text);
+        let brailleText: string;
+        
+        if (format === 'ascii' || format === 'mixed') {
+          // Convert ASCII Braille to Unicode
+          brailleText = asciiToUnicodeBraille(text);
+        } else {
+          brailleText = text;
         }
-        const brailleText = contentLines.join('\n').trim();
+        
+        // Clean up: remove excessive blank lines
+        brailleText = brailleText.replace(/\n{3,}/g, '\n\n').trim();
 
         if (!brailleText) {
           toast.error('O arquivo BRF está vazio ou não contém conteúdo Braille válido');
@@ -457,18 +491,18 @@ export default function BrailleEditor() {
           setCurrentProjectId(project.id);
           setProjectTitle(title);
           setBrailleContent(brailleText);
+          setRomanContent(brailleToRoman(brailleText));
           setShowProjects(false);
           utils.editor.list.invalidate();
           toast.success(`Arquivo BRF importado: ${file.name}`);
         } else {
-          // Load into current project
           setBrailleContent(brailleText);
+          setRomanContent(brailleToRoman(brailleText));
           toast.success(`Conteúdo BRF carregado: ${file.name}`);
         }
       } else {
         // MusicXML — send to server for parsing
         if (!currentProjectId) {
-          // Create a new project first
           const title = file.name.replace(/\.(musicxml|xml|mxl)$/i, '');
           const project = await createMutation.mutateAsync({ title, language: 'pt' });
           setCurrentProjectId(project.id);
@@ -476,7 +510,6 @@ export default function BrailleEditor() {
           setShowProjects(false);
           utils.editor.list.invalidate();
 
-          // Now import
           const result = await importMusicXMLMutation.mutateAsync({
             projectId: project.id,
             xmlContent: text,
@@ -484,9 +517,10 @@ export default function BrailleEditor() {
           });
 
           if (result.metadata?.title) setProjectTitle(result.metadata.title);
-          // Reload project content
           const updated = await utils.editor.get.fetch({ id: project.id });
-          setBrailleContent(updated?.contentBraille || '');
+          const braille = updated?.contentBraille || '';
+          setBrailleContent(braille);
+          setRomanContent(brailleToRoman(braille));
           toast.success(
             `MusicXML importado: ${result.metadata?.notesCount || 0} notas convertidas para Braille`
           );
@@ -499,7 +533,9 @@ export default function BrailleEditor() {
 
           if (result.metadata?.title) setProjectTitle(result.metadata.title);
           const updated = await utils.editor.get.fetch({ id: currentProjectId });
-          setBrailleContent(updated?.contentBraille || '');
+          const braille = updated?.contentBraille || '';
+          setBrailleContent(braille);
+          setRomanContent(brailleToRoman(braille));
           utils.editor.list.invalidate();
           toast.success(
             `MusicXML importado: ${result.metadata?.notesCount || 0} notas convertidas para Braille`
@@ -574,7 +610,6 @@ export default function BrailleEditor() {
             </div>
           </div>
 
-          {/* Hidden file input for import */}
           <input
             ref={fileInputRef}
             type="file"
@@ -587,7 +622,7 @@ export default function BrailleEditor() {
           <p className="text-muted-foreground">
             Escreva em Braille musical usando o teclado Perkins ou o teclado padrão.
             A partitura é renderizada em tempo real conforme você digita.
-            Você também pode <strong>importar arquivos .brf</strong> (Braille Ready Format) ou <strong>.musicxml</strong> para edição.
+            Você também pode <strong>importar arquivos .brf</strong> ou <strong>.musicxml</strong>.
           </p>
 
           {projectsQuery.isLoading ? (
@@ -646,16 +681,17 @@ export default function BrailleEditor() {
     );
   }
 
-  // ─── EDITOR VIEW ───────────────────────────────────────────────────────────
+  // ─── EDITOR VIEW (3 PANELS) ────────────────────────────────────────────────
 
   const noteCount = parsedElements.filter((e) => e.type === "note").length;
   const restCount = parsedElements.filter((e) => e.type === "rest").length;
+  const barCount = parsedElements.filter((e) => e.type === "barline").length + 1;
 
   return (
     <SiteLayout>
-      <div className="container max-w-7xl py-6 space-y-4">
+      <div className="container max-w-7xl py-4 space-y-3">
         {/* Header */}
-        <div className="flex items-center justify-between flex-wrap gap-3">
+        <div className="flex items-center justify-between flex-wrap gap-2">
           <div className="flex items-center gap-3">
             <button
               onClick={() => setShowProjects(true)}
@@ -681,73 +717,50 @@ export default function BrailleEditor() {
             >
               {saveStatus === "saved" ? "Salvo" : saveStatus === "saving" ? "Salvando..." : "Não salvo"}
             </span>
+            <span className="text-xs text-muted-foreground hidden sm:inline">
+              {noteCount} notas · {restCount} pausas · {barCount} compassos
+            </span>
           </div>
-          <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-1.5 flex-wrap">
             <Button
               variant="outline"
               size="sm"
               onClick={() => fileInputRef.current?.click()}
               disabled={importing}
             >
-              <Upload className="w-4 h-4 mr-1" />
-              {importing ? 'Importando...' : 'Importar'}
+              <Upload className="w-3.5 h-3.5 mr-1" />
+              {importing ? '...' : 'Importar'}
             </Button>
-            <Button variant="outline" size="sm" onClick={() => setShowReference(!showReference)}>
-              <Info className="w-4 h-4 mr-1" />
-              Referência
-            </Button>
-            {/* Hidden file input for import (editor view) */}
             <input
               ref={fileInputRef}
               type="file"
               accept=".brf,.musicxml,.xml,.mxl"
               onChange={handleImportFile}
               className="hidden"
-              aria-label="Importar arquivo BRF ou MusicXML"
             />
-            <div className="flex border rounded-lg overflow-hidden">
-              <button
-                onClick={() => setInputMode("standard")}
-                className={`px-3 py-1.5 text-sm flex items-center gap-1 transition-colors ${
-                  inputMode === "standard"
-                    ? "bg-primary text-primary-foreground"
-                    : "bg-card text-card-foreground hover:bg-accent"
-                }`}
-              >
-                <Keyboard className="w-3.5 h-3.5" />
-                Padrão
-              </button>
-              <button
-                onClick={() => setInputMode("perkins")}
-                className={`px-3 py-1.5 text-sm flex items-center gap-1 transition-colors ${
-                  inputMode === "perkins"
-                    ? "bg-primary text-primary-foreground"
-                    : "bg-card text-card-foreground hover:bg-accent"
-                }`}
-              >
-                <Keyboard className="w-3.5 h-3.5" />
-                Perkins
-              </button>
-            </div>
+            <Button variant="outline" size="sm" onClick={() => setShowReference(!showReference)}>
+              <Info className="w-3.5 h-3.5 mr-1" />
+              Ref.
+            </Button>
             <div className="flex border rounded-lg overflow-hidden">
               <button
                 onClick={() => handleExport("brf")}
-                className="px-3 py-1.5 text-sm flex items-center gap-1 bg-card text-card-foreground hover:bg-accent transition-colors"
+                className="px-2 py-1 text-xs flex items-center gap-1 bg-card text-card-foreground hover:bg-accent transition-colors"
                 title="Exportar como BRF"
               >
-                <Download className="w-3.5 h-3.5" />
+                <Download className="w-3 h-3" />
                 .brf
               </button>
               <button
                 onClick={() => handleExport("txt")}
-                className="px-3 py-1.5 text-sm flex items-center gap-1 bg-card text-card-foreground hover:bg-accent transition-colors border-l"
+                className="px-2 py-1 text-xs bg-card text-card-foreground hover:bg-accent transition-colors border-l"
                 title="Exportar como TXT"
               >
                 .txt
               </button>
               <button
                 onClick={() => handleExport("musicxml")}
-                className="px-3 py-1.5 text-sm flex items-center gap-1 bg-card text-card-foreground hover:bg-accent transition-colors border-l"
+                className="px-2 py-1 text-xs bg-card text-card-foreground hover:bg-accent transition-colors border-l"
                 title="Exportar como MusicXML"
               >
                 .xml
@@ -759,30 +772,30 @@ export default function BrailleEditor() {
         {/* Quick Reference */}
         {showReference && (
           <Card>
-            <CardHeader className="py-3">
+            <CardHeader className="py-2">
               <CardTitle className="text-sm">Referência Rápida de Símbolos</CardTitle>
             </CardHeader>
             <CardContent className="pt-0">
-              <QuickReferencePanel onInsert={insertChar} />
+              <QuickReferencePanel onInsert={insertCharAtCursor} />
             </CardContent>
           </Card>
         )}
 
-        {/* ── SCORE RENDERING (FULL WIDTH ON TOP) ── */}
+        {/* ── PANEL 1: SCORE RENDERING (FULL WIDTH ON TOP) ── */}
         <Card>
-          <CardHeader className="py-3">
+          <CardHeader className="py-2">
             <CardTitle className="text-sm flex items-center gap-2">
               <Music className="w-4 h-4" />
               Partitura
             </CardTitle>
           </CardHeader>
-          <CardContent>
-            <div ref={scoreContainerRef} className="min-h-[160px]">
+          <CardContent className="pt-0 pb-2">
+            <div ref={scoreContainerRef} className="min-h-[140px]">
               {parsedElements.length > 0 ? (
-                <ScoreRenderer elements={parsedElements} width={scoreWidth} height={200} />
+                <ScoreRenderer elements={parsedElements} width={scoreWidth} height={180} />
               ) : (
-                <div className="flex flex-col items-center justify-center h-[160px] text-muted-foreground">
-                  <Music className="w-12 h-12 mb-3 opacity-30" />
+                <div className="flex flex-col items-center justify-center h-[140px] text-muted-foreground">
+                  <Music className="w-10 h-10 mb-2 opacity-30" />
                   <p className="text-sm">Digite em Braille musical para ver a partitura aqui</p>
                   <p className="text-xs mt-1 font-mono">
                     Ex: ⠐⠹⠱⠫⠻ (Sinal de 4ª oitava + C D E F semínimas)
@@ -793,110 +806,88 @@ export default function BrailleEditor() {
           </CardContent>
         </Card>
 
-        {/* ── MAIN EDITOR AREA (TWO COLUMNS) ── */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          {/* Left: Braille Input (2/3) */}
-          <div className="lg:col-span-2 space-y-3">
-            <Card>
-              <CardHeader className="py-3">
+        {/* ── PANELS 2 & 3: BRAILLE + ROMANO (SIDE BY SIDE) ── */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+          {/* Panel 2: Texto em Braille (Perkins input) */}
+          <Card className={`transition-all ${activePanel === "braille" ? "ring-2 ring-primary/50" : ""}`}>
+            <CardHeader className="py-2">
+              <div className="flex items-center justify-between">
                 <CardTitle className="text-sm flex items-center gap-2">
                   <Keyboard className="w-4 h-4" />
-                  Entrada em Braille Musical
+                  Texto em Braille
                 </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {inputMode === "perkins" && (
-                  <PerkinsKeyboard onChar={insertChar} onSpace={insertSpace} onBackspace={handleBackspace} />
-                )}
-
-                <textarea
-                  value={brailleContent}
-                  onChange={(e) => setBrailleContent(e.target.value)}
-                  className="w-full h-40 p-3 border rounded-lg bg-card text-card-foreground font-mono text-2xl leading-relaxed resize-none focus:outline-none focus:ring-2 focus:ring-primary/50"
-                  placeholder={
-                    inputMode === "perkins"
-                      ? "Use o teclado Perkins acima (F,D,S,J,K,L)..."
-                      : "Digite ou cole texto em Braille Unicode aqui..."
-                  }
-                  aria-label="Área de entrada em Braille musical"
-                  readOnly={inputMode === "perkins"}
+                <span className="text-[10px] text-muted-foreground bg-muted px-2 py-0.5 rounded">
+                  Teclado Perkins (F,D,S / J,K,L)
+                </span>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-2 pt-0">
+              {activePanel === "braille" && (
+                <PerkinsKeyboard
+                  onChar={insertCharAtCursor}
+                  onSpace={insertSpaceAtCursor}
+                  onBackspace={handleBackspaceAtCursor}
+                  onNewline={insertNewlineAtCursor}
                 />
-                <div className="flex justify-between text-xs text-muted-foreground">
-                  <span>{brailleContent.length} caracteres</span>
-                  <span>{noteCount} notas · {restCount} pausas</span>
+              )}
+
+              <textarea
+                ref={brailleTextareaRef}
+                value={brailleContent}
+                onChange={(e) => handleBrailleChange(e.target.value)}
+                onFocus={() => setActivePanel("braille")}
+                className="w-full h-48 p-3 border rounded-lg bg-card text-card-foreground font-mono text-2xl leading-relaxed resize-none focus:outline-none focus:ring-2 focus:ring-primary/50"
+                placeholder="Clique aqui e use o teclado Perkins (F,D,S,J,K,L)..."
+                aria-label="Área de entrada em Braille musical — use teclado Perkins"
+                spellCheck={false}
+              />
+              <div className="flex justify-between text-[10px] text-muted-foreground">
+                <span>{brailleContent.length} caracteres Braille</span>
+                <span>Documento oficial para impressão</span>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Panel 3: Texto em Romano (standard keyboard input) */}
+          <Card className={`transition-all ${activePanel === "romano" ? "ring-2 ring-primary/50" : ""}`}>
+            <CardHeader className="py-2">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-sm flex items-center gap-2">
+                  <FileText className="w-4 h-4" />
+                  Texto em Romano
+                </CardTitle>
+                <button
+                  onClick={() => setShowRomanHelp(!showRomanHelp)}
+                  className="text-muted-foreground hover:text-foreground transition-colors"
+                  title="Ajuda sobre o formato Romano"
+                >
+                  <HelpCircle className="w-4 h-4" />
+                </button>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-2 pt-0">
+              {showRomanHelp && (
+                <div className="bg-muted rounded-lg p-3 text-xs text-muted-foreground whitespace-pre-line mb-2">
+                  {getRomanFormatHelp()}
                 </div>
-              </CardContent>
-            </Card>
-          </div>
+              )}
 
-          {/* Right: Braille Cell Visualization + Stats (1/3) */}
-          <div className="space-y-3">
-            {brailleContent.trim() ? (
-              <>
-                <Card>
-                  <CardHeader className="py-3">
-                    <CardTitle className="text-sm">Celas Braille</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="flex flex-wrap gap-1 max-h-48 overflow-y-auto">
-                      {Array.from(brailleContent).map((char, i) => {
-                        if (char === " " || char === "\u2800") {
-                          return (
-                            <div key={i} className="w-0.5 h-10 bg-border mx-1 self-center" title="Barra de compasso" />
-                          );
-                        }
-                        return (
-                          <div key={i} className="flex flex-col items-center" title={describeBrailleChar(char)}>
-                            <BrailleCell char={char} size={28} />
-                            <span className="text-[8px] text-muted-foreground truncate max-w-[28px]">
-                              {describeBrailleChar(char).split(" ")[0]}
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardHeader className="py-3">
-                    <CardTitle className="text-sm">Análise</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="grid grid-cols-2 gap-2 text-sm">
-                      <div className="bg-muted rounded-lg p-3 text-center">
-                        <p className="text-xl font-bold text-primary">{noteCount}</p>
-                        <p className="text-muted-foreground text-xs">Notas</p>
-                      </div>
-                      <div className="bg-muted rounded-lg p-3 text-center">
-                        <p className="text-xl font-bold text-primary">{restCount}</p>
-                        <p className="text-muted-foreground text-xs">Pausas</p>
-                      </div>
-                      <div className="bg-muted rounded-lg p-3 text-center">
-                        <p className="text-xl font-bold text-primary">
-                          {parsedElements.filter((e) => e.type === "barline").length + 1}
-                        </p>
-                        <p className="text-muted-foreground text-xs">Compassos</p>
-                      </div>
-                      <div className="bg-muted rounded-lg p-3 text-center">
-                        <p className="text-xl font-bold text-primary">{brailleContent.length}</p>
-                        <p className="text-muted-foreground text-xs">Caracteres</p>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              </>
-            ) : (
-              <Card>
-                <CardContent className="py-8 text-center">
-                  <Info className="w-8 h-8 mx-auto text-muted-foreground mb-3 opacity-50" />
-                  <p className="text-sm text-muted-foreground">
-                    As celas Braille e a análise aparecerão aqui quando você começar a digitar.
-                  </p>
-                </CardContent>
-              </Card>
-            )}
-          </div>
+              <textarea
+                ref={romanTextareaRef}
+                value={romanContent}
+                onChange={(e) => handleRomanChange(e.target.value)}
+                onFocus={() => setActivePanel("romano")}
+                className="w-full h-48 p-3 border rounded-lg bg-card text-card-foreground font-mono text-base leading-relaxed resize-none focus:outline-none focus:ring-2 focus:ring-primary/50"
+                placeholder="Clique aqui e digite com teclado padrão (ex: O4 Cq Dq Eq Fq)..."
+                aria-label="Área de entrada em texto Romano — use teclado padrão"
+                spellCheck={false}
+              />
+              <div className="flex justify-between text-[10px] text-muted-foreground">
+                <span>{romanContent.length} caracteres</span>
+                <span>Teclado padrão · Correspondência alfabética</span>
+              </div>
+            </CardContent>
+          </Card>
         </div>
       </div>
     </SiteLayout>

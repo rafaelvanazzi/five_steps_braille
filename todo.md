@@ -247,3 +247,27 @@
 - [x] Feedback visual durante importação (loading, sucesso, erro)
 - [x] Criação automática de projeto ao importar sem projeto aberto
 - [x] Botão de importação disponível tanto na lista de projetos quanto dentro do editor
+
+## Melhorias do Editor v2 - Feedback do Utilizador
+- [ ] Corrigir importação BRF: converter ASCII Braille → Unicode e disparar renderização da partitura
+- [ ] Redesenhar celas Braille: círculos menores com espaçamento real entre pontos
+- [ ] Adicionar correspondência alfabética abaixo de cada cela Braille
+- [ ] Implementar cursor editável no campo Braille (inserir/deletar em qualquer posição)
+- [ ] Permitir seleção de trecho Braille para substituição
+- [ ] Adicionar símbolos: compassos (quaternário, ternário), barra final
+- [ ] Adicionar símbolos: ligaduras
+- [ ] Adicionar símbolos: ritornelos e casa 1/casa 2
+- [ ] Feedback sonoro ao digitar notas (ativar/desativar)
+- [ ] Reprodução da partitura completa (play/pause)
+- [ ] Interatividade: clicar nota na partitura destaca cela Braille correspondente
+- [ ] Interatividade: clicar cela Braille destaca nota na partitura
+
+## Reestruturação do Editor v3
+- [x] Corrigir nota Si (B) no VexFlow — erro "Invalid key name"
+- [x] Adicionar semicolcheias ao mapeamento Braille
+- [x] Criar 3 janelas sincronizadas: Partitura + Texto em Braille + Texto em Romano
+- [x] Texto em Braille: entrada automática em Perkins ao clicar
+- [x] Texto em Romano: entrada em teclado padrão ao clicar, mostra correspondência
+- [x] Sincronização bidirecional: editar num atualiza o outro
+- [x] Textos romanos no Braille não devem causar erro na partitura
+- [x] Remover janela "Celas Braille" desnecessária
