@@ -836,23 +836,22 @@ export function getQuickReference(): QuickRefEntry[] {
   }
   
   // Fórmulas de compasso
-  // Nota: O segundo número (unidade de tempo) fica na quinta linha braille (linha rebaixada)
-  // Celas corretas: (3,4,5,6) = sinal de número, (1,3,4) = numerador, (2,5,6) = denominador
+  // Celas corretas conforme especificação musicográfica Braille
   entries.push(
-    { char: NUMBER_SIGN + '\u2819\u282E', dots: '3,4,5,6 + 1,4,5 + 2,5,6', description: 'Fórmula 4/4', category: 'timesig' },
-    { char: NUMBER_SIGN + '\u2809\u282E', dots: '3,4,5,6 + 1,4 + 2,5,6', description: 'Fórmula 3/4', category: 'timesig' },
-    { char: NUMBER_SIGN + '\u2803\u282E', dots: '3,4,5,6 + 1,2 + 2,5,6', description: 'Fórmula 2/4', category: 'timesig' },
-    { char: NUMBER_SIGN + '\u280B\u2813', dots: '3,4,5,6 + 1,2,4 + 1,2,4,5', description: 'Fórmula 6/8', category: 'timesig' },
-    { char: NUMBER_SIGN + '\u2809\u280B', dots: '3,4,5,6 + 1,4 + 1,2,4', description: 'Fórmula 3/8', category: 'timesig' },
-    { char: NUMBER_SIGN + '\u280A\u2813', dots: '3,4,5,6 + 1,2,5 + 1,2,4,5', description: 'Fórmula 9/8', category: 'timesig' },
+    { char: NUMBER_SIGN + '\u2819\u2832', dots: '3,4,5,6 + 1,4,5 + 2,5,6', description: 'Fórmula 4/4', category: 'timesig' },
+    { char: NUMBER_SIGN + '\u2809\u2832', dots: '3,4,5,6 + 1,4 + 2,5,6', description: 'Fórmula 3/4', category: 'timesig' },
+    { char: NUMBER_SIGN + '\u2803\u2832', dots: '3,4,5,6 + 1,2 + 2,5,6', description: 'Fórmula 2/4', category: 'timesig' },
+    { char: NUMBER_SIGN + '\u280B\u2826', dots: '3,4,5,6 + 1,2,4 + 2,3,6', description: 'Fórmula 6/8', category: 'timesig' },
+    { char: NUMBER_SIGN + '\u2809\u2826', dots: '3,4,5,6 + 1,4 + 2,3,6', description: 'Fórmula 3/8', category: 'timesig' },
+    { char: NUMBER_SIGN + '\u280A\u2826', dots: '3,4,5,6 + 2,4 + 2,3,6', description: 'Fórmula 9/8', category: 'timesig' },
   );
   
   // Barras de compasso e repetições
   entries.push(
     { char: ' ', dots: '-', description: 'Barra de compasso', category: 'barline' },
-    { char: '\u2826\u2821', dots: '1,2,6 + 1,3', description: 'Barra final', category: 'barline' },
-    { char: '\u2826\u282F', dots: '1,2,6 + 2,3,5,6', description: 'Ritornelo (início)', category: 'barline' },
-    { char: '\u2826\u2823', dots: '1,2,6 + 2,3', description: 'Ritornelo (fim)', category: 'barline' },
+    { char: '\u2823\u2805', dots: '1,2,6 + 1,3', description: 'Barra final', category: 'barline' },
+    { char: '\u2823\u2836', dots: '1,2,6 + 2,3,5,6', description: 'Ritornelo (início)', category: 'barline' },
+    { char: '\u2823\u2806', dots: '1,2,6 + 2,3', description: 'Ritornelo (fim)', category: 'barline' },
   );
   
   // Ligaduras e outros símbolos
@@ -860,7 +859,7 @@ export function getQuickReference(): QuickRefEntry[] {
     { char: AUGMENTATION_DOT, dots: '3', description: 'Ponto de aumento', category: 'other' },
     { char: SLUR, dots: unicodeToDots(SLUR).join(','), description: 'Ligadura de expressão', category: 'other' },
     { char: '\u2809\u2809', dots: '1,4 + 1,4', description: 'Ligadura de duração (tie)', category: 'other' },
-    { char: '\u2823', dots: '2,3', description: 'Sinal de tercina', category: 'other' },
+    { char: '\u2806', dots: '2,3', description: 'Sinal de tercina', category: 'other' },
     { char: NUMBER_SIGN, dots: unicodeToDots(NUMBER_SIGN).join(','), description: 'Sinal de número', category: 'other' },
   );
   
