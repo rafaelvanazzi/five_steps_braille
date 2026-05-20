@@ -27,23 +27,31 @@ function groupIntoMeasures(elements: ParsedElement[]): MeasureInfo[] {
   let current: (ParsedNote | ParsedRest)[] = [];
   let nextBegBarline: 'repeat-begin' | undefined = undefined;
 
-  for (const el of elements) {
+  for (let i = 0; i < elements.length; i++) {
+    const el = elements[i];
+    
     if (el.type === 'barline') {
-      if (current.length > 0) {
+      // Check if this is a repeat-begin at the start of a measure (no notes yet)
+      if ((el as any).barlineType === 'repeat-begin' && current.length === 0) {
+        // Mark for the next measure
+        nextBegBarline = 'repeat-begin';
+        continue; // Don't create a measure yet
+      }
+      
+      // For other barlines, create a measure
+      if (current.length > 0 || nextBegBarline) {
         let barType: 'single' | 'end' | 'repeat-begin' | 'repeat-end' | 'repeat-both' = 'single';
         if ((el as any).barlineType === 'end') {
           barType = 'end';
-        } else if ((el as any).barlineType === 'repeat-begin') {
-          // Ritornelo de início: será aplicado no PRÓXIMO compasso
-          nextBegBarline = 'repeat-begin';
-          measures.push({ notes: current, barlineType: barType, begBarlineType: nextBegBarline });
-          current = [];
-          nextBegBarline = undefined;
-          continue;
         } else if ((el as any).barlineType === 'repeat-end') {
           barType = 'repeat-end';
         }
-        measures.push({ notes: current, barlineType: barType, begBarlineType: nextBegBarline });
+        
+        measures.push({ 
+          notes: current, 
+          barlineType: barType, 
+          begBarlineType: nextBegBarline 
+        });
         current = [];
         nextBegBarline = undefined;
       }
@@ -52,8 +60,13 @@ function groupIntoMeasures(elements: ParsedElement[]): MeasureInfo[] {
     }
     // Skip timesignature and notetie elements
   }
+  
   if (current.length > 0) {
-    measures.push({ notes: current, barlineType: 'single', begBarlineType: nextBegBarline });
+    measures.push({ 
+      notes: current, 
+      barlineType: 'single', 
+      begBarlineType: nextBegBarline 
+    });
   }
 
   // Detect repeat-both: when a measure ends with repeat-end and next has repeat-begin at start
@@ -134,7 +147,6 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
     let x = 10;
     let y = 40;
     const staveWidth = 150;
-    const measureIndex = 0;
     let currentStaveWidth = staveWidth;
 
     // Render each measure
@@ -157,7 +169,7 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
         stave.addTimeSignature(`${timeSignature.numerator}/${timeSignature.denominator}`);
       }
 
-      // Set beginning barline type
+      // Set beginning barline type (ritornelo de início)
       if (measure.begBarlineType === 'repeat-begin') {
         stave.setBegBarType(4); // REPEAT_BEGIN = =|:
       }
