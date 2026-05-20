@@ -125,7 +125,8 @@ const ARTICULATION_PREFIX: Record<string, Record<string, string>> = {
 
 const AUGMENTATION_DOT = '\u2804'; // ⠄
 const BARLINE = '\u2800';          // space = barline in braille music
-const SLUR = '\u2809';             // ⠉
+const SLUR = '\u2809';             // ⠉ (ligadura de nota - tie)
+const NOTE_TIE = '\u2809';         // ⠉ (1,4) = ligadura de nota
 const NUMBER_SIGN = '\u283C';      // ⠼ (number indicator)
 const WORD_SIGN = '\u281C';        // ⠜ (word sign, precedes dynamics text)
 const FORCED_WHOLE_MARKER = '\u2824'; // ⠤ (marker for forced semibreve, internal use only)
@@ -191,6 +192,12 @@ export interface ParsedRest {
 
 export interface ParsedBarline {
   type: 'barline';
+  barlineType?: 'final' | 'repeat-begin' | 'repeat-end';
+  sourceIndex?: number;
+}
+
+export interface ParsedNoteTie {
+  type: 'notetie';
   sourceIndex?: number;
 }
 
@@ -201,7 +208,7 @@ export interface ParsedTimeSignature {
   sourceIndex?: number;
 }
 
-export type ParsedElement = ParsedNote | ParsedRest | ParsedBarline | ParsedTimeSignature;
+export type ParsedElement = ParsedNote | ParsedRest | ParsedBarline | ParsedTimeSignature | ParsedNoteTie;
 
 export interface ParseResult {
   elements: ParsedElement[];
@@ -611,8 +618,12 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
       continue;
     }
     
-    // Check for slur
-    if (ch === SLUR) {
+    // Check for note tie (ligadura de nota)
+    if (ch === NOTE_TIE) {
+      elements.push({
+        type: 'notetie',
+        sourceIndex: i,
+      } as ParsedNoteTie);
       i++;
       continue;
     }
@@ -908,8 +919,7 @@ export function getQuickReference(): QuickRefEntry[] {
   // Ligaduras e outros símbolos
   entries.push(
     { char: AUGMENTATION_DOT, dots: '3', description: 'Ponto de aumento', category: 'other' },
-    { char: SLUR, dots: unicodeToDots(SLUR).join(','), description: 'Ligadura de expressão', category: 'other' },
-    { char: '\u2809\u2809', dots: '1,4 + 1,4', description: 'Ligadura de duração (tie)', category: 'other' },
+    { char: NOTE_TIE, dots: '1,4', description: 'Ligadura de nota', category: 'other' },
     { char: '\u2806', dots: '2,3', description: 'Sinal de tercina', category: 'other' },
     { char: NUMBER_SIGN, dots: unicodeToDots(NUMBER_SIGN).join(','), description: 'Sinal de número', category: 'other' },
   );

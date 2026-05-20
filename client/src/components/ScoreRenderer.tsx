@@ -28,13 +28,21 @@ function groupIntoMeasures(elements: ParsedElement[]): MeasureInfo[] {
   for (const el of elements) {
     if (el.type === 'barline') {
       if (current.length > 0) {
-        measures.push({ notes: current, barlineType: 'single' });
+        let barType: 'single' | 'double' | 'end' | 'repeat-begin' | 'repeat-end' | 'repeat-both' | 'none' = 'single';
+        if ((el as any).barlineType === 'final') {
+          barType = 'end';
+        } else if ((el as any).barlineType === 'repeat-begin') {
+          barType = 'repeat-begin';
+        } else if ((el as any).barlineType === 'repeat-end') {
+          barType = 'repeat-end';
+        }
+        measures.push({ notes: current, barlineType: barType });
         current = [];
       }
     } else if (el.type === 'note' || el.type === 'rest') {
       current.push(el);
     }
-    // Skip timesignature elements
+    // Skip timesignature and notetie elements
   }
   if (current.length > 0) {
     measures.push({ notes: current, barlineType: 'none' });
@@ -149,6 +157,19 @@ export default function ScoreRenderer({ elements, width = 800, height = 200, bea
             // Add time signature on first measure (from parsed or prop)
             stave.addTimeSignature(`${timeSignature.numerator}/${timeSignature.denominator}`);
           }
+          
+          // Set barline type based on measure info
+          const measure = measures[measureIndex];
+          if (measure.barlineType === 'end') {
+            stave.setEndBarType(2); // END barline
+          } else if (measure.barlineType === 'repeat-begin') {
+            stave.setEndBarType(3); // REPEAT_BEGIN
+          } else if (measure.barlineType === 'repeat-end') {
+            stave.setEndBarType(4); // REPEAT_END
+          } else if (measure.barlineType === 'repeat-both') {
+            stave.setEndBarType(5); // REPEAT_BOTH
+          }
+          
           stave.setContext(context).draw();
 
           if (measureNotes.length === 0) {
