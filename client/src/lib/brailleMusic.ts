@@ -156,10 +156,10 @@ const TIME_SIGNATURE_MAP: Record<string, { numerator: number; denominator: numbe
 };
 
 // Barline patterns
-const BARLINE_MAP: Record<string, 'none' | 'repeat-begin' | 'repeat-end'> = {
-  '\u2823\u2805': 'none',           // ⠣⠅ = barra final (não renderiza)
-  '\u2823\u2836': 'repeat-begin',  // ⠣⠶ = ritornelo início
-  '\u2823\u2806': 'repeat-end',    // ⠣⠆ = ritornelo fim
+const BARLINE_MAP: Record<string, 'end' | 'repeat-begin' | 'repeat-end'> = {
+  '\u2823\u2805': 'end',            // ⠣⠅ = barra final (END = =|=)
+  '\u2823\u2836': 'repeat-begin',  // ⠣⠶ = ritornelo início (REPEAT_BEGIN = =|:)
+  '\u2823\u2806': 'repeat-end',    // ⠣⠆ = ritornelo fim (REPEAT_END = =:|)
 }
 
 // ─── PARSED TYPES ──────────────────────────────────────────────────────────────

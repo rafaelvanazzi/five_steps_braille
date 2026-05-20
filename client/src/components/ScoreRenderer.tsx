@@ -17,7 +17,7 @@ interface ScoreRendererProps {
 // Measure info including barline type
 interface MeasureInfo {
   notes: (ParsedNote | ParsedRest)[];
-  barlineType: 'single' | 'none' | 'repeat-begin' | 'repeat-end';
+  barlineType: 'single' | 'end' | 'repeat-begin' | 'repeat-end' | 'repeat-both';
 }
 
 // Group elements into measures (split by barlines)
@@ -28,9 +28,9 @@ function groupIntoMeasures(elements: ParsedElement[]): MeasureInfo[] {
   for (const el of elements) {
     if (el.type === 'barline') {
       if (current.length > 0) {
-        let barType: 'single' | 'none' | 'repeat-begin' | 'repeat-end' = 'single';
-        if ((el as any).barlineType === 'none') {
-          barType = 'none';
+        let barType: 'single' | 'end' | 'repeat-begin' | 'repeat-end' | 'repeat-both' = 'single';
+        if ((el as any).barlineType === 'end') {
+          barType = 'end';
         } else if ((el as any).barlineType === 'repeat-begin') {
           barType = 'repeat-begin';
         } else if ((el as any).barlineType === 'repeat-end') {
@@ -45,7 +45,15 @@ function groupIntoMeasures(elements: ParsedElement[]): MeasureInfo[] {
     // Skip timesignature and notetie elements
   }
   if (current.length > 0) {
-    measures.push({ notes: current, barlineType: 'none' });
+    measures.push({ notes: current, barlineType: 'single' });
+  }
+
+  // Detect repeat-both: when a measure ends with repeat-end and next starts with repeat-begin
+  for (let i = 0; i < measures.length - 1; i++) {
+    if (measures[i].barlineType === 'repeat-end' && measures[i + 1].barlineType === 'repeat-begin') {
+      measures[i].barlineType = 'repeat-both';
+      measures[i + 1].barlineType = 'single'; // Remove repeat-begin from next measure
+    }
   }
 
   return measures;
@@ -160,12 +168,16 @@ export default function ScoreRenderer({ elements, width = 800, height = 200, bea
           
           // Set barline type based on measure info
           const measure = measures[measureIndex];
-          if (measure.barlineType === 'repeat-begin') {
-            stave.setEndBarType(3); // REPEAT_BEGIN
+          if (measure.barlineType === 'end') {
+            stave.setEndBarType(3); // END = =|=
+          } else if (measure.barlineType === 'repeat-begin') {
+            stave.setEndBarType(4); // REPEAT_BEGIN = =|:
           } else if (measure.barlineType === 'repeat-end') {
-            stave.setEndBarType(4); // REPEAT_END
+            stave.setEndBarType(5); // REPEAT_END = =:|
+          } else if (measure.barlineType === 'repeat-both') {
+            stave.setEndBarType(6); // REPEAT_BOTH = =::
           }
-          // 'none' and 'single' use default barline (no setEndBarType call)
+          // 'single' uses default barline (no setEndBarType call)
           
           stave.setContext(context).draw();
 
