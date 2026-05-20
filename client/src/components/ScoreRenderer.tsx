@@ -38,6 +38,11 @@ function groupIntoMeasures(elements: ParsedElement[]): MeasureInfo[] {
         continue; // Don't create a measure yet
       }
       
+      // For simple barlines (no type) with no notes, skip them (preserve nextBegBarline)
+      if (!(el as any).barlineType && current.length === 0) {
+        continue;
+      }
+      
       // For other barlines, always create a measure (even if empty)
       let barType: 'single' | 'end' | 'repeat-begin' | 'repeat-end' | 'repeat-both' = 'single';
       if ((el as any).barlineType === 'end') {
