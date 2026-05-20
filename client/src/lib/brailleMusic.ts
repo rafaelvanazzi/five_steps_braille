@@ -156,10 +156,10 @@ const TIME_SIGNATURE_MAP: Record<string, { numerator: number; denominator: numbe
 };
 
 // Barline patterns
-const BARLINE_MAP: Record<string, 'barline' | 'none' | 'final'> = {
-  '\u2823\u2805': 'none',  // ⠣⠅ = barra final (não renderiza)
-  '\u2823\u2836': 'final', // ⠣⠶ = ritornelo início (renderiza como END)
-  '\u2823\u2806': 'final', // ⠣⠆ = ritornelo fim (renderiza como END)
+const BARLINE_MAP: Record<string, 'none' | 'repeat-begin' | 'repeat-end'> = {
+  '\u2823\u2805': 'none',           // ⠣⠅ = barra final (não renderiza)
+  '\u2823\u2836': 'repeat-begin',  // ⠣⠶ = ritornelo início
+  '\u2823\u2806': 'repeat-end',    // ⠣⠆ = ritornelo fim
 }
 
 // ─── PARSED TYPES ──────────────────────────────────────────────────────────────
@@ -378,7 +378,7 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
             type: 'barline',
             sourceIndex: i,
             // Store barline type for rendering
-            ...(barlineType !== 'barline' && { barlineType }),
+            ...(barlineType && { barlineType }),
           } as any);
         }
         beatsUsedInMeasure = 0;

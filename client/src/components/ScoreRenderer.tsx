@@ -17,7 +17,7 @@ interface ScoreRendererProps {
 // Measure info including barline type
 interface MeasureInfo {
   notes: (ParsedNote | ParsedRest)[];
-  barlineType: 'single' | 'end' | 'none';
+  barlineType: 'single' | 'none' | 'repeat-begin' | 'repeat-end';
 }
 
 // Group elements into measures (split by barlines)
@@ -28,11 +28,13 @@ function groupIntoMeasures(elements: ParsedElement[]): MeasureInfo[] {
   for (const el of elements) {
     if (el.type === 'barline') {
       if (current.length > 0) {
-        let barType: 'single' | 'end' | 'none' = 'single';
-        if ((el as any).barlineType === 'final') {
-          barType = 'end';
-        } else if ((el as any).barlineType === 'none') {
+        let barType: 'single' | 'none' | 'repeat-begin' | 'repeat-end' = 'single';
+        if ((el as any).barlineType === 'none') {
           barType = 'none';
+        } else if ((el as any).barlineType === 'repeat-begin') {
+          barType = 'repeat-begin';
+        } else if ((el as any).barlineType === 'repeat-end') {
+          barType = 'repeat-end';
         }
         measures.push({ notes: current, barlineType: barType });
         current = [];
@@ -158,8 +160,10 @@ export default function ScoreRenderer({ elements, width = 800, height = 200, bea
           
           // Set barline type based on measure info
           const measure = measures[measureIndex];
-          if (measure.barlineType === 'end') {
-            stave.setEndBarType(2); // END barline (ritornelos)
+          if (measure.barlineType === 'repeat-begin') {
+            stave.setEndBarType(3); // REPEAT_BEGIN
+          } else if (measure.barlineType === 'repeat-end') {
+            stave.setEndBarType(4); // REPEAT_END
           }
           // 'none' and 'single' use default barline (no setEndBarType call)
           
