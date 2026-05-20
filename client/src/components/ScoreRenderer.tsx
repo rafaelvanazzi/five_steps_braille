@@ -57,7 +57,7 @@ function groupIntoMeasures(elements: ParsedElement[]): MeasureInfo[] {
         begBarlineType: nextBegBarline 
       });
       current = [];
-      // Keep nextBegBarline for the next measure (don't zero it)
+      nextBegBarline = undefined;
     } else if (el.type === 'note' || el.type === 'rest') {
       current.push(el);
     }
