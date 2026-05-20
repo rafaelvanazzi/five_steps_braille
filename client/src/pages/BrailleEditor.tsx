@@ -870,7 +870,23 @@ export default function BrailleEditor() {
           <CardContent className="pt-0 pb-2">
             <div ref={scoreContainerRef} className="min-h-[140px]">
               {parsedElements.length > 0 ? (
-                <ScoreRenderer elements={parsedElements} width={scoreWidth} height={180} />
+                <ScoreRenderer
+                  elements={parsedElements}
+                  width={scoreWidth}
+                  height={180}
+                  onMeasureClick={(sourceIndex) => {
+                    // Move cursor in Braille textarea to the start of the clicked measure
+                    const textarea = brailleTextareaRef.current;
+                    if (!textarea) return;
+                    textarea.focus();
+                    textarea.setSelectionRange(sourceIndex, sourceIndex);
+                    // Scroll textarea to make cursor visible
+                    const lineHeight = 20;
+                    const text = textarea.value;
+                    const linesBeforeCursor = text.substring(0, sourceIndex).split('\n').length - 1;
+                    textarea.scrollTop = linesBeforeCursor * lineHeight;
+                  }}
+                />
               ) : (
                 <div className="flex flex-col items-center justify-center h-[140px] text-muted-foreground">
                   <Music className="w-10 h-10 mb-2 opacity-30" />

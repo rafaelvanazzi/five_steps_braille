@@ -12,6 +12,8 @@ interface ScoreRendererProps {
   width?: number;
   height?: number;
   beatsPerMeasure?: number;
+  /** Called when user clicks a measure; receives the sourceIndex of the first note in that measure */
+  onMeasureClick?: (sourceIndex: number) => void;
 }
 
 // Measure info including barline type
@@ -19,6 +21,8 @@ interface MeasureInfo {
   notes: (ParsedNote | ParsedRest)[];
   barlineType: 'single' | 'end' | 'repeat-begin' | 'repeat-end' | 'repeat-both';
   begBarlineType?: 'repeat-begin';
+  /** sourceIndex of the first element in this measure (for cursor sync) */
+  sourceIndex?: number;
 }
 
 // Group elements into measures (split by barlines)
@@ -26,6 +30,7 @@ function groupIntoMeasures(elements: ParsedElement[]): MeasureInfo[] {
   const measures: MeasureInfo[] = [];
   let current: (ParsedNote | ParsedRest)[] = [];
   let nextBegBarline: 'repeat-begin' | undefined = undefined;
+  let currentSourceIndex: number | undefined = undefined;
 
   for (let i = 0; i < elements.length; i++) {
     const el = elements[i];
@@ -54,11 +59,17 @@ function groupIntoMeasures(elements: ParsedElement[]): MeasureInfo[] {
       measures.push({ 
         notes: current, 
         barlineType: barType, 
-        begBarlineType: nextBegBarline 
+        begBarlineType: nextBegBarline,
+        sourceIndex: currentSourceIndex
       });
       current = [];
       nextBegBarline = undefined;
+      currentSourceIndex = undefined;
     } else if (el.type === 'note' || el.type === 'rest') {
+      // Track the sourceIndex of the first note/rest in this measure
+      if (currentSourceIndex === undefined && el.sourceIndex !== undefined) {
+        currentSourceIndex = el.sourceIndex;
+      }
       current.push(el);
     }
     // Skip timesignature and notetie elements
@@ -68,7 +79,8 @@ function groupIntoMeasures(elements: ParsedElement[]): MeasureInfo[] {
     measures.push({ 
       notes: current, 
       barlineType: 'single', 
-      begBarlineType: nextBegBarline 
+      begBarlineType: nextBegBarline,
+      sourceIndex: currentSourceIndex
     });
   }
 
@@ -122,8 +134,10 @@ function noteToVexDuration(el: ParsedNote | ParsedRest): string {
   return dur.replace('d', '');
 }
 
-export default function ScoreRenderer({ elements, width = 1000, height = 300, beatsPerMeasure = 4 }: ScoreRendererProps) {
+export default function ScoreRenderer({ elements, width = 1000, height = 300, beatsPerMeasure = 4, onMeasureClick }: ScoreRendererProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  // Store measure hit areas for click detection: { x, y, w, h, sourceIndex }
+  const measureHitAreas = useRef<Array<{ x: number; y: number; w: number; h: number; sourceIndex: number }>>([]);
 
   // Extract time signature from parsed elements
   const timeSignature = useMemo(() => {
@@ -140,8 +154,9 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
   useEffect(() => {
     if (!containerRef.current || measures.length === 0) return;
 
-    // Clear container
+    // Clear container and hit areas
     containerRef.current.innerHTML = '';
+    measureHitAreas.current = [];
 
     const renderer = new Renderer(containerRef.current, Renderer.Backends.SVG);
     renderer.resize(width, height);
@@ -190,6 +205,11 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
       // 'single' uses default barline (no setEndBarType call)
 
       stave.setContext(context).draw();
+
+      // Record hit area for this measure (for click detection)
+      if (measure.sourceIndex !== undefined) {
+        measureHitAreas.current.push({ x, y: y - 10, w: currentStaveWidth, h: 90, sourceIndex: measure.sourceIndex });
+      }
 
       if (measureNotes.length === 0) {
         x += currentStaveWidth;
@@ -264,5 +284,33 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
     }
   }, [elements, measures, width, height, timeSignature]);
 
-  return <div ref={containerRef} />;
+  // Add click listener on the SVG canvas to detect measure clicks
+  useEffect(() => {
+    if (!containerRef.current || !onMeasureClick) return;
+
+    const handleClick = (e: MouseEvent) => {
+      const svg = containerRef.current?.querySelector('svg');
+      if (!svg) return;
+      const rect = svg.getBoundingClientRect();
+      const clickX = e.clientX - rect.left;
+      const clickY = e.clientY - rect.top;
+
+      // Find which measure was clicked
+      for (const area of measureHitAreas.current) {
+        if (clickX >= area.x && clickX <= area.x + area.w &&
+            clickY >= area.y && clickY <= area.y + area.h) {
+          onMeasureClick(area.sourceIndex);
+          break;
+        }
+      }
+    };
+
+    const svg = containerRef.current.querySelector('svg');
+    if (svg) {
+      svg.addEventListener('click', handleClick as EventListener);
+      return () => svg.removeEventListener('click', handleClick as EventListener);
+    }
+  }, [onMeasureClick, measures]);
+
+  return <div ref={containerRef} style={{ cursor: onMeasureClick ? 'pointer' : 'default' }} />;
 }
