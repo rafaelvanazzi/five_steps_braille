@@ -196,8 +196,9 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
         continue;
       }
 
-      // Create voice and add notes
+      // Create voice and add notes (SOFT mode avoids strict beat-count validation errors)
       const voice = new Voice({ numBeats: timeSignature.numerator, beatValue: timeSignature.denominator });
+      voice.setMode(2); // Voice.Mode.SOFT = 2 — allows partial or overflowing measures
       const vexNotes: StaveNote[] = [];
 
       for (const el of measureNotes) {
