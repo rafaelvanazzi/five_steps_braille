@@ -144,6 +144,23 @@ const BRAILLE_DIGITS: Record<string, number> = {
   '\u281A': 0, // ⠚ = j = 0
 };
 
+// Time signature patterns (NUMBER_SIGN + numerator + denominator)
+const TIME_SIGNATURE_MAP: Record<string, { numerator: number; denominator: number }> = {
+  '\u283C\u2819\u2832': { numerator: 4, denominator: 4 }, // ⠼⠙⠲ = 4/4
+  '\u283C\u2809\u2832': { numerator: 3, denominator: 4 }, // ⠼⠉⠲ = 3/4
+  '\u283C\u2803\u2832': { numerator: 2, denominator: 4 }, // ⠼⠃⠲ = 2/4
+  '\u283C\u280B\u2826': { numerator: 6, denominator: 8 }, // ⠼⠋⠦ = 6/8
+  '\u283C\u2809\u2826': { numerator: 3, denominator: 8 }, // ⠼⠉⠦ = 3/8
+  '\u283C\u280A\u2826': { numerator: 9, denominator: 8 }, // ⠼⠊⠦ = 9/8
+};
+
+// Barline patterns
+const BARLINE_MAP: Record<string, 'barline' | 'final' | 'repeat-begin' | 'repeat-end'> = {
+  '\u2823\u2805': 'final',        // ⠣⠅ = barra final
+  '\u2823\u2836': 'repeat-begin', // ⠣⠶ = ritornelo início
+  '\u2823\u2806': 'repeat-end',   // ⠣⠆ = ritornelo fim
+}
+
 // ─── PARSED TYPES ──────────────────────────────────────────────────────────────
 
 export interface ParsedNote {
@@ -343,6 +360,26 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
     let ch = input[i];
     const nextCh = i + 1 < input.length ? input[i + 1] : '';
     
+    // Check for barline patterns (2-char sequences)
+    if (i + 1 < input.length) {
+      const barlinePattern = input.substring(i, i + 2);
+      if (BARLINE_MAP[barlinePattern]) {
+        const barlineType = BARLINE_MAP[barlinePattern];
+        // Skip if last element is already a barline
+        if (elements.length === 0 || elements[elements.length - 1].type !== 'barline') {
+          elements.push({
+            type: 'barline',
+            sourceIndex: i,
+            // Store barline type for rendering
+            ...(barlineType !== 'barline' && { barlineType }),
+          } as any);
+        }
+        beatsUsedInMeasure = 0;
+        i += 2;
+        continue;
+      }
+    }
+    
     // Skip literal spaces (barlines in braille music)
     if (ch === ' ' || ch === '\u2800') {
       if (elements.length > 0 && elements[elements.length - 1].type !== 'barline') {
@@ -523,17 +560,32 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
       continue;
     }
     
-    // Check for number sign (time signature prefix)
+    // Check for time signature patterns (NUMBER_SIGN + 3 chars)
+    if (ch === NUMBER_SIGN && i + 2 < input.length) {
+      const pattern = input.substring(i, i + 3);
+      if (TIME_SIGNATURE_MAP[pattern]) {
+        const ts = TIME_SIGNATURE_MAP[pattern];
+        elements.push({
+          type: 'timesignature',
+          numerator: ts.numerator,
+          denominator: ts.denominator,
+          sourceIndex: i,
+        } as ParsedTimeSignature);
+        beatsPerMeasure = ts.numerator;
+        i += 3;
+        continue;
+      }
+    }
+    
+    // Fallback: Check for number sign with digit-based parsing
     if (ch === NUMBER_SIGN) {
       const startIndex = i;
       i++;
-      // Parse time signature digits
       let digits = '';
       while (i < input.length && BRAILLE_DIGITS[input[i]] !== undefined) {
         digits += BRAILLE_DIGITS[input[i]];
         i++;
       }
-      // If we got 2+ digits, treat as time signature (e.g., "44" = 4/4)
       if (digits.length >= 2) {
         const numerator = parseInt(digits[0], 10);
         const denominator = parseInt(digits[1], 10);
@@ -544,7 +596,6 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
             denominator,
             sourceIndex: startIndex,
           } as ParsedTimeSignature);
-          // Update beatsPerMeasure based on parsed time signature
           beatsPerMeasure = numerator;
         }
       }
