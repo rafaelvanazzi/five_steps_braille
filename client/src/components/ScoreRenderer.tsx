@@ -231,10 +231,12 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
 
       voice.addTickables(vexNotes);
 
-      // Format and draw
-      const formatter = new Formatter();
-      formatter.joinVoices([voice]).format([voice], currentStaveWidth - 20);
-      voice.draw(context, stave);
+      // Format and draw (only if there are notes)
+      if (vexNotes.length > 0) {
+        const formatter = new Formatter();
+        formatter.joinVoices([voice]).format([voice], currentStaveWidth - 20);
+        voice.draw(context, stave);
+      }
 
       // Draw ties/ligaduras between consecutive notes
       for (let j = 0; j < measureNotes.length - 1; j++) {
