@@ -17,7 +17,7 @@ interface ScoreRendererProps {
 // Measure info including barline type
 interface MeasureInfo {
   notes: (ParsedNote | ParsedRest)[];
-  barlineType: 'single' | 'double' | 'end' | 'repeat-begin' | 'repeat-end' | 'repeat-both' | 'none';
+  barlineType: 'single' | 'end' | 'none';
 }
 
 // Group elements into measures (split by barlines)
@@ -28,13 +28,11 @@ function groupIntoMeasures(elements: ParsedElement[]): MeasureInfo[] {
   for (const el of elements) {
     if (el.type === 'barline') {
       if (current.length > 0) {
-        let barType: 'single' | 'double' | 'end' | 'repeat-begin' | 'repeat-end' | 'repeat-both' | 'none' = 'single';
+        let barType: 'single' | 'end' | 'none' = 'single';
         if ((el as any).barlineType === 'final') {
           barType = 'end';
-        } else if ((el as any).barlineType === 'repeat-begin') {
-          barType = 'repeat-begin';
-        } else if ((el as any).barlineType === 'repeat-end') {
-          barType = 'repeat-end';
+        } else if ((el as any).barlineType === 'none') {
+          barType = 'none';
         }
         measures.push({ notes: current, barlineType: barType });
         current = [];
@@ -161,14 +159,9 @@ export default function ScoreRenderer({ elements, width = 800, height = 200, bea
           // Set barline type based on measure info
           const measure = measures[measureIndex];
           if (measure.barlineType === 'end') {
-            stave.setEndBarType(2); // END barline
-          } else if (measure.barlineType === 'repeat-begin') {
-            stave.setEndBarType(3); // REPEAT_BEGIN
-          } else if (measure.barlineType === 'repeat-end') {
-            stave.setEndBarType(4); // REPEAT_END
-          } else if (measure.barlineType === 'repeat-both') {
-            stave.setEndBarType(5); // REPEAT_BOTH
+            stave.setEndBarType(2); // END barline (ritornelos)
           }
+          // 'none' and 'single' use default barline (no setEndBarType call)
           
           stave.setContext(context).draw();
 
@@ -240,12 +233,34 @@ export default function ScoreRenderer({ elements, width = 800, height = 200, bea
         y += 130;
       }
 
-      // Draw slurs/ties between consecutive notes with slur markers
-      // (simplified: draw a curve between first and last note if slur is detected)
+      // Draw ties between consecutive notes when notetie elements are present
+      const noteTies = elements.filter(e => e.type === 'notetie');
       const slurNotes = elements
         .filter(e => e.type === 'note')
         .map((e, i) => ({ el: e as ParsedNote, idx: i }))
         .filter(({ el }) => el.articulation === 'slur' || el.vexDuration?.includes('tie'));
+
+      // Handle note ties (ligaduras de nota)
+      if (noteTies.length > 0 && allStaveNotes.length >= 2) {
+        try {
+          let noteIdx = 0;
+          for (let i = 0; i < elements.length - 2; i++) {
+            if (elements[i].type === 'note' && elements[i + 1].type === 'notetie' && elements[i + 2].type === 'note') {
+              const firstNote = allStaveNotes[noteIdx];
+              const secondNote = allStaveNotes[noteIdx + 1];
+              if (firstNote && secondNote) {
+                const curve = new Curve(firstNote, secondNote, {
+                  cps: [{ x: 0, y: 10 }, { x: 0, y: 10 }],
+                });
+                curve.setContext(context).draw();
+              }
+            }
+            if (elements[i].type === 'note') noteIdx++;
+          }
+        } catch {
+          // Ignore tie rendering errors
+        }
+      }
 
       if (slurNotes.length >= 2 && allStaveNotes.length >= 2) {
         try {
