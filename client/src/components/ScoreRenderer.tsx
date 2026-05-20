@@ -18,12 +18,14 @@ interface ScoreRendererProps {
 interface MeasureInfo {
   notes: (ParsedNote | ParsedRest)[];
   barlineType: 'single' | 'end' | 'repeat-begin' | 'repeat-end' | 'repeat-both';
+  begBarlineType?: 'repeat-begin';
 }
 
 // Group elements into measures (split by barlines)
 function groupIntoMeasures(elements: ParsedElement[]): MeasureInfo[] {
   const measures: MeasureInfo[] = [];
   let current: (ParsedNote | ParsedRest)[] = [];
+  let nextBegBarline: 'repeat-begin' | undefined = undefined;
 
   for (const el of elements) {
     if (el.type === 'barline') {
@@ -32,12 +34,18 @@ function groupIntoMeasures(elements: ParsedElement[]): MeasureInfo[] {
         if ((el as any).barlineType === 'end') {
           barType = 'end';
         } else if ((el as any).barlineType === 'repeat-begin') {
-          barType = 'repeat-begin';
+          // Ritornelo de início: será aplicado no PRÓXIMO compasso
+          nextBegBarline = 'repeat-begin';
+          measures.push({ notes: current, barlineType: barType, begBarlineType: nextBegBarline });
+          current = [];
+          nextBegBarline = undefined;
+          continue;
         } else if ((el as any).barlineType === 'repeat-end') {
           barType = 'repeat-end';
         }
-        measures.push({ notes: current, barlineType: barType });
+        measures.push({ notes: current, barlineType: barType, begBarlineType: nextBegBarline });
         current = [];
+        nextBegBarline = undefined;
       }
     } else if (el.type === 'note' || el.type === 'rest') {
       current.push(el);
@@ -45,14 +53,14 @@ function groupIntoMeasures(elements: ParsedElement[]): MeasureInfo[] {
     // Skip timesignature and notetie elements
   }
   if (current.length > 0) {
-    measures.push({ notes: current, barlineType: 'single' });
+    measures.push({ notes: current, barlineType: 'single', begBarlineType: nextBegBarline });
   }
 
-  // Detect repeat-both: when a measure ends with repeat-end and next starts with repeat-begin
+  // Detect repeat-both: when a measure ends with repeat-end and next has repeat-begin at start
   for (let i = 0; i < measures.length - 1; i++) {
-    if (measures[i].barlineType === 'repeat-end' && measures[i + 1].barlineType === 'repeat-begin') {
+    if (measures[i].barlineType === 'repeat-end' && measures[i + 1].begBarlineType === 'repeat-begin') {
       measures[i].barlineType = 'repeat-both';
-      measures[i + 1].barlineType = 'single'; // Remove repeat-begin from next measure
+      measures[i + 1].begBarlineType = undefined; // Remove repeat-begin from next measure
     }
   }
 
@@ -98,216 +106,145 @@ function noteToVexDuration(el: ParsedNote | ParsedRest): string {
   return dur.replace('d', '');
 }
 
-export default function ScoreRenderer({ elements, width = 800, height = 200, beatsPerMeasure: propBeatsPerMeasure = 4 }: ScoreRendererProps) {
+export default function ScoreRenderer({ elements, width = 1000, height = 300, beatsPerMeasure = 4 }: ScoreRendererProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Extract time signature from elements if present
+  // Extract time signature from parsed elements
   const timeSignature = useMemo(() => {
-    const ts = elements.find(el => el.type === 'timesignature');
-    if (ts && ts.type === 'timesignature') {
-      return { numerator: ts.numerator, denominator: ts.denominator };
+    const timeSigEl = elements.find(el => el.type === 'timesignature') as any;
+    if (timeSigEl) {
+      return { numerator: timeSigEl.numerator, denominator: timeSigEl.denominator };
     }
-    return { numerator: propBeatsPerMeasure, denominator: 4 };
-  }, [elements, propBeatsPerMeasure]);
+    return { numerator: 4, denominator: 4 };
+  }, [elements]);
 
+  // Group elements into measures
   const measures = useMemo(() => groupIntoMeasures(elements), [elements]);
 
   useEffect(() => {
-    if (!containerRef.current) return;
+    if (!containerRef.current || measures.length === 0) return;
 
-    // Clear previous rendering
+    // Clear container
     containerRef.current.innerHTML = '';
 
-    if (elements.length === 0) {
-      // Show empty staff placeholder
-      try {
-        const renderer = new Renderer(containerRef.current, Renderer.Backends.SVG);
-        renderer.resize(width, height);
-        const context = renderer.getContext();
-        const stave = new Stave(10, 20, width - 20);
-        stave.addClef('treble').addTimeSignature(`${timeSignature.numerator}/${timeSignature.denominator}`);
-        stave.setContext(context).draw();
-      } catch {
-        // Ignore errors on empty staff
-      }
-      return;
-    }
+    const renderer = new Renderer(containerRef.current, Renderer.Backends.SVG);
+    renderer.resize(width, height);
+    const context = renderer.getContext();
 
-    try {
-      const renderer = new Renderer(containerRef.current, Renderer.Backends.SVG);
+    let x = 10;
+    let y = 40;
+    const staveWidth = 150;
+    const measureIndex = 0;
+    let currentStaveWidth = staveWidth;
 
-      const staveWidth = 260;
-      const measuresPerLine = Math.max(1, Math.floor((width - 40) / staveWidth));
-      const numLines = Math.ceil(Math.max(1, measures.length) / measuresPerLine);
-      const totalHeight = Math.max(height, numLines * 130 + 40);
+    // Render each measure
+    for (let i = 0; i < measures.length; i++) {
+      const measure = measures[i];
+      const measureNotes = measure.notes.filter(n => n.type === 'note' || n.type === 'rest');
+      const isFirst = i === 0;
 
-      renderer.resize(width, totalHeight);
-      const context = renderer.getContext();
-      context.setFont('Arial', 10);
-
-      let x = 10;
-      let y = 20;
-      let measureIndex = 0;
-
-      // Track notes for slur/tie rendering
-      const allStaveNotes: StaveNote[] = [];
-
-      for (let line = 0; line < numLines; line++) {
+      // Check if we need to wrap to next line
+      if (x + currentStaveWidth > width - 20) {
         x = 10;
-        for (let m = 0; m < measuresPerLine && measureIndex < measures.length; m++, measureIndex++) {
-          const { notes: measureNotes } = measures[measureIndex];
-          const isFirst = measureIndex === 0;
-          const currentStaveWidth = isFirst ? staveWidth + 40 : staveWidth;
+        y += 100;
+      }
 
-          const stave = new Stave(x, y, currentStaveWidth);
-          if (isFirst) {
-            stave.addClef('treble');
-            // Add time signature on first measure (from parsed or prop)
-            stave.addTimeSignature(`${timeSignature.numerator}/${timeSignature.denominator}`);
-          }
-          
-          // Set barline type based on measure info
-          const measure = measures[measureIndex];
-          if (measure.barlineType === 'end') {
-            stave.setEndBarType(3); // END = =|=
-          } else if (measure.barlineType === 'repeat-begin') {
-            stave.setEndBarType(4); // REPEAT_BEGIN = =|:
-          } else if (measure.barlineType === 'repeat-end') {
-            stave.setEndBarType(5); // REPEAT_END = =:|
-          } else if (measure.barlineType === 'repeat-both') {
-            stave.setEndBarType(6); // REPEAT_BOTH = =::
-          }
-          // 'single' uses default barline (no setEndBarType call)
-          
-          stave.setContext(context).draw();
+      // Create stave
+      const stave = new Stave(x, y, currentStaveWidth);
+      if (isFirst) {
+        stave.addClef('treble');
+        // Add time signature on first measure (from parsed or prop)
+        stave.addTimeSignature(`${timeSignature.numerator}/${timeSignature.denominator}`);
+      }
 
-          if (measureNotes.length === 0) {
-            x += currentStaveWidth;
-            continue;
-          }
+      // Set beginning barline type
+      if (measure.begBarlineType === 'repeat-begin') {
+        stave.setBegBarType(4); // REPEAT_BEGIN = =|:
+      }
 
-          // Create VexFlow notes
-          const vfNotes = measureNotes.map(el => {
-            if (el.type === 'rest') {
-              const dur = noteToVexDuration(el);
-              const note = new StaveNote({
-                keys: ['b/4'],
-                duration: dur,
-              });
-              if (el.dotted) {
-                Dot.buildAndAttach([note]);
-              }
-              return note;
-            } else {
-              const key = noteToVexKey(el);
-              const dur = noteToVexDuration(el);
+      // Set ending barline type
+      if (measure.barlineType === 'end') {
+        stave.setEndBarType(3); // END = =|=
+      } else if (measure.barlineType === 'repeat-begin') {
+        stave.setEndBarType(4); // REPEAT_BEGIN = =|:
+      } else if (measure.barlineType === 'repeat-end') {
+        stave.setEndBarType(5); // REPEAT_END = =:|
+      } else if (measure.barlineType === 'repeat-both') {
+        stave.setEndBarType(6); // REPEAT_BOTH = =::
+      }
+      // 'single' uses default barline (no setEndBarType call)
 
-              const note = new StaveNote({
-                keys: [key],
-                duration: dur,
-              });
+      stave.setContext(context).draw();
 
-              // Add accidental as modifier
-              if (el.accidental === 'sharp') {
-                note.addModifier(new Accidental('#'));
-              } else if (el.accidental === 'flat') {
-                note.addModifier(new Accidental('b'));
-              } else if (el.accidental === 'natural') {
-                note.addModifier(new Accidental('n'));
-              }
+      if (measureNotes.length === 0) {
+        x += currentStaveWidth;
+        continue;
+      }
 
-              if (el.dotted) {
-                Dot.buildAndAttach([note]);
-              }
+      // Create voice and add notes
+      const voice = new Voice({ numBeats: timeSignature.numerator, beatValue: timeSignature.denominator });
+      const vexNotes: StaveNote[] = [];
 
-              return note;
-            }
+      for (const el of measureNotes) {
+        if (el.type === 'note') {
+          const vexNote = new StaveNote({
+            keys: [noteToVexKey(el)],
+            duration: noteToVexDuration(el),
+            clef: 'treble',
           });
 
-          allStaveNotes.push(...vfNotes);
-
-          // Calculate total beats for voice
-          const totalBeats = measureNotes.reduce((sum, el) => {
-            return sum + durationToBeats(el.vexDuration);
-          }, 0);
-
-          const voice = new Voice({
-            numBeats: Math.max(totalBeats, 0.25),
-            beatValue: 4,
-          }).setMode(Voice.Mode.SOFT);
-
-          voice.addTickables(vfNotes);
-
-          new Formatter()
-            .joinVoices([voice])
-            .format([voice], currentStaveWidth - (isFirst ? 100 : 40));
-
-          voice.draw(context, stave);
-
-          x += currentStaveWidth;
-        }
-        y += 130;
-      }
-
-      // Draw ties between consecutive notes when notetie elements are present
-      const noteTies = elements.filter(e => e.type === 'notetie');
-      const slurNotes = elements
-        .filter(e => e.type === 'note')
-        .map((e, i) => ({ el: e as ParsedNote, idx: i }))
-        .filter(({ el }) => el.articulation === 'slur' || el.vexDuration?.includes('tie'));
-
-      // Handle note ties (ligaduras de nota)
-      if (noteTies.length > 0 && allStaveNotes.length >= 2) {
-        try {
-          let noteIdx = 0;
-          for (let i = 0; i < elements.length - 2; i++) {
-            if (elements[i].type === 'note' && elements[i + 1].type === 'notetie' && elements[i + 2].type === 'note') {
-              const firstNote = allStaveNotes[noteIdx];
-              const secondNote = allStaveNotes[noteIdx + 1];
-              if (firstNote && secondNote) {
-                const curve = new Curve(firstNote, secondNote, {
-                  cps: [{ x: 0, y: 10 }, { x: 0, y: 10 }],
-                });
-                curve.setContext(context).draw();
-              }
-            }
-            if (elements[i].type === 'note') noteIdx++;
+          // Add accidental if present
+          if (el.accidental) {
+            vexNote.addModifier(new Accidental(el.accidental), 0);
           }
-        } catch {
-          // Ignore tie rendering errors
-        }
-      }
 
-      if (slurNotes.length >= 2 && allStaveNotes.length >= 2) {
-        try {
-          const firstNote = allStaveNotes[0];
-          const lastNote = allStaveNotes[allStaveNotes.length - 1];
-          if (firstNote && lastNote && firstNote !== lastNote) {
-            const curve = new Curve(firstNote, lastNote, {
-              cps: [{ x: 0, y: 10 }, { x: 0, y: 10 }],
-            });
-            curve.setContext(context).draw();
+          // Add dot if present
+          if (el.dotted) {
+            Dot.buildAndAttach([vexNote], { all: true });
           }
-        } catch {
-          // Ignore slur rendering errors
+
+          vexNotes.push(vexNote);
+        } else if (el.type === 'rest') {
+          const vexRest = new StaveNote({
+            keys: ['b/4'],
+            duration: noteToVexDuration(el) + 'r',
+            clef: 'treble',
+          });
+          vexNotes.push(vexRest);
         }
       }
 
-    } catch (err) {
-      console.error('VexFlow rendering error:', err);
-      if (containerRef.current) {
-        containerRef.current.innerHTML = `<p style="color: #ef4444; padding: 8px; font-size: 12px;">Erro na renderização: ${(err as Error).message}</p>`;
+      voice.addTickables(vexNotes);
+
+      // Format and draw
+      const formatter = new Formatter();
+      formatter.joinVoices([voice]).format([voice], currentStaveWidth - 20);
+      voice.draw(context, stave);
+
+      // Draw ties/ligaduras between consecutive notes
+      for (let j = 0; j < measureNotes.length - 1; j++) {
+        const current = measureNotes[j];
+        const next = measureNotes[j + 1];
+
+        // Check if there's a notetie between them
+        const hasTie = elements.some((el, idx) => {
+          if (el.type === 'notetie') {
+            const currentIdx = elements.indexOf(current as any);
+            const nextIdx = elements.indexOf(next as any);
+            return currentIdx >= 0 && nextIdx >= 0 && currentIdx < idx && idx < nextIdx;
+          }
+          return false;
+        });
+
+        if (hasTie && j < vexNotes.length - 1) {
+          const curve = new Curve(vexNotes[j], vexNotes[j + 1], { cps: [{ x: 0, y: 20 }, { x: 0, y: 20 }] });
+          curve.setContext(context).draw();
+        }
       }
+
+      x += currentStaveWidth;
     }
-  }, [elements, measures, width, height, timeSignature, propBeatsPerMeasure]);
+  }, [elements, measures, width, height, timeSignature]);
 
-  return (
-    <div
-      ref={containerRef}
-      className="bg-white rounded-lg overflow-auto"
-      style={{ minHeight: height }}
-      role="img"
-      aria-label="Partitura musical renderizada a partir da entrada em Braille"
-    />
-  );
+  return <div ref={containerRef} />;
 }
