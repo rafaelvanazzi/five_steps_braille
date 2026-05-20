@@ -31,9 +31,10 @@ function groupIntoMeasures(elements: ParsedElement[]): MeasureInfo[] {
         measures.push({ notes: current, barlineType: 'single' });
         current = [];
       }
-    } else {
+    } else if (el.type === 'note' || el.type === 'rest') {
       current.push(el);
     }
+    // Skip timesignature elements
   }
   if (current.length > 0) {
     measures.push({ notes: current, barlineType: 'none' });
@@ -246,7 +247,7 @@ export default function ScoreRenderer({ elements, width = 800, height = 200, bea
         containerRef.current.innerHTML = `<p style="color: #ef4444; padding: 8px; font-size: 12px;">Erro na renderização: ${(err as Error).message}</p>`;
       }
     }
-  }, [elements, measures, width, height, beatsPerMeasure]);
+  }, [elements, measures, width, height, timeSignature, propBeatsPerMeasure]);
 
   return (
     <div

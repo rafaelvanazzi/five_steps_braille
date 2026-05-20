@@ -320,7 +320,7 @@ export interface ParseOptions {
  * on measure context.
  */
 export function parseBrailleMusic(input: string, options?: ParseOptions): ParseResult {
-  const beatsPerMeasure = options?.beatsPerMeasure ?? 4;
+  let beatsPerMeasure = options?.beatsPerMeasure ?? 4;
   
   const elements: ParsedElement[] = [];
   const errors: string[] = [];
@@ -340,7 +340,7 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
   
   let i = 0;
   while (i < input.length) {
-    const ch = input[i];
+    let ch = input[i];
     const nextCh = i + 1 < input.length ? input[i + 1] : '';
     
     // Skip literal spaces (barlines in braille music)
