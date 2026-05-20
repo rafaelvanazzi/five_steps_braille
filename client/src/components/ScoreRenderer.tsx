@@ -1,26 +1,34 @@
 /**
  * ScoreRenderer - Renders a visual music score from parsed Braille music elements.
  * Uses VexFlow to draw notes on a staff in real-time.
+ * Supports: notes, rests, barlines, time signatures, accidentals, dots, slurs, ties.
  */
 import { useEffect, useRef, useMemo } from 'react';
-import { Renderer, Stave, StaveNote, Voice, Formatter, Accidental, Dot } from 'vexflow';
+import { Renderer, Stave, StaveNote, Voice, Formatter, Accidental, Dot, Curve } from 'vexflow';
 import type { ParsedElement, ParsedNote, ParsedRest } from '../lib/brailleMusic';
 
 interface ScoreRendererProps {
   elements: ParsedElement[];
   width?: number;
   height?: number;
+  beatsPerMeasure?: number;
+}
+
+// Measure info including barline type
+interface MeasureInfo {
+  notes: (ParsedNote | ParsedRest)[];
+  barlineType: 'single' | 'double' | 'end' | 'repeat-begin' | 'repeat-end' | 'repeat-both' | 'none';
 }
 
 // Group elements into measures (split by barlines)
-function groupIntoMeasures(elements: ParsedElement[]): (ParsedNote | ParsedRest)[][] {
-  const measures: (ParsedNote | ParsedRest)[][] = [];
+function groupIntoMeasures(elements: ParsedElement[]): MeasureInfo[] {
+  const measures: MeasureInfo[] = [];
   let current: (ParsedNote | ParsedRest)[] = [];
 
   for (const el of elements) {
     if (el.type === 'barline') {
       if (current.length > 0) {
-        measures.push(current);
+        measures.push({ notes: current, barlineType: 'single' });
         current = [];
       }
     } else {
@@ -28,7 +36,7 @@ function groupIntoMeasures(elements: ParsedElement[]): (ParsedNote | ParsedRest)
     }
   }
   if (current.length > 0) {
-    measures.push(current);
+    measures.push({ notes: current, barlineType: 'none' });
   }
 
   return measures;
@@ -45,6 +53,7 @@ function durationToBeats(dur: string): number {
     case '8': beats = 0.5; break;
     case '16': beats = 0.25; break;
     case '32': beats = 0.125; break;
+    case '64': beats = 0.0625; break;
     default: beats = 1;
   }
   if (dur.includes('d')) beats *= 1.5;
@@ -54,14 +63,9 @@ function durationToBeats(dur: string): number {
 /**
  * Extract a clean VexFlow key from a ParsedNote.
  * VexFlow expects keys like "c/4", "b/4" etc.
- * The accidental is added separately via Accidental modifier.
- * 
- * IMPORTANT: We must NOT include accidentals in the key string.
- * VexFlow uses modifiers for accidentals, not key names.
- * The key is always just the base note letter + octave.
+ * Accidentals are added separately via Accidental modifier.
  */
 function noteToVexKey(note: ParsedNote): string {
-  // Always use just the base pitch letter (no accidental suffix)
   return `${note.pitch.toLowerCase()}/${note.octave}`;
 }
 
@@ -72,16 +76,22 @@ function noteToVexKey(note: ParsedNote): string {
 function noteToVexDuration(el: ParsedNote | ParsedRest): string {
   const dur = el.vexDuration;
   if (el.type === 'rest') {
-    // Rest durations: "qr", "hr", "8r", "wr", "16r", "qdr" etc.
-    const clean = dur.replace('d', '');
-    return clean;
+    return dur.replace('d', '');
   }
-  // Note durations: "q", "h", "8", "w", "16", "qd" etc.
   return dur.replace('d', '');
 }
 
-export default function ScoreRenderer({ elements, width = 800, height = 200 }: ScoreRendererProps) {
+export default function ScoreRenderer({ elements, width = 800, height = 200, beatsPerMeasure: propBeatsPerMeasure = 4 }: ScoreRendererProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // Extract time signature from elements if present
+  const timeSignature = useMemo(() => {
+    const ts = elements.find(el => el.type === 'timesignature');
+    if (ts && ts.type === 'timesignature') {
+      return { numerator: ts.numerator, denominator: ts.denominator };
+    }
+    return { numerator: propBeatsPerMeasure, denominator: 4 };
+  }, [elements, propBeatsPerMeasure]);
 
   const measures = useMemo(() => groupIntoMeasures(elements), [elements]);
 
@@ -92,22 +102,27 @@ export default function ScoreRenderer({ elements, width = 800, height = 200 }: S
     containerRef.current.innerHTML = '';
 
     if (elements.length === 0) {
+      // Show empty staff placeholder
+      try {
+        const renderer = new Renderer(containerRef.current, Renderer.Backends.SVG);
+        renderer.resize(width, height);
+        const context = renderer.getContext();
+        const stave = new Stave(10, 20, width - 20);
+        stave.addClef('treble').addTimeSignature(`${timeSignature.numerator}/${timeSignature.denominator}`);
+        stave.setContext(context).draw();
+      } catch {
+        // Ignore errors on empty staff
+      }
       return;
     }
-
-    // Filter only notes and rests
-    const noteElements = elements.filter(e => e.type === 'note' || e.type === 'rest') as (ParsedNote | ParsedRest)[];
-    if (noteElements.length === 0) return;
 
     try {
       const renderer = new Renderer(containerRef.current, Renderer.Backends.SVG);
 
-      // Calculate needed width based on number of measures
-      const measuresData = measures.length > 0 ? measures : [noteElements];
-      const staveWidth = 250;
+      const staveWidth = 260;
       const measuresPerLine = Math.max(1, Math.floor((width - 40) / staveWidth));
-      const numLines = Math.ceil(measuresData.length / measuresPerLine);
-      const totalHeight = Math.max(height, numLines * 120 + 40);
+      const numLines = Math.ceil(Math.max(1, measures.length) / measuresPerLine);
+      const totalHeight = Math.max(height, numLines * 130 + 40);
 
       renderer.resize(width, totalHeight);
       const context = renderer.getContext();
@@ -117,18 +132,28 @@ export default function ScoreRenderer({ elements, width = 800, height = 200 }: S
       let y = 20;
       let measureIndex = 0;
 
+      // Track notes for slur/tie rendering
+      const allStaveNotes: StaveNote[] = [];
+
       for (let line = 0; line < numLines; line++) {
         x = 10;
-        for (let m = 0; m < measuresPerLine && measureIndex < measuresData.length; m++, measureIndex++) {
-          const measureNotes = measuresData[measureIndex];
+        for (let m = 0; m < measuresPerLine && measureIndex < measures.length; m++, measureIndex++) {
+          const { notes: measureNotes } = measures[measureIndex];
           const isFirst = measureIndex === 0;
-          const currentStaveWidth = isFirst ? staveWidth + 30 : staveWidth;
+          const currentStaveWidth = isFirst ? staveWidth + 40 : staveWidth;
 
           const stave = new Stave(x, y, currentStaveWidth);
           if (isFirst) {
             stave.addClef('treble');
+            // Add time signature on first measure (from parsed or prop)
+            stave.addTimeSignature(`${timeSignature.numerator}/${timeSignature.denominator}`);
           }
           stave.setContext(context).draw();
+
+          if (measureNotes.length === 0) {
+            x += currentStaveWidth;
+            continue;
+          }
 
           // Create VexFlow notes
           const vfNotes = measureNotes.map(el => {
@@ -143,16 +168,15 @@ export default function ScoreRenderer({ elements, width = 800, height = 200 }: S
               }
               return note;
             } else {
-              // Note — build key cleanly from pitch and octave
               const key = noteToVexKey(el);
               const dur = noteToVexDuration(el);
-              
+
               const note = new StaveNote({
                 keys: [key],
                 duration: dur,
               });
 
-              // Add accidental as modifier (NOT in the key string)
+              // Add accidental as modifier
               if (el.accidental === 'sharp') {
                 note.addModifier(new Accidental('#'));
               } else if (el.accidental === 'flat') {
@@ -161,7 +185,6 @@ export default function ScoreRenderer({ elements, width = 800, height = 200 }: S
                 note.addModifier(new Accidental('n'));
               }
 
-              // Add dot
               if (el.dotted) {
                 Dot.buildAndAttach([note]);
               }
@@ -170,39 +193,60 @@ export default function ScoreRenderer({ elements, width = 800, height = 200 }: S
             }
           });
 
-          if (vfNotes.length > 0) {
-            // Calculate total beats
-            const totalBeats = measureNotes.reduce((sum, el) => {
-              return sum + durationToBeats(el.vexDuration);
-            }, 0);
+          allStaveNotes.push(...vfNotes);
 
-            // Use a loose voice (no strict time checking)
-            const voice = new Voice({
-              numBeats: totalBeats,
-              beatValue: 4,
-            }).setMode(Voice.Mode.SOFT);
+          // Calculate total beats for voice
+          const totalBeats = measureNotes.reduce((sum, el) => {
+            return sum + durationToBeats(el.vexDuration);
+          }, 0);
 
-            voice.addTickables(vfNotes);
+          const voice = new Voice({
+            numBeats: Math.max(totalBeats, 0.25),
+            beatValue: 4,
+          }).setMode(Voice.Mode.SOFT);
 
-            new Formatter()
-              .joinVoices([voice])
-              .format([voice], currentStaveWidth - (isFirst ? 80 : 30));
+          voice.addTickables(vfNotes);
 
-            voice.draw(context, stave);
-          }
+          new Formatter()
+            .joinVoices([voice])
+            .format([voice], currentStaveWidth - (isFirst ? 100 : 40));
+
+          voice.draw(context, stave);
 
           x += currentStaveWidth;
         }
-        y += 120;
+        y += 130;
       }
+
+      // Draw slurs/ties between consecutive notes with slur markers
+      // (simplified: draw a curve between first and last note if slur is detected)
+      const slurNotes = elements
+        .filter(e => e.type === 'note')
+        .map((e, i) => ({ el: e as ParsedNote, idx: i }))
+        .filter(({ el }) => el.articulation === 'slur' || el.vexDuration?.includes('tie'));
+
+      if (slurNotes.length >= 2 && allStaveNotes.length >= 2) {
+        try {
+          const firstNote = allStaveNotes[0];
+          const lastNote = allStaveNotes[allStaveNotes.length - 1];
+          if (firstNote && lastNote && firstNote !== lastNote) {
+            const curve = new Curve(firstNote, lastNote, {
+              cps: [{ x: 0, y: 10 }, { x: 0, y: 10 }],
+            });
+            curve.setContext(context).draw();
+          }
+        } catch {
+          // Ignore slur rendering errors
+        }
+      }
+
     } catch (err) {
       console.error('VexFlow rendering error:', err);
-      // Show error in container
       if (containerRef.current) {
-        containerRef.current.innerHTML = `<p style="color: #ef4444; padding: 8px;">Erro na renderização: ${(err as Error).message}</p>`;
+        containerRef.current.innerHTML = `<p style="color: #ef4444; padding: 8px; font-size: 12px;">Erro na renderização: ${(err as Error).message}</p>`;
       }
     }
-  }, [elements, measures, width, height]);
+  }, [elements, measures, width, height, beatsPerMeasure]);
 
   return (
     <div

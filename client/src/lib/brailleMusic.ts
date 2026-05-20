@@ -128,6 +128,7 @@ const BARLINE = '\u2800';          // space = barline in braille music
 const SLUR = '\u2809';             // ⠉
 const NUMBER_SIGN = '\u283C';      // ⠼ (number indicator)
 const WORD_SIGN = '\u281C';        // ⠜ (word sign, precedes dynamics text)
+const FORCED_WHOLE_MARKER = '\u2824'; // ⠤ (marker for forced semibreve, internal use only)
 
 // Number values for time signatures
 const BRAILLE_DIGITS: Record<string, number> = {
@@ -159,6 +160,8 @@ export interface ParsedNote {
   vexDuration: string;
   /** Index in the original input string (for cursor tracking) */
   sourceIndex?: number;
+  /** Force this note to be a whole note (semibreve), ignoring disambiguation */
+  forceWhole?: boolean;
 }
 
 export interface ParsedRest {
@@ -174,7 +177,14 @@ export interface ParsedBarline {
   sourceIndex?: number;
 }
 
-export type ParsedElement = ParsedNote | ParsedRest | ParsedBarline;
+export interface ParsedTimeSignature {
+  type: 'timesignature';
+  numerator: number;
+  denominator: number;
+  sourceIndex?: number;
+}
+
+export type ParsedElement = ParsedNote | ParsedRest | ParsedBarline | ParsedTimeSignature;
 
 export interface ParseResult {
   elements: ParsedElement[];
@@ -382,6 +392,19 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
       continue;
     }
     
+    // Check for forced whole note marker
+    let forceWhole = false;
+    if (ch === FORCED_WHOLE_MARKER) {
+      forceWhole = true;
+      i++;
+      if (i >= input.length || !NOTE_MAP[input[i]]) {
+        // Invalid: marker without following note
+        i++;
+        continue;
+      }
+      ch = input[i];
+    }
+    
     // Check for note
     if (NOTE_MAP[ch]) {
       const noteInfo = NOTE_MAP[ch];
@@ -409,13 +432,20 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
       
       // ── DISAMBIGUATION ──
       // Determine the actual duration based on measure context
-      const actualDuration = disambiguateDuration(
-        noteInfo.duration,
-        noteInfo.altDuration,
-        beatsUsedInMeasure,
-        beatsPerMeasure,
-        dotted,
-      );
+      // If forceWhole is true, use the primary (whole note) duration
+      let actualDuration: Duration;
+      if (forceWhole && noteInfo.duration === 'w') {
+        // Force semibreve, ignore disambiguation
+        actualDuration = 'w';
+      } else {
+        actualDuration = disambiguateDuration(
+          noteInfo.duration,
+          noteInfo.altDuration,
+          beatsUsedInMeasure,
+          beatsPerMeasure,
+          dotted,
+        );
+      }
       
       // Update beats used in measure
       beatsUsedInMeasure += durationToBeats(actualDuration, dotted);
@@ -436,6 +466,7 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
         vexKey,
         vexDuration,
         sourceIndex: i,
+        forceWhole,
       };
       
       elements.push(parsedNote);
@@ -494,6 +525,7 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
     
     // Check for number sign (time signature prefix)
     if (ch === NUMBER_SIGN) {
+      const startIndex = i;
       i++;
       // Parse time signature digits
       let digits = '';
@@ -501,8 +533,21 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
         digits += BRAILLE_DIGITS[input[i]];
         i++;
       }
-      // If we got digits, we could use them for time signature
-      // (For now, just skip — the user sets beatsPerMeasure via options)
+      // If we got 2+ digits, treat as time signature (e.g., "44" = 4/4)
+      if (digits.length >= 2) {
+        const numerator = parseInt(digits[0], 10);
+        const denominator = parseInt(digits[1], 10);
+        if (!isNaN(numerator) && !isNaN(denominator)) {
+          elements.push({
+            type: 'timesignature',
+            numerator,
+            denominator,
+            sourceIndex: startIndex,
+          } as ParsedTimeSignature);
+          // Update beatsPerMeasure based on parsed time signature
+          beatsPerMeasure = numerator;
+        }
+      }
       continue;
     }
     
@@ -523,6 +568,65 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
     
     // Unknown character — skip
     i++;
+  }
+  
+  // ── PASS 2: Retroactive disambiguation ──────────────────────────────────────
+  // Group elements by measure. For each measure, if there are >1 notes/rests
+  // from the w/16 group (or h/32 group), ALL of them should use the shorter
+  // duration (semicolcheia/fusa). This handles the case where the user types
+  // two whole-note cells in the same measure.
+  
+  let measureElements: (ParsedNote | ParsedRest)[] = [];
+  
+  function applyRetroactiveDisambiguation(measureNotes: (ParsedNote | ParsedRest)[]) {
+    // Count notes from each ambiguous group within this measure
+    const wholeGroup = measureNotes.filter(n => {
+      const dur = n.type === 'note' ? n.duration : n.duration;
+      return dur === 'w' || dur === '16';
+    });
+    const halfGroup = measureNotes.filter(n => {
+      const dur = n.type === 'note' ? n.duration : n.duration;
+      return dur === 'h' || dur === '32';
+    });
+    
+    // If >1 note in the w/16 group, all should be 16th
+    if (wholeGroup.length > 1) {
+      for (const n of wholeGroup) {
+        if (n.type === 'note') {
+          n.duration = '16' as Duration;
+          n.vexDuration = n.dotted ? '16d' : '16';
+        } else {
+          n.duration = '16' as Duration;
+          n.vexDuration = n.dotted ? '16dr' : '16r';
+        }
+      }
+    }
+    
+    // If >1 note in the h/32 group, all should be 32nd
+    if (halfGroup.length > 1) {
+      for (const n of halfGroup) {
+        if (n.type === 'note') {
+          n.duration = '32' as Duration;
+          n.vexDuration = n.dotted ? '32d' : '32';
+        } else {
+          n.duration = '32' as Duration;
+          n.vexDuration = n.dotted ? '32dr' : '32r';
+        }
+      }
+    }
+  }
+  
+  for (const el of elements) {
+    if (el.type === 'barline') {
+      applyRetroactiveDisambiguation(measureElements);
+      measureElements = [];
+    } else {
+      measureElements.push(el as ParsedNote | ParsedRest);
+    }
+  }
+  // Apply to last measure
+  if (measureElements.length > 0) {
+    applyRetroactiveDisambiguation(measureElements);
   }
   
   return { elements, errors };
@@ -711,12 +815,53 @@ export function getQuickReference(): QuickRefEntry[] {
     });
   }
   
-  // Other symbols
+  // Semibreve forçada (entrada explícita para evitar ambiguidade)
+  // Usa marcador especial + nota para forçar semibreve
+  const semibreveForced = [
+    { char: FORCED_WHOLE_MARKER + '\u283D', pitch: 'C', dots: '1,4 + 1,3,4,5,6' },
+    { char: FORCED_WHOLE_MARKER + '\u2835', pitch: 'D', dots: '1,4 + 1,3,4,5,6' },
+    { char: FORCED_WHOLE_MARKER + '\u282F', pitch: 'E', dots: '1,4 + 2,3,4,5,6' },
+    { char: FORCED_WHOLE_MARKER + '\u283F', pitch: 'F', dots: '1,4 + 1,2,3,4,5,6' },
+    { char: FORCED_WHOLE_MARKER + '\u2837', pitch: 'G', dots: '1,4 + 1,2,3,4,5' },
+    { char: FORCED_WHOLE_MARKER + '\u282E', pitch: 'A', dots: '1,4 + 2,3,4,5' },
+    { char: FORCED_WHOLE_MARKER + '\u283E', pitch: 'B', dots: '1,4 + 2,3,4,5,6' },
+  ];
+  for (const s of semibreveForced) {
+    entries.push({
+      char: s.char,
+      dots: s.dots,
+      description: `${s.pitch} Semibreve (forçada)`,
+      category: 'note-whole-forced',
+    });
+  }
+  
+  // Fórmulas de compasso
+  // Nota: O segundo número (unidade de tempo) fica na quinta linha braille (linha rebaixada)
+  // Celas corretas: (3,4,5,6) = sinal de número, (1,3,4) = numerador, (2,5,6) = denominador
+  entries.push(
+    { char: NUMBER_SIGN + '\u2819\u282E', dots: '3,4,5,6 + 1,4,5 + 2,5,6', description: 'Fórmula 4/4', category: 'timesig' },
+    { char: NUMBER_SIGN + '\u2809\u282E', dots: '3,4,5,6 + 1,4 + 2,5,6', description: 'Fórmula 3/4', category: 'timesig' },
+    { char: NUMBER_SIGN + '\u2803\u282E', dots: '3,4,5,6 + 1,2 + 2,5,6', description: 'Fórmula 2/4', category: 'timesig' },
+    { char: NUMBER_SIGN + '\u280B\u2813', dots: '3,4,5,6 + 1,2,4 + 1,2,4,5', description: 'Fórmula 6/8', category: 'timesig' },
+    { char: NUMBER_SIGN + '\u2809\u280B', dots: '3,4,5,6 + 1,4 + 1,2,4', description: 'Fórmula 3/8', category: 'timesig' },
+    { char: NUMBER_SIGN + '\u280A\u2813', dots: '3,4,5,6 + 1,2,5 + 1,2,4,5', description: 'Fórmula 9/8', category: 'timesig' },
+  );
+  
+  // Barras de compasso e repetições
+  entries.push(
+    { char: ' ', dots: '-', description: 'Barra de compasso', category: 'barline' },
+    { char: '\u2826\u2821', dots: '1,2,6 + 1,3', description: 'Barra final', category: 'barline' },
+    { char: '\u2826\u282F', dots: '1,2,6 + 2,3,5,6', description: 'Ritornelo (início)', category: 'barline' },
+    { char: '\u2826\u2823', dots: '1,2,6 + 2,3', description: 'Ritornelo (fim)', category: 'barline' },
+  );
+  
+  // Ligaduras e outros símbolos
   entries.push(
     { char: AUGMENTATION_DOT, dots: '3', description: 'Ponto de aumento', category: 'other' },
-    { char: SLUR, dots: unicodeToDots(SLUR).join(','), description: 'Ligadura', category: 'other' },
-    { char: NUMBER_SIGN, dots: unicodeToDots(NUMBER_SIGN).join(','), description: 'Sinal de número (fórmula de compasso)', category: 'other' },
-    { char: ' ', dots: '-', description: 'Barra de compasso (espaço)', category: 'other' },
+    { char: SLUR, dots: unicodeToDots(SLUR).join(','), description: 'Ligadura de expressão', category: 'other' },
+    { char: '\u2809\u2809', dots: '1,4 + 1,4', description: 'Ligadura de duração (tie)', category: 'other' },
+    { char: '\u2823', dots: '2,3', description: 'Sinal de tercina', category: 'other' },
+    { char: NUMBER_SIGN, dots: unicodeToDots(NUMBER_SIGN).join(','), description: 'Sinal de número', category: 'other' },
   );
   
   return entries;

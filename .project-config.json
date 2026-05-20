@@ -1,0 +1,44 @@
+{
+  "build_command": "pnpm run build",
+  "capabilities": [
+    "db",
+    "server",
+    "user"
+  ],
+  "dev_command": "pnpm run dev",
+  "env_vars": {
+    "DATABASE_URL": "mysql://2bnF3bxVbYXoRHY.1e0acdd6cbba:75lf5ZS2SCVbiD32rgaz@gateway02.us-east-1.prod.aws.tidbcloud.com:4000/nVUTu2sZHxzgC6GJeZdNgr?ssl={\"rejectUnauthorized\":true}"
+  },
+  "experiments": [
+    "no_db_push"
+  ],
+  "git_remote": {
+    "repo_url": "s3://vida-prod-gitrepo/webdev-git/310519663185498023/nVUTu2sZHxzgC6GJeZdNgr",
+    "access_key_id": "ASIAZV3A2ECZBTKNHMYS",
+    "secret_access_key": "ePZIlbbSmhrI1d3kV/M4I6KsED3s2MXAuiS7ispD",
+    "session_token": "IQoJb3JpZ2luX2VjEPT//////////wEaCXVzLWVhc3QtMSJHMEUCIH1Cwrd/B406t1hASfSJxgjQjL1924GnY61rQBjlmj70AiEA6w8cgcoPSNoXZnBnH5CbQvSetRspskSL9LT4htqxz5Mq/wMIvf//////////ARAEGgw2NjUzODYwOTg4NjYiDNEbSkZtdjKTMHCfUSrTA6YqjWwNdY6HcQrGDP9P1i96UBflnqZgpzWywyNmlzKa8fN0jFNEbdfGEOHJc7pNZzlCqOUNPLPJjhrYorvnOmBLQpYaynIe72995krAMR9FMs5o6tVukmIa4DpjsAiwnw9uLtHZS7lKlND2jFb0srhN98e8n3A21q22mv3UZs2e63VZi/DYG4wXJNtTJ+z4XxbPLkO65YB8IwsesGU3Dlg+lLa4beO0vrOYInit4suUXdYBpHYaAyWDb++shSEwMYFRJZJPYFSHM6SMISWgFujiIjUlOchy+NQa3D/+TdCf2yyy3gCCnzRJZZb7mQy9rOmX2q77M1wvIomzRx4TsQDkQR8TFk3Ucow3aHqxa3oZ57EsRYBnoLS+7ufmldVQ7qF0jL9ffN6qWnyWuGgH8Q9UKgGogPX+Fg8kaOmBjQ0z1xV7pAbOYoc89mS6Mg5S23jAs8/YsxmlxfVThfiB/fCOSe988TsMrpKL7OEcJXhvifHYuK79ubJDsATY3zYkve92TtZ4JX7pr3rtUkFh33Xzt1IdUYyW+H6WtCt3YnUT+NqI4w4EqzwEauRc4JQOmwZxKWLFDnH/Iuj9zyFtg/xwDow7zNK9O9XUEWolHR0CuN30MJbuq9AGOp0BMc6bJayxvXX4ynfpnYjRObBxicXTfhFRUbtgbMi7OSVLp2WF9MQ/FupBpI66IFTzHqZQtuLfz5F8WB7ZemTQ6/BE4gQMOHD1t9LzA8ZzyBlWQIhfhOYCW3/ElbHADgh6kLuB5oQQ5CiOBvMoNke6++kGKA9rpB1J7YcCjXKet5tRbT8WVFy2oxPPszROUCBVhqwfnCLkjxxxrmlp6A==",
+    "expiration": "2026-05-18T23:25:10.000Z"
+  },
+  "name": "five_steps_braille",
+  "path": "/home/ubuntu/five_steps_braille",
+  "port": 3000,
+  "secrets": {
+    "BUILT_IN_FORGE_API_KEY": "M394mw7x3hRBdv26MVRai6",
+    "BUILT_IN_FORGE_API_URL": "https://forge.manus.ai",
+    "JWT_SECRET": "bMyiYdhF7Y8c2vXjBVsYb8",
+    "OAUTH_SERVER_URL": "https://api.manus.im",
+    "OWNER_NAME": "Rafa Vanazzi",
+    "OWNER_OPEN_ID": "VCf9NBtdKKyLxudgEzTSNU",
+    "RESEND_API_KEY": "re_LT4rRBsk_97tv6zRivghMAncbNrZhYWth",
+    "VITE_ANALYTICS_ENDPOINT": "https://manus-analytics.com",
+    "VITE_ANALYTICS_WEBSITE_ID": "8121d4a7-1bb4-4781-b055-8c82e601eb96",
+    "VITE_APP_ID": "nVUTu2sZHxzgC6GJeZdNgr",
+    "VITE_APP_LOGO": "https://files.manuscdn.com/user_upload_by_module/web_dev_logo/310519663185498023/CJibJsXdjXInVbGJ.png",
+    "VITE_APP_TITLE": "Five Steps - Musicografia Braille Global",
+    "VITE_FRONTEND_FORGE_API_KEY": "hjVqk6BWXbxGoZtiwQyeJ4",
+    "VITE_FRONTEND_FORGE_API_URL": "https://forge.manus.ai",
+    "VITE_OAUTH_PORTAL_URL": "https://manus.im"
+  },
+  "template_id": "web-db-user",
+  "test_command": "pnpm test"
+}

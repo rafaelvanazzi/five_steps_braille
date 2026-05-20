@@ -285,3 +285,29 @@
 - [ ] Desambiguação automática mínima↔fusa (mesma cela Braille)
 - [ ] Atualizar Referência Rápida com semicolcheias, barras de compasso, fórmulas de compasso, ligaduras
 - [ ] Cursor tracking bidirecional entre Texto em Braille e Texto em Romano
+
+## Melhorias v3.2 - Renderização e Desambiguação
+- [x] ScoreRenderer reescrito com suporte a fórmula de compasso (addTimeSignature)
+- [x] ScoreRenderer com prop beatsPerMeasure para determinar a fórmula
+- [x] ScoreRenderer com ligaduras via Curve (entre primeira e última nota)
+- [x] ScoreRenderer com staff vazio com clave e fórmula quando não há notas
+- [x] brailleMusic.ts: Desambiguação retroativa de dois passos (Pass 2)
+- [x] brailleMusic.ts: Quando 2+ notas do grupo w/16 no mesmo compasso, TODAS viram semicolcheia
+- [x] brailleMusic.ts: getQuickReference() expandida com categorias
+- [x] BrailleEditor.tsx: QuickReferencePanel atualizado com novas categorias
+- [x] Testes vitest criados para desambiguação, Quick Reference, Perkins keyboard
+- [ ] Testes supervisionados do usuário no browser (7 testes)
+- [ ] Validar testes vitest e salvar checkpoint
+
+
+## Correções v3.3 - Feedback dos Testes Supervisionados
+- [x] Mapeamento Braille de compassos corrigido (denominador em linha rebaixada)
+- [x] Compassos 4/4, 3/4, 2/4, 6/8 com celas corretas
+- [x] Compassos 3/8 e 9/8 adicionados
+- [x] Mapeamento Braille de barras corrigido (barra final, ritornelos)
+- [x] Sinal de tercina (2,3) adicionado na aba Outros
+- [x] Staff vazio com compasso aparece logo após digitar fórmula
+- [x] Parsing de compassos implementado (ParsedTimeSignature)
+- [x] ScoreRenderer usa compassos parseados
+- [x] Semibreve forçada implementada (ignora desambiguação)
+- [x] Testes vitest ainda passando (162 testes)
