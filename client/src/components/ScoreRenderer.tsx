@@ -38,30 +38,28 @@ function groupIntoMeasures(elements: ParsedElement[]): MeasureInfo[] {
         continue; // Don't create a measure yet
       }
       
-      // For other barlines, create a measure
-      if (current.length > 0 || nextBegBarline) {
-        let barType: 'single' | 'end' | 'repeat-begin' | 'repeat-end' | 'repeat-both' = 'single';
-        if ((el as any).barlineType === 'end') {
-          barType = 'end';
-        } else if ((el as any).barlineType === 'repeat-end') {
-          barType = 'repeat-end';
-        }
-        
-        measures.push({ 
-          notes: current, 
-          barlineType: barType, 
-          begBarlineType: nextBegBarline 
-        });
-        current = [];
-        nextBegBarline = undefined;
+      // For other barlines, always create a measure (even if empty)
+      let barType: 'single' | 'end' | 'repeat-begin' | 'repeat-end' | 'repeat-both' = 'single';
+      if ((el as any).barlineType === 'end') {
+        barType = 'end';
+      } else if ((el as any).barlineType === 'repeat-end') {
+        barType = 'repeat-end';
       }
+      
+      measures.push({ 
+        notes: current, 
+        barlineType: barType, 
+        begBarlineType: nextBegBarline 
+      });
+      current = [];
+      nextBegBarline = undefined;
     } else if (el.type === 'note' || el.type === 'rest') {
       current.push(el);
     }
     // Skip timesignature and notetie elements
   }
   
-  if (current.length > 0) {
+  if (current.length > 0 || nextBegBarline) {
     measures.push({ 
       notes: current, 
       barlineType: 'single', 
