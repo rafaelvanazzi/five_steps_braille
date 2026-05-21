@@ -164,14 +164,18 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
 
     let x = 10;
     let y = 40;
-    const staveWidth = 150;
-    let currentStaveWidth = staveWidth;
+    const minStaveWidth = 100;  // Minimum width for a measure
+    const noteWidth = 30;        // Approximate width per note
 
     // Render each measure
     for (let i = 0; i < measures.length; i++) {
       const measure = measures[i];
       const measureNotes = measure.notes.filter(n => n.type === 'note' || n.type === 'rest');
       const isFirst = i === 0;
+
+      // Calculate stave width dynamically based on number of notes
+      // Each note takes approximately 30px, with a minimum of 100px
+      const currentStaveWidth = Math.max(minStaveWidth, measureNotes.length * noteWidth);
 
       // Check if we need to wrap to next line
       if (x + currentStaveWidth > width - 20) {
