@@ -164,8 +164,8 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
 
     let x = 10;
     let y = 40;
-    const minStaveWidth = 100;  // Minimum width for a measure
-    const noteWidth = 30;        // Approximate width per note
+    const minStaveWidth = 150;  // Minimum width for a measure
+    const noteWidth = 60;        // Approximate width per note (increased for better spacing)
 
     // Render each measure
     for (let i = 0; i < measures.length; i++) {
@@ -259,7 +259,11 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
       // Format and draw (only if there are notes)
       if (vexNotes.length > 0) {
         const formatter = new Formatter();
-        formatter.joinVoices([voice]).format([voice], currentStaveWidth - 20);
+        // Calculate minimum width needed for all notes
+        const minWidth = formatter.preCalculateMinTotalWidth([voice]);
+        // Use the maximum of calculated width and current stave width
+        const formatWidth = Math.max(minWidth + 20, currentStaveWidth - 20);
+        formatter.joinVoices([voice]).format([voice], formatWidth);
         voice.draw(context, stave);
       }
 
