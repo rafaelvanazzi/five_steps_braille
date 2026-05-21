@@ -654,24 +654,21 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
   
   // ── PASS 2: Retroactive disambiguation ──────────────────────────────────────
   // Group elements by measure. For each measure, if there are >1 notes/rests
-  // from the w/16 group (or h/32 group), ALL of them should use the shorter
-  // duration (semicolcheia/fusa). This handles the case where the user types
-  // two whole-note cells in the same measure.
+  // from the w/16 group, ALL of them should use the shorter duration (semicolcheia).
+  // NOTE: h/32 group (mínima/fusa) is NOT disambiguated — mínima always stays mínima.
   
   let measureElements: (ParsedNote | ParsedRest)[] = [];
   
   function applyRetroactiveDisambiguation(measureNotes: (ParsedNote | ParsedRest)[]) {
-    // Count notes from each ambiguous group within this measure
+    // Only disambiguate Group 4: whole (w) vs 16th (semicolcheia)
     const wholeGroup = measureNotes.filter(n => {
       const dur = n.type === 'note' ? n.duration : n.duration;
+      // Only include notes that are NOT force-whole (semibreve forçada)
+      if (n.type === 'note' && n.forceWhole) return false;
       return dur === 'w' || dur === '16';
     });
-    const halfGroup = measureNotes.filter(n => {
-      const dur = n.type === 'note' ? n.duration : n.duration;
-      return dur === 'h' || dur === '32';
-    });
     
-    // If >1 note in the w/16 group, all should be 16th
+    // If >1 note in the w/16 group, all should be 16th (semicolcheia)
     if (wholeGroup.length > 1) {
       for (const n of wholeGroup) {
         if (n.type === 'note') {
@@ -683,19 +680,8 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
         }
       }
     }
-    
-    // If >1 note in the h/32 group, all should be 32nd
-    if (halfGroup.length > 1) {
-      for (const n of halfGroup) {
-        if (n.type === 'note') {
-          n.duration = '32' as Duration;
-          n.vexDuration = n.dotted ? '32d' : '32';
-        } else {
-          n.duration = '32' as Duration;
-          n.vexDuration = n.dotted ? '32dr' : '32r';
-        }
-      }
-    }
+    // NOTE: h/32 group is NOT disambiguated — mínima (h) always stays mínima.
+    // Fusa (32nd) is only inserted via FORCED_32ND_MARKER from Quick Reference.
   }
   
   for (const el of elements) {
