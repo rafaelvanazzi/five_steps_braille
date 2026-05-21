@@ -834,17 +834,21 @@ export function describeBrailleChar(char: string): string {
 // ─── QUICK REFERENCE DATA ──────────────────────────────────────────────────────
 
 export interface QuickRefEntry {
+  /** The character(s) to insert into the editor when clicked */
   char: string;
+  /** Dot positions for display (e.g. '1,3,4,5') */
   dots: string;
   description: string;
   category: string;
+  /** Optional: the character to display visually (defaults to char if not set) */
+  displayChar?: string;
 }
 
 export function getQuickReference(): QuickRefEntry[] {
   const entries: QuickRefEntry[] = [];
 
-  // ─── Semibreve (normal, com desambiguação automática) ───
-  // Celas do grupo 4 (dots 3+6): semibreve por padrão, vira semicolcheia se não couber
+  // ─── Semibreve + Semicolcheia (mesma aba, 14 cards) ───
+  // Semibreve: desambiguação automática (vira semicolcheia se não couber)
   for (const [char, info] of Object.entries(NOTE_MAP)) {
     if (info.duration !== 'w') continue;
     const dots = unicodeToDots(char);
@@ -852,31 +856,32 @@ export function getQuickReference(): QuickRefEntry[] {
       char,
       dots: dots.join(','),
       description: `${info.pitch} Semibreve`,
-      category: 'note-whole',
+      category: 'note-whole-half',
     });
   }
-
-  // ─── Semicolcheia forçada (mesma cela, mas forçada para 16th) ───
-  const semicolcheiaForced = [
-    { char: FORCED_32ND_MARKER + '\u283D', pitch: 'C', dots: '2,3,5 + 1,3,4,5,6' },
-    { char: FORCED_32ND_MARKER + '\u2835', pitch: 'D', dots: '2,3,5 + 1,3,5,6' },
-    { char: FORCED_32ND_MARKER + '\u282F', pitch: 'E', dots: '2,3,5 + 1,2,3,4,6' },
-    { char: FORCED_32ND_MARKER + '\u283F', pitch: 'F', dots: '2,3,5 + 1,2,3,4,5,6' },
-    { char: FORCED_32ND_MARKER + '\u2837', pitch: 'G', dots: '2,3,5 + 1,2,3,5,6' },
-    { char: FORCED_32ND_MARKER + '\u282E', pitch: 'A', dots: '2,3,5 + 2,3,4,6' },
-    { char: FORCED_32ND_MARKER + '\u283E', pitch: 'B', dots: '2,3,5 + 2,3,4,5,6' },
+  // Semicolcheia forçada: mesma cela da semibreve, mas força 16th
+  const semicolcheiaForced: Array<{ noteChar: string; pitch: string }> = [
+    { noteChar: '\u283D', pitch: 'C' },
+    { noteChar: '\u2835', pitch: 'D' },
+    { noteChar: '\u282F', pitch: 'E' },
+    { noteChar: '\u283F', pitch: 'F' },
+    { noteChar: '\u2837', pitch: 'G' },
+    { noteChar: '\u282E', pitch: 'A' },
+    { noteChar: '\u283E', pitch: 'B' },
   ];
   for (const s of semicolcheiaForced) {
+    const noteDots = unicodeToDots(s.noteChar);
     entries.push({
-      char: s.char,
-      dots: s.dots,
+      char: FORCED_32ND_MARKER + s.noteChar,
+      displayChar: s.noteChar,  // mostra apenas a cela da nota, sem o marcador
+      dots: noteDots.join(','),
       description: `${s.pitch} Semicolcheia`,
-      category: 'note-16th-forced',
+      category: 'note-whole-half',
     });
   }
 
-  // ─── Mínima (sempre renderiza como mínima) ───
-  // Celas do grupo 3 (dot 3): mínima por padrão, nunca vira fusa automaticamente
+  // ─── Mínima + Fusa (mesma aba, 14 cards) ───
+  // Mínima: sempre renderiza como mínima, nunca vira fusa automaticamente
   for (const [char, info] of Object.entries(NOTE_MAP)) {
     if (info.duration !== 'h') continue;
     const dots = unicodeToDots(char);
@@ -884,26 +889,27 @@ export function getQuickReference(): QuickRefEntry[] {
       char,
       dots: dots.join(','),
       description: `${info.pitch} Mínima`,
-      category: 'note-half',
+      category: 'note-half-32nd',
     });
   }
-
-  // ─── Fusa forçada (mesma cela da mínima, mas forçada para 32nd) ───
-  const fusaForced = [
-    { char: FORCED_32ND_MARKER + '\u281D', pitch: 'C', dots: '2,3,5 + 1,3,4,5' },
-    { char: FORCED_32ND_MARKER + '\u2815', pitch: 'D', dots: '2,3,5 + 1,3,5' },
-    { char: FORCED_32ND_MARKER + '\u280F', pitch: 'E', dots: '2,3,5 + 1,2,3,4' },
-    { char: FORCED_32ND_MARKER + '\u281F', pitch: 'F', dots: '2,3,5 + 1,2,3,4,5' },
-    { char: FORCED_32ND_MARKER + '\u2817', pitch: 'G', dots: '2,3,5 + 1,2,3,5' },
-    { char: FORCED_32ND_MARKER + '\u280E', pitch: 'A', dots: '2,3,5 + 2,3,4' },
-    { char: FORCED_32ND_MARKER + '\u281E', pitch: 'B', dots: '2,3,5 + 2,3,4,5' },
+  // Fusa forçada: mesma cela da mínima, mas força 32nd
+  const fusaForced: Array<{ noteChar: string; pitch: string }> = [
+    { noteChar: '\u281D', pitch: 'C' },
+    { noteChar: '\u2815', pitch: 'D' },
+    { noteChar: '\u280F', pitch: 'E' },
+    { noteChar: '\u281F', pitch: 'F' },
+    { noteChar: '\u2817', pitch: 'G' },
+    { noteChar: '\u280E', pitch: 'A' },
+    { noteChar: '\u281E', pitch: 'B' },
   ];
   for (const f of fusaForced) {
+    const noteDots = unicodeToDots(f.noteChar);
     entries.push({
-      char: f.char,
-      dots: f.dots,
+      char: FORCED_32ND_MARKER + f.noteChar,
+      displayChar: f.noteChar,  // mostra apenas a cela da nota, sem o marcador
+      dots: noteDots.join(','),
       description: `${f.pitch} Fusa`,
-      category: 'note-32nd-forced',
+      category: 'note-half-32nd',
     });
   }
 

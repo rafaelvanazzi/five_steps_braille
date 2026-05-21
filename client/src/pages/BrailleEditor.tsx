@@ -150,11 +150,9 @@ function QuickReferencePanel({ onInsert }: { onInsert: (char: string) => void })
   const [filter, setFilter] = useState<string>("all");
 
   const categories = [
-    { key: "all", label: "Todos" },
-    { key: "note-whole", label: "Semibreves" },
-    { key: "note-16th-forced", label: "Semicolcheias" },
-    { key: "note-half", label: "Mínimas" },
-    { key: "note-32nd-forced", label: "Fusas" },
+    
+    { key: "note-whole-half", label: "Semibreves / Semicolcheias" },
+    { key: "note-half-32nd", label: "Mínimas / Fusas" },
     { key: "note-quarter", label: "Semínimas" },
     { key: "note-eighth", label: "Colcheias" },
     { key: "rest", label: "Pausas" },
@@ -192,7 +190,7 @@ function QuickReferencePanel({ onInsert }: { onInsert: (char: string) => void })
             className="flex flex-col items-center p-1.5 rounded-md border border-border hover:bg-accent transition-colors"
             title={`${entry.description} (Pontos ${entry.dots})`}
           >
-            <span className="text-xl leading-none">{entry.char}</span>
+            <span className="text-xl leading-none">{entry.displayChar ?? entry.char}</span>
             <span className="text-[8px] text-muted-foreground mt-0.5 truncate w-full text-center">
               {entry.description}
             </span>
