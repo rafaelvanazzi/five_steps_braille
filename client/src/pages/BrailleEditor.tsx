@@ -151,11 +151,12 @@ function QuickReferencePanel({ onInsert }: { onInsert: (char: string) => void })
 
   const categories = [
     { key: "all", label: "Todos" },
+    { key: "note-whole", label: "Semibreves" },
+    { key: "note-16th-forced", label: "Semicolcheias" },
+    { key: "note-half", label: "Mínimas" },
+    { key: "note-32nd-forced", label: "Fusas" },
     { key: "note-quarter", label: "Semínimas" },
     { key: "note-eighth", label: "Colcheias" },
-    { key: "note-half", label: "Mínimas/Fusas" },
-    { key: "note-whole-16th", label: "Semibreves/Semicolcheias" },
-    { key: "note-whole-forced", label: "Semibreve (forçada)" },
     { key: "rest", label: "Pausas" },
     { key: "octave", label: "Oitavas" },
     { key: "accidental", label: "Alterações" },

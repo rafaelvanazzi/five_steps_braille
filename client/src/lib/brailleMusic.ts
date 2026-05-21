@@ -130,6 +130,7 @@ const NOTE_TIE = '\u2809';         // ⠉ (1,4) = ligadura de nota
 const NUMBER_SIGN = '\u283C';      // ⠼ (number indicator)
 const WORD_SIGN = '\u281C';        // ⠜ (word sign, precedes dynamics text)
 const FORCED_WHOLE_MARKER = '\u2824'; // ⠤ (marker for forced semibreve, internal use only)
+const FORCED_32ND_MARKER = '\u2816'; // ⠖ (marker for forced fusa/32nd, internal use only)
 
 // Number values for time signatures
 const BRAILLE_DIGITS: Record<string, number> = {
@@ -180,6 +181,8 @@ export interface ParsedNote {
   sourceIndex?: number;
   /** Force this note to be a whole note (semibreve), ignoring disambiguation */
   forceWhole?: boolean;
+  /** Force this note to be a 32nd note (fusa), ignoring disambiguation */
+  force32nd?: boolean;
 }
 
 export interface ParsedRest {
@@ -290,7 +293,7 @@ function inferOctave(prevPitch: NoteName, prevOctave: number, newPitch: NoteName
  * Rules:
  * - Group 4 (whole/16th): If a whole note (4 beats) fits in the remaining
  *   beats of the measure, use whole. Otherwise, use 16th.
- * - Group 3 (half/32nd): If a half note (2 beats) fits, use half. Otherwise, use 32nd.
+ * - Group 3 (half/32nd): ALWAYS use half (mínima). Fusa only via FORCED_32ND_MARKER.
  * - Group 1 (8th/128th): Always use 8th (128th is extremely rare).
  * - Group 2 (quarter/64th): Always use quarter (64th is extremely rare).
  * 
@@ -311,7 +314,8 @@ function disambiguateDuration(
   // Group 4: whole (w=4 beats) vs 16th (16=0.25 beats)
   // Group 3: half (h=2 beats) vs 32nd (32=0.125 beats)
   
-  if (primaryDur === 'w' || primaryDur === 'h') {
+  // Only disambiguate for Group 4: whole (w=4 beats) vs 16th (16=0.25 beats)
+  if (primaryDur === 'w') {
     const primaryBeats = durationToBeats(primaryDur, dotted);
     const remaining = beatsPerMeasure - beatsUsedInMeasure;
     
@@ -319,11 +323,12 @@ function disambiguateDuration(
     if (primaryBeats <= remaining + 0.001) {
       return primaryDur;
     }
-    // Otherwise, use the alternative (shorter) duration
+    // Otherwise, use the alternative (shorter) duration (16th)
     return altDur;
   }
   
-  // For 8th/128th and quarter/64th, always use the primary (common) duration
+  // For half/32nd, 8th/128th and quarter/64th, always use the primary (common) duration
+  // Mínima (h) always stays as mínima — fusa only via explicit FORCED_32ND_MARKER
   return primaryDur;
 }
 
@@ -438,8 +443,18 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
     
     // Check for forced whole note marker
     let forceWhole = false;
+    let force32nd = false;
     if (ch === FORCED_WHOLE_MARKER) {
       forceWhole = true;
+      i++;
+      if (i >= input.length || !NOTE_MAP[input[i]]) {
+        // Invalid: marker without following note
+        i++;
+        continue;
+      }
+      ch = input[i];
+    } else if (ch === FORCED_32ND_MARKER) {
+      force32nd = true;
       i++;
       if (i >= input.length || !NOTE_MAP[input[i]]) {
         // Invalid: marker without following note
@@ -476,11 +491,16 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
       
       // ── DISAMBIGUATION ──
       // Determine the actual duration based on measure context
-      // If forceWhole is true, use the primary (whole note) duration
       let actualDuration: Duration;
       if (forceWhole && noteInfo.duration === 'w') {
         // Force semibreve, ignore disambiguation
         actualDuration = 'w';
+      } else if (force32nd && noteInfo.duration === 'h') {
+        // Force fusa (32nd), ignoring the default mínima
+        actualDuration = '32';
+      } else if (force32nd && noteInfo.duration === 'w') {
+        // Force semicolcheia (16th), ignoring the default semibreve
+        actualDuration = '16';
       } else {
         actualDuration = disambiguateDuration(
           noteInfo.duration,
@@ -822,27 +842,99 @@ export interface QuickRefEntry {
 
 export function getQuickReference(): QuickRefEntry[] {
   const entries: QuickRefEntry[] = [];
-  
-  // Notes — organized by duration group
+
+  // ─── Semibreve (normal, com desambiguação automática) ───
+  // Celas do grupo 4 (dots 3+6): semibreve por padrão, vira semicolcheia se não couber
   for (const [char, info] of Object.entries(NOTE_MAP)) {
-    const durNames: Record<Duration, string> = {
-      'w': 'Semibreve/Semicolcheia', 'h': 'Mínima/Fusa', 'q': 'Semínima', '8': 'Colcheia',
-      '16': 'Semicolcheia', '32': 'Fusa', '64': 'Semifusa', '128': 'Quartifusa',
-    };
-    const cat = info.duration === '8' ? 'note-eighth' : info.duration === 'q' ? 'note-quarter' : info.duration === 'h' ? 'note-half' : 'note-whole-16th';
+    if (info.duration !== 'w') continue;
     const dots = unicodeToDots(char);
     entries.push({
       char,
       dots: dots.join(','),
-      description: `${info.pitch} ${durNames[info.duration]}`,
-      category: cat,
+      description: `${info.pitch} Semibreve`,
+      category: 'note-whole',
     });
   }
-  
+
+  // ─── Semicolcheia forçada (mesma cela, mas forçada para 16th) ───
+  const semicolcheiaForced = [
+    { char: FORCED_32ND_MARKER + '\u283D', pitch: 'C', dots: '2,3,5 + 1,3,4,5,6' },
+    { char: FORCED_32ND_MARKER + '\u2835', pitch: 'D', dots: '2,3,5 + 1,3,5,6' },
+    { char: FORCED_32ND_MARKER + '\u282F', pitch: 'E', dots: '2,3,5 + 1,2,3,4,6' },
+    { char: FORCED_32ND_MARKER + '\u283F', pitch: 'F', dots: '2,3,5 + 1,2,3,4,5,6' },
+    { char: FORCED_32ND_MARKER + '\u2837', pitch: 'G', dots: '2,3,5 + 1,2,3,5,6' },
+    { char: FORCED_32ND_MARKER + '\u282E', pitch: 'A', dots: '2,3,5 + 2,3,4,6' },
+    { char: FORCED_32ND_MARKER + '\u283E', pitch: 'B', dots: '2,3,5 + 2,3,4,5,6' },
+  ];
+  for (const s of semicolcheiaForced) {
+    entries.push({
+      char: s.char,
+      dots: s.dots,
+      description: `${s.pitch} Semicolcheia`,
+      category: 'note-16th-forced',
+    });
+  }
+
+  // ─── Mínima (sempre renderiza como mínima) ───
+  // Celas do grupo 3 (dot 3): mínima por padrão, nunca vira fusa automaticamente
+  for (const [char, info] of Object.entries(NOTE_MAP)) {
+    if (info.duration !== 'h') continue;
+    const dots = unicodeToDots(char);
+    entries.push({
+      char,
+      dots: dots.join(','),
+      description: `${info.pitch} Mínima`,
+      category: 'note-half',
+    });
+  }
+
+  // ─── Fusa forçada (mesma cela da mínima, mas forçada para 32nd) ───
+  const fusaForced = [
+    { char: FORCED_32ND_MARKER + '\u281D', pitch: 'C', dots: '2,3,5 + 1,3,4,5' },
+    { char: FORCED_32ND_MARKER + '\u2815', pitch: 'D', dots: '2,3,5 + 1,3,5' },
+    { char: FORCED_32ND_MARKER + '\u280F', pitch: 'E', dots: '2,3,5 + 1,2,3,4' },
+    { char: FORCED_32ND_MARKER + '\u281F', pitch: 'F', dots: '2,3,5 + 1,2,3,4,5' },
+    { char: FORCED_32ND_MARKER + '\u2817', pitch: 'G', dots: '2,3,5 + 1,2,3,5' },
+    { char: FORCED_32ND_MARKER + '\u280E', pitch: 'A', dots: '2,3,5 + 2,3,4' },
+    { char: FORCED_32ND_MARKER + '\u281E', pitch: 'B', dots: '2,3,5 + 2,3,4,5' },
+  ];
+  for (const f of fusaForced) {
+    entries.push({
+      char: f.char,
+      dots: f.dots,
+      description: `${f.pitch} Fusa`,
+      category: 'note-32nd-forced',
+    });
+  }
+
+  // ─── Semínima ───
+  for (const [char, info] of Object.entries(NOTE_MAP)) {
+    if (info.duration !== 'q') continue;
+    const dots = unicodeToDots(char);
+    entries.push({
+      char,
+      dots: dots.join(','),
+      description: `${info.pitch} Semínima`,
+      category: 'note-quarter',
+    });
+  }
+
+  // ─── Colcheia ───
+  for (const [char, info] of Object.entries(NOTE_MAP)) {
+    if (info.duration !== '8') continue;
+    const dots = unicodeToDots(char);
+    entries.push({
+      char,
+      dots: dots.join(','),
+      description: `${info.pitch} Colcheia`,
+      category: 'note-eighth',
+    });
+  }
+
   // Rests
   for (const [char, info] of Object.entries(REST_MAP)) {
     const durNames: Record<Duration, string> = {
-      'w': 'Semibreve/Semicolcheia', 'h': 'Mínima/Fusa', 'q': 'Semínima', '8': 'Colcheia',
+      'w': 'Semibreve', 'h': 'Mínima', 'q': 'Semínima', '8': 'Colcheia',
       '16': 'Semicolcheia', '32': 'Fusa', '64': 'Semifusa', '128': 'Quartifusa',
     };
     const dots = unicodeToDots(char);
@@ -853,7 +945,6 @@ export function getQuickReference(): QuickRefEntry[] {
       category: 'rest',
     });
   }
-  
   // Octaves
   for (const [char, oct] of Object.entries(OCTAVE_MAP)) {
     const dots = unicodeToDots(char);
@@ -864,7 +955,6 @@ export function getQuickReference(): QuickRefEntry[] {
       category: 'octave',
     });
   }
-  
   // Accidentals
   for (const [char, acc] of Object.entries(ACCIDENTAL_MAP)) {
     const dots = unicodeToDots(char);
@@ -874,26 +964,6 @@ export function getQuickReference(): QuickRefEntry[] {
       dots: dots.join(','),
       description: names[acc],
       category: 'accidental',
-    });
-  }
-  
-  // Semibreve forçada (entrada explícita para evitar ambiguidade)
-  // Usa marcador especial + nota para forçar semibreve
-  const semibreveForced = [
-    { char: FORCED_WHOLE_MARKER + '\u283D', pitch: 'C', dots: '1,4 + 1,3,4,5,6' },
-    { char: FORCED_WHOLE_MARKER + '\u2835', pitch: 'D', dots: '1,4 + 1,3,4,5,6' },
-    { char: FORCED_WHOLE_MARKER + '\u282F', pitch: 'E', dots: '1,4 + 2,3,4,5,6' },
-    { char: FORCED_WHOLE_MARKER + '\u283F', pitch: 'F', dots: '1,4 + 1,2,3,4,5,6' },
-    { char: FORCED_WHOLE_MARKER + '\u2837', pitch: 'G', dots: '1,4 + 1,2,3,4,5' },
-    { char: FORCED_WHOLE_MARKER + '\u282E', pitch: 'A', dots: '1,4 + 2,3,4,5' },
-    { char: FORCED_WHOLE_MARKER + '\u283E', pitch: 'B', dots: '1,4 + 2,3,4,5,6' },
-  ];
-  for (const s of semibreveForced) {
-    entries.push({
-      char: s.char,
-      dots: s.dots,
-      description: `${s.pitch} Semibreve (forçada)`,
-      category: 'note-whole-forced',
     });
   }
   
