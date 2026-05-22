@@ -158,14 +158,41 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
     containerRef.current.innerHTML = '';
     measureHitAreas.current = [];
 
+    const minStaveWidth = 200;  // Minimum width for a measure
+    const noteWidth = 100;       // Approximate width per note (significantly increased for better spacing)
+
+    // First pass: calculate total width needed
+    let totalWidth = 10; // Start with left padding
+    let totalHeight = height;
+    let currentLineX = 10;
+    let currentLineY = 40;
+
+    for (let i = 0; i < measures.length; i++) {
+      const measure = measures[i];
+      const measureNotes = measure.notes.filter(n => n.type === 'note' || n.type === 'rest');
+      const currentStaveWidth = Math.max(minStaveWidth, measureNotes.length * noteWidth);
+
+      // Check if we need to wrap to next line
+      if (currentLineX + currentStaveWidth > width - 20) {
+        currentLineX = 10;
+        currentLineY += 100;
+        totalHeight = currentLineY + 90;
+      }
+
+      currentLineX += currentStaveWidth;
+      totalWidth = Math.max(totalWidth, currentLineX + 10); // Add right padding
+    }
+
+    // Use the calculated dimensions, but ensure minimum width for viewport
+    const canvasWidth = Math.max(width, totalWidth);
+    const canvasHeight = Math.max(height, totalHeight);
+
     const renderer = new Renderer(containerRef.current, Renderer.Backends.SVG);
-    renderer.resize(width, height);
+    renderer.resize(canvasWidth, canvasHeight);
     const context = renderer.getContext();
 
     let x = 10;
     let y = 40;
-    const minStaveWidth = 200;  // Minimum width for a measure
-    const noteWidth = 100;       // Approximate width per note (significantly increased for better spacing)
 
     // Render each measure
     for (let i = 0; i < measures.length; i++) {
@@ -174,7 +201,6 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
       const isFirst = i === 0;
 
       // Calculate stave width dynamically based on number of notes
-      // Each note takes approximately 30px, with a minimum of 100px
       const currentStaveWidth = Math.max(minStaveWidth, measureNotes.length * noteWidth);
 
       // Check if we need to wrap to next line
@@ -317,5 +343,16 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
     }
   }, [onMeasureClick, measures]);
 
-  return <div ref={containerRef} style={{ cursor: onMeasureClick ? 'pointer' : 'default' }} />;
+  return (
+    <div
+      ref={containerRef}
+      style={{
+        cursor: onMeasureClick ? 'pointer' : 'default',
+        overflowX: 'auto',
+        overflowY: 'hidden',
+        width: '100%',
+        maxHeight: height + 50,
+      }}
+    />
+  );
 }
