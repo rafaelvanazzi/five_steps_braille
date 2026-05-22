@@ -161,31 +161,22 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
     const minStaveWidth = 200;  // Minimum width for a measure
     const noteWidth = 100;       // Approximate width per note (significantly increased for better spacing)
 
-    // First pass: calculate total width needed
+    // First pass: calculate total width needed (all measures in one line)
     let totalWidth = 10; // Start with left padding
-    let totalHeight = height;
     let currentLineX = 10;
-    let currentLineY = 40;
 
     for (let i = 0; i < measures.length; i++) {
       const measure = measures[i];
       const measureNotes = measure.notes.filter(n => n.type === 'note' || n.type === 'rest');
       const currentStaveWidth = Math.max(minStaveWidth, measureNotes.length * noteWidth);
 
-      // Check if we need to wrap to next line
-      if (currentLineX + currentStaveWidth > width - 20) {
-        currentLineX = 10;
-        currentLineY += 100;
-        totalHeight = currentLineY + 90;
-      }
-
       currentLineX += currentStaveWidth;
       totalWidth = Math.max(totalWidth, currentLineX + 10); // Add right padding
     }
 
-    // Use the calculated dimensions, but ensure minimum width for viewport
+    // Use the calculated dimensions - all measures in one line, scroll if needed
     const canvasWidth = Math.max(width, totalWidth);
-    const canvasHeight = Math.max(height, totalHeight);
+    const canvasHeight = height;
 
     const renderer = new Renderer(containerRef.current, Renderer.Backends.SVG);
     renderer.resize(canvasWidth, canvasHeight);
@@ -203,12 +194,7 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
       // Calculate stave width dynamically based on number of notes
       const currentStaveWidth = Math.max(minStaveWidth, measureNotes.length * noteWidth);
 
-      // Check if we need to wrap to next line
-      if (x + currentStaveWidth > width - 20) {
-        x = 10;
-        y += 100;
-      }
-
+      // All measures in one line - no wrapping
       // Create stave
       const stave = new Stave(x, y, currentStaveWidth);
       if (isFirst) {
