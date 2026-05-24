@@ -71,7 +71,7 @@ import {
 } from "./db";
 import { storagePut, storageGet } from "./storage";
 import { notifyOwner } from "./_core/notification";
-import { sendContactEmail } from "./email";
+import { sendContactEmail, sendBulkEmail } from "./email";
 import { editorRouter } from "./editor-router";
 
 // ─── Permission helpers ───────────────────────────────────────────────────────
@@ -646,6 +646,23 @@ export const appRouter = router({
 
   // ─── Admin Dashboard ──────────────────────────────────────────────────────
   admin: router({
+    sendBulkEmail: adminProcedure
+      .input(
+        z.object({
+          recipients: z.array(z.string().email()).min(1),
+          subject: z.string().min(1),
+          htmlContent: z.string().min(1),
+          replyTo: z.string().email().optional(),
+        })
+      )
+      .mutation(async ({ input }) => {
+        return await sendBulkEmail({
+          recipients: input.recipients,
+          subject: input.subject,
+          htmlContent: input.htmlContent,
+          replyTo: input.replyTo,
+        });
+      }),
     stats: adminProcedure.query(async () => {
       const [totalUsers, totalMaterials, totalDownloads, totalMessages] = await Promise.all([
         getTotalUsers(),

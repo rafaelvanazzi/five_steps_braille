@@ -98,6 +98,51 @@ export async function sendContactEmail(payload: ContactEmailPayload): Promise<vo
   }
 }
 
+export interface BulkEmailPayload {
+  recipients: string[];
+  subject: string;
+  htmlContent: string;
+  replyTo?: string;
+}
+
+export async function sendBulkEmail(payload: BulkEmailPayload): Promise<{ success: number; failed: number; errors: string[] }> {
+  const client = getResend();
+  if (!client) {
+    console.warn("[email] RESEND_API_KEY not set — skipping bulk email send");
+    return { success: 0, failed: payload.recipients.length, errors: ["RESEND_API_KEY not configured"] };
+  }
+
+  const results = { success: 0, failed: 0, errors: [] as string[] };
+
+  // Send emails one by one to track individual failures
+  for (const recipient of payload.recipients) {
+    try {
+      const { error } = await client.emails.send({
+        from: FROM_ADDRESS,
+        to: recipient,
+        replyTo: payload.replyTo ? [payload.replyTo] : [REPLY_TO],
+        subject: payload.subject,
+        html: payload.htmlContent,
+      });
+
+      if (error) {
+        results.failed++;
+        results.errors.push(`${recipient}: ${error.message}`);
+        console.error(`[email] Failed to send to ${recipient}:`, error);
+      } else {
+        results.success++;
+      }
+    } catch (err) {
+      results.failed++;
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      results.errors.push(`${recipient}: ${errorMsg}`);
+      console.error(`[email] Exception sending to ${recipient}:`, err);
+    }
+  }
+
+  return results;
+}
+
 function escapeHtml(str: string): string {
   return str
     .replace(/&/g, "&amp;")

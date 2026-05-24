@@ -23,7 +23,7 @@ import BrailleProjectsAdmin from "@/components/BrailleProjectsAdmin";
 
 const gradeStages: Record<number, number> = { 1: 2, 2: 5, 3: 5, 4: 3, 5: 8 };
 
-type AdminTab = "dashboard" | "users" | "materials" | "downloads" | "comments" | "ratings" | "messages" | "upload" | "events" | "registrations" | "forum" | "braille-projects";
+type AdminTab = "dashboard" | "users" | "materials" | "downloads" | "comments" | "ratings" | "messages" | "upload" | "events" | "registrations" | "forum" | "braille-projects" | "bulk-email";
 
 // ─── AdminForumTab ────────────────────────────────────────────────────────────
 function AdminForumTab() {
@@ -532,6 +532,7 @@ export default function Admin() {
     { key: "registrations", label: "Inscrições", icon: UserCheck },
     { key: "forum", label: "Fórum", icon: MessagesSquare },
     { key: "braille-projects", label: "Musicografia Braille", icon: FileMusic },
+    { key: "bulk-email", label: "Envio de Emails", icon: Mail },
     { key: "upload", label: "Enviar", icon: Upload },
   ];
 
@@ -1045,6 +1046,23 @@ export default function Admin() {
               <BrailleProjectsAdmin />
             </CardContent>
           </Card>
+        )}
+
+        {/* === Bulk Email === */}
+        {activeTab === "bulk-email" && (
+          <Link href="/admin/emails">
+            <Card className="w-full border-border shadow-sm cursor-pointer hover:shadow-md transition-shadow">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-lg">
+                  <Mail className="w-5 h-5 text-primary" aria-hidden="true" />
+                  Envio de Emails em Massa
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-muted-foreground">Clique para acessar a pagina de envio de emails</p>
+              </CardContent>
+            </Card>
+          </Link>
         )}
 
         {/* ═══ Upload ═══ */}
