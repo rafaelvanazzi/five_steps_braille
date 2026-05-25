@@ -125,13 +125,29 @@ function noteToVexKey(note: ParsedNote): string {
 /**
  * Extract clean VexFlow duration string.
  * Removes 'd' suffix (dotted is handled by Dot.buildAndAttach).
+ * Also removes 'r' suffix for rests (added separately in StaveNote creation).
  */
 function noteToVexDuration(el: ParsedNote | ParsedRest): string {
-  const dur = el.vexDuration;
-  if (el.type === 'rest') {
-    return dur.replace('d', '');
+  let dur = el.vexDuration;
+  // Remove 'd' (dotted handled by Dot.buildAndAttach)
+  dur = dur.replace('d', '');
+  // Remove 'r' suffix for rests (we add it separately when creating StaveNote)
+  dur = dur.replace('r', '');
+  return dur;
+}
+
+/**
+ * Convert accidental type from parser format to VexFlow format.
+ * Parser uses: 'sharp', 'flat', 'natural'
+ * VexFlow expects: '#', 'b', 'n'
+ */
+function accidentalToVex(acc: string): string {
+  switch (acc) {
+    case 'sharp': return '#';
+    case 'flat': return 'b';
+    case 'natural': return 'n';
+    default: return acc;
   }
-  return dur.replace('d', '');
 }
 
 export default function ScoreRenderer({ elements, width = 1000, height = 300, beatsPerMeasure = 4, onMeasureClick }: ScoreRendererProps) {
@@ -159,7 +175,21 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
     measureHitAreas.current = [];
 
     const minStaveWidth = 200;  // Minimum width for a measure
-    const noteWidth = 100;       // Approximate width per note (significantly increased for better spacing)
+    const baseNoteWidth = 50;    // Base width per note
+
+    // Calculate width for a note based on its duration (longer notes get more space)
+    function getNoteWidth(el: ParsedNote | ParsedRest): number {
+      const dur = el.type === 'note' ? el.duration : el.duration;
+      switch (dur) {
+        case 'w': return baseNoteWidth * 3;   // 150px for whole notes
+        case 'h': return baseNoteWidth * 2;   // 100px for half notes
+        case 'q': return baseNoteWidth * 1.5; // 75px for quarter notes
+        case '8': return baseNoteWidth;       // 50px for eighth notes
+        case '16': return baseNoteWidth * 0.8; // 40px for 16th notes
+        case '32': return baseNoteWidth * 0.7; // 35px for 32nd notes
+        default: return baseNoteWidth;
+      }
+    }
 
     // First pass: calculate total width needed (all measures in one line)
     let totalWidth = 10; // Start with left padding
@@ -168,9 +198,11 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
     for (let i = 0; i < measures.length; i++) {
       const measure = measures[i];
       const measureNotes = measure.notes.filter(n => n.type === 'note' || n.type === 'rest');
-      const currentStaveWidth = Math.max(minStaveWidth, measureNotes.length * noteWidth);
+      const extraW = i === 0 ? 80 : 0; // Extra space for clef + time signature
+      const notesWidth = measureNotes.reduce((sum, n) => sum + getNoteWidth(n), 0);
+      const staveW = Math.max(minStaveWidth, notesWidth + extraW + 40); // +40 for padding
 
-      currentLineX += currentStaveWidth;
+      currentLineX += staveW;
       totalWidth = Math.max(totalWidth, currentLineX + 10); // Add right padding
     }
 
@@ -191,8 +223,11 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
       const measureNotes = measure.notes.filter(n => n.type === 'note' || n.type === 'rest');
       const isFirst = i === 0;
 
-      // Calculate stave width dynamically based on number of notes
-      const currentStaveWidth = Math.max(minStaveWidth, measureNotes.length * noteWidth);
+      // Calculate stave width dynamically based on note durations
+      // Add extra space for first measure (clef + time signature take ~80px)
+      const extraWidth = isFirst ? 80 : 0;
+      const notesWidth = measureNotes.reduce((sum, n) => sum + getNoteWidth(n), 0);
+      const currentStaveWidth = Math.max(minStaveWidth, notesWidth + extraWidth + 40); // +40 for padding
 
       // All measures in one line - no wrapping
       // Create stave
@@ -245,9 +280,9 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
             clef: 'treble',
           });
 
-          // Add accidental if present
+          // Add accidental if present (convert from parser format to VexFlow format)
           if (el.accidental) {
-            vexNote.addModifier(new Accidental(el.accidental), 0);
+            vexNote.addModifier(new Accidental(accidentalToVex(el.accidental)), 0);
           }
 
           // Add dot if present
@@ -257,11 +292,18 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
 
           vexNotes.push(vexNote);
         } else if (el.type === 'rest') {
+          const restDur = noteToVexDuration(el) + 'r';
           const vexRest = new StaveNote({
             keys: ['b/4'],
-            duration: noteToVexDuration(el) + 'r',
+            duration: restDur,
             clef: 'treble',
           });
+
+          // Add dot to rest if present
+          if (el.dotted) {
+            Dot.buildAndAttach([vexRest], { all: true });
+          }
+
           vexNotes.push(vexRest);
         }
       }

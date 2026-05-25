@@ -311,3 +311,22 @@
 - [x] ScoreRenderer usa compassos parseados
 - [x] Semibreve forçada implementada (ignora desambiguação)
 - [x] Testes vitest ainda passando (162 testes)
+
+## Correções v3.4 - Renderização VexFlow
+- [x] Corrigir accidentals: converter 'sharp'/'flat'/'natural' para '#'/'b'/'n' (formato VexFlow)
+- [x] Largura dinâmica do compasso baseada na duração das notas (semibreves mais largas, colcheias menores)
+- [x] Largura extra no primeiro compasso para acomodar clave + fórmula de compasso (+80px)
+- [x] Corrigir pausas pontuadas (dotted rests) com Dot.buildAndAttach
+- [x] Corrigir duração de pausas: remover 'r' duplicado no vexDuration
+- [x] Scroll horizontal automático quando compassos ultrapassam a largura disponível
+- [x] Todos os compassos em uma única linha (sem wrap/quebra de linha)
+- [x] 171 testes vitest passando
+
+## Envio de Emails em Massa
+- [x] Função sendBulkEmail no backend (Resend API)
+- [x] Procedure tRPC admin.sendBulkEmail
+- [x] Página AdminBulkEmail.tsx com editor HTML e preview
+- [x] Sistema de campanhas de email agendadas (tabelas no banco)
+- [x] Fila em memória para envio com intervalo configurável (sem Heartbeat)
+- [x] Botão de edição de campanhas antes do envio
+- [x] 171 testes vitest passando
