@@ -590,7 +590,7 @@ export default function BrailleEditor() {
             Escreva em Braille musical e veja a partitura aparecer em tempo real.
             Faça login para começar.
           </p>
-          <a href={getLoginUrl("/editor-musicografia-braille")}>
+          <a href={getLoginUrl()}>
             <Button size="lg">Entrar</Button>
           </a>
         </div>
