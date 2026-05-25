@@ -59,7 +59,10 @@ export function registerOAuthRoutes(app: Express) {
       res.redirect(302, "/");
     } catch (error) {
       console.error("[OAuth] Callback failed", error);
-      res.status(500).json({ error: "OAuth callback failed" });
+      console.error("[OAuth] Code:", code);
+      console.error("[OAuth] State (decoded):", state ? atob(state) : "invalid");
+      console.error("[OAuth] Error details:", error instanceof Error ? error.message : String(error));
+      res.status(500).json({ error: "OAuth callback failed", details: error instanceof Error ? error.message : undefined });
     }
   });
 }
