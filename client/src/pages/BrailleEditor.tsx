@@ -214,9 +214,13 @@ function QuickReferencePanel({ onInsert }: { onInsert: (char: string) => void })
 
 // ─── MAIN EDITOR PAGE ──────────────────────────────────────────────────────────
 
-export default function BrailleEditor() {
+interface BrailleEditorProps {
+  allowAnonymous?: boolean;
+}
+
+export default function BrailleEditor({ allowAnonymous = false }: BrailleEditorProps) {
   // ALL hooks before any conditional return
-  const { user, loading: authLoading } = useAuth({ redirectOnUnauthenticated: true });
+  const { user, loading: authLoading } = useAuth({ redirectOnUnauthenticated: !allowAnonymous });
   const projectsQuery = trpc.editor.list.useQuery(undefined, { enabled: !!user });
   const createMutation = trpc.editor.create.useMutation();
   const updateMutation = trpc.editor.update.useMutation();
@@ -671,7 +675,8 @@ export default function BrailleEditor() {
 
   // ─── PROJECT LIST VIEW ─────────────────────────────────────────────────────
 
-  if (showProjects) {
+  // In anonymous mode, skip project list and go straight to editor
+  if (showProjects && !allowAnonymous) {
     return (
       <SiteLayout>
         <div className="container max-w-4xl py-10 space-y-6">
@@ -823,30 +828,34 @@ export default function BrailleEditor() {
         {/* Header */}
         <div className="flex items-center justify-between flex-wrap gap-2">
           <div className="flex items-center gap-3">
-            <button
-              onClick={() => setShowProjects(true)}
-              className="text-muted-foreground hover:text-foreground transition-colors"
-              aria-label="Voltar aos projetos"
-            >
-              <ArrowLeft className="w-5 h-5" />
-            </button>
+            {!allowAnonymous && (
+              <button
+                onClick={() => setShowProjects(true)}
+                className="text-muted-foreground hover:text-foreground transition-colors"
+                aria-label="Voltar aos projetos"
+              >
+                <ArrowLeft className="w-5 h-5" />
+              </button>
+            )}
             <Input
               value={projectTitle}
               onChange={(e) => setProjectTitle(e.target.value)}
               className="text-lg font-semibold border-none bg-transparent px-0 h-auto focus-visible:ring-0 max-w-xs"
               aria-label="Nome do projeto"
             />
-            <span
-              className={`text-xs px-2 py-0.5 rounded-full whitespace-nowrap inline-block min-w-[90px] text-center ${
-                saveStatus === "saved"
-                  ? "bg-green-100 text-green-700"
-                  : saveStatus === "saving"
-                  ? "bg-yellow-100 text-yellow-700"
-                  : "bg-red-100 text-red-700"
-              }`}
-            >
-              {saveStatus === "saved" ? "✓ Salvo" : saveStatus === "saving" ? "Salvando..." : "Não salvo"}
-            </span>
+            {!allowAnonymous && (
+              <span
+                className={`text-xs px-2 py-0.5 rounded-full whitespace-nowrap inline-block min-w-[90px] text-center ${
+                  saveStatus === "saved"
+                    ? "bg-green-100 text-green-700"
+                    : saveStatus === "saving"
+                    ? "bg-yellow-100 text-yellow-700"
+                    : "bg-red-100 text-red-700"
+                }`}
+              >
+                {saveStatus === "saved" ? "✓ Salvo" : saveStatus === "saving" ? "Salvando..." : "Não salvo"}
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-1.5 flex-wrap">
             {/* Time signature selector */}
@@ -863,6 +872,11 @@ export default function BrailleEditor() {
                 <option value={6}>6/8</option>
               </select>
             </div>
+            {allowAnonymous && (
+              <div className="text-xs text-amber-600 bg-amber-50 px-2 py-1 rounded">
+                Modo Demo (sem salvar)
+              </div>
+            )}
             <Button
               variant="outline"
               size="sm"

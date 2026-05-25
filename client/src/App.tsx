@@ -22,6 +22,11 @@ import ForumTopic from "./pages/ForumTopic";
 import BrailleEditor from "./pages/BrailleEditor";
 import AdminBulkEmail from "./pages/AdminBulkEmail";
 
+// Wrapper component for anonymous editor
+function BrailleEditorDemo(_props: any) {
+  return <BrailleEditor allowAnonymous={true} />;
+}
+
 function Router() {
   useRouteA11y();
   return (
@@ -39,6 +44,8 @@ function Router() {
       <Route path="/forum" component={Forum} />
       <Route path="/contato" component={Contact} />
       <Route path="/editor-musicografia-braille" component={BrailleEditor} />
+      {/* @ts-ignore */}
+      <Route path="/editor-demo" component={BrailleEditorDemo} />
       <Route path="/admin" component={Admin} />
       <Route path="/admin/emails" component={AdminBulkEmail} />
       <Route path="/404" component={NotFound} />
