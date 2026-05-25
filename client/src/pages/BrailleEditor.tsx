@@ -875,11 +875,15 @@ export default function BrailleEditor() {
                   height={180}
                   onNoteClick={(sourceIndex) => {
                     // Move cursor in Braille textarea to the clicked note's position
+                    // Only move cursor (not select) to keep parseBrailleLine rendering the full line
                     const textarea = brailleTextareaRef.current;
                     if (!textarea) return;
                     textarea.focus();
-                    // Select the character at sourceIndex to highlight the Braille cell
-                    textarea.setSelectionRange(sourceIndex, sourceIndex + 1);
+                    // Set cursor position without selection (sourceIndex, sourceIndex) — not (sourceIndex, sourceIndex+1)
+                    // This ensures parseBrailleLine is used (full line rendering) instead of parseBrailleSelection
+                    textarea.setSelectionRange(sourceIndex, sourceIndex);
+                    setCursorPos(sourceIndex);
+                    setSelectionRange(null);
                     // Scroll textarea to make cursor visible
                     const lineHeight = 20;
                     const text = textarea.value;
