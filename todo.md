@@ -330,3 +330,11 @@
 - [x] Fila em memória para envio com intervalo configurável (sem Heartbeat)
 - [x] Botão de edição de campanhas antes do envio
 - [x] 171 testes vitest passando
+
+## Interação Partitura → Braille (v3.5)
+- [x] Hit areas por nota individual no ScoreRenderer (não mais por compasso)
+- [x] Clicar numa nota na partitura VexFlow move o cursor para a cela Braille correspondente
+- [x] Cela Braille selecionada (highlighted) ao clicar na nota
+- [x] Detecção de nota mais próxima ao clique (tolerância de 60px)
+- [x] Fallback para posição aproximada quando getBoundingBox não está disponível
+- [x] 171 testes vitest passando

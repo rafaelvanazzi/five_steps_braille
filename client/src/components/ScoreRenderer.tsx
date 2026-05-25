@@ -2,6 +2,7 @@
  * ScoreRenderer - Renders a visual music score from parsed Braille music elements.
  * Uses VexFlow to draw notes on a staff in real-time.
  * Supports: notes, rests, barlines, time signatures, accidentals, dots, slurs, ties.
+ * Click on a note to jump to the corresponding Braille cell in the editor.
  */
 import { useEffect, useRef, useMemo } from 'react';
 import { Renderer, Stave, StaveNote, Voice, Formatter, Accidental, Dot, Curve } from 'vexflow';
@@ -12,8 +13,19 @@ interface ScoreRendererProps {
   width?: number;
   height?: number;
   beatsPerMeasure?: number;
-  /** Called when user clicks a measure; receives the sourceIndex of the first note in that measure */
+  /** Called when user clicks a note; receives the sourceIndex of that note in the Braille text */
+  onNoteClick?: (sourceIndex: number) => void;
+  /** @deprecated Use onNoteClick instead */
   onMeasureClick?: (sourceIndex: number) => void;
+}
+
+// Hit area for individual notes (for click detection)
+interface NoteHitArea {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  sourceIndex: number;
 }
 
 // Measure info including barline type
@@ -150,10 +162,13 @@ function accidentalToVex(acc: string): string {
   }
 }
 
-export default function ScoreRenderer({ elements, width = 1000, height = 300, beatsPerMeasure = 4, onMeasureClick }: ScoreRendererProps) {
+export default function ScoreRenderer({ elements, width = 1000, height = 300, beatsPerMeasure = 4, onNoteClick, onMeasureClick }: ScoreRendererProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  // Store measure hit areas for click detection: { x, y, w, h, sourceIndex }
-  const measureHitAreas = useRef<Array<{ x: number; y: number; w: number; h: number; sourceIndex: number }>>([]);
+  // Store note hit areas for click detection (per individual note)
+  const noteHitAreas = useRef<NoteHitArea[]>([]);
+
+  // Unified click handler: prefer onNoteClick, fallback to onMeasureClick
+  const handleNoteClick = onNoteClick || onMeasureClick;
 
   // Extract time signature from parsed elements
   const timeSignature = useMemo(() => {
@@ -172,7 +187,7 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
 
     // Clear container and hit areas
     containerRef.current.innerHTML = '';
-    measureHitAreas.current = [];
+    noteHitAreas.current = [];
 
     const minStaveWidth = 200;  // Minimum width for a measure
     const baseNoteWidth = 50;    // Base width per note
@@ -257,11 +272,6 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
 
       stave.setContext(context).draw();
 
-      // Record hit area for this measure (for click detection)
-      if (measure.sourceIndex !== undefined) {
-        measureHitAreas.current.push({ x, y: y - 10, w: currentStaveWidth, h: 90, sourceIndex: measure.sourceIndex });
-      }
-
       if (measureNotes.length === 0) {
         x += currentStaveWidth;
         continue;
@@ -271,6 +281,8 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
       const voice = new Voice({ numBeats: timeSignature.numerator, beatValue: timeSignature.denominator });
       voice.setMode(2); // Voice.Mode.SOFT = 2 — allows partial or overflowing measures
       const vexNotes: StaveNote[] = [];
+      // Track which parsed element corresponds to each VexFlow note
+      const noteSourceIndices: (number | undefined)[] = [];
 
       for (const el of measureNotes) {
         if (el.type === 'note') {
@@ -291,6 +303,7 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
           }
 
           vexNotes.push(vexNote);
+          noteSourceIndices.push(el.sourceIndex);
         } else if (el.type === 'rest') {
           const restDur = noteToVexDuration(el) + 'r';
           const vexRest = new StaveNote({
@@ -305,6 +318,7 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
           }
 
           vexNotes.push(vexRest);
+          noteSourceIndices.push(el.sourceIndex);
         }
       }
 
@@ -316,6 +330,41 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
         // Use the calculated stave width directly
         formatter.joinVoices([voice]).format([voice], currentStaveWidth - 20);
         voice.draw(context, stave);
+
+        // After drawing, extract bounding boxes for each note to create click hit areas
+        for (let j = 0; j < vexNotes.length; j++) {
+          const vexNote = vexNotes[j];
+          const srcIdx = noteSourceIndices[j];
+          if (srcIdx === undefined) continue;
+
+          try {
+            const bb = vexNote.getBoundingBox();
+            if (bb) {
+              noteHitAreas.current.push({
+                x: bb.getX(),
+                y: bb.getY(),
+                w: bb.getW(),
+                h: bb.getH(),
+                sourceIndex: srcIdx,
+              });
+            }
+          } catch {
+            // If getBoundingBox fails, use approximate position based on note's x
+            // This is a fallback for notes that don't have a bounding box
+            try {
+              const noteX = vexNote.getAbsoluteX();
+              noteHitAreas.current.push({
+                x: noteX - 10,
+                y: y - 10,
+                w: 30,
+                h: 90,
+                sourceIndex: srcIdx,
+              });
+            } catch {
+              // Skip this note if we can't get its position
+            }
+          }
+        }
       }
 
       // Draw ties/ligaduras between consecutive notes
@@ -343,39 +392,52 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
     }
   }, [elements, measures, width, height, timeSignature]);
 
-  // Add click listener on the SVG canvas to detect measure clicks
+  // Add click listener on the SVG canvas to detect note clicks
   useEffect(() => {
-    if (!containerRef.current || !onMeasureClick) return;
+    if (!containerRef.current || !handleNoteClick) return;
 
-    const handleClick = (e: MouseEvent) => {
+    const onClick = (e: MouseEvent) => {
       const svg = containerRef.current?.querySelector('svg');
       if (!svg) return;
       const rect = svg.getBoundingClientRect();
       const clickX = e.clientX - rect.left;
       const clickY = e.clientY - rect.top;
 
-      // Find which measure was clicked
-      for (const area of measureHitAreas.current) {
-        if (clickX >= area.x && clickX <= area.x + area.w &&
-            clickY >= area.y && clickY <= area.y + area.h) {
-          onMeasureClick(area.sourceIndex);
-          break;
+      // Find the closest note to the click position
+      let closestNote: NoteHitArea | null = null;
+      let closestDist = Infinity;
+
+      for (const area of noteHitAreas.current) {
+        // Check if click is within the hit area (with some vertical tolerance)
+        const centerX = area.x + area.w / 2;
+        const centerY = area.y + area.h / 2;
+        const dist = Math.sqrt((clickX - centerX) ** 2 + (clickY - centerY) ** 2);
+
+        // Only consider notes within reasonable distance (within the stave area)
+        if (dist < closestDist && clickY >= area.y - 20 && clickY <= area.y + area.h + 20) {
+          closestDist = dist;
+          closestNote = area;
         }
+      }
+
+      // If we found a note within 60px, trigger the callback
+      if (closestNote && closestDist < 60) {
+        handleNoteClick(closestNote.sourceIndex);
       }
     };
 
     const svg = containerRef.current.querySelector('svg');
     if (svg) {
-      svg.addEventListener('click', handleClick as EventListener);
-      return () => svg.removeEventListener('click', handleClick as EventListener);
+      svg.addEventListener('click', onClick as EventListener);
+      return () => svg.removeEventListener('click', onClick as EventListener);
     }
-  }, [onMeasureClick, measures]);
+  }, [handleNoteClick, measures]);
 
   return (
     <div
       ref={containerRef}
       style={{
-        cursor: onMeasureClick ? 'pointer' : 'default',
+        cursor: handleNoteClick ? 'pointer' : 'default',
         overflowX: 'auto',
         overflowY: 'hidden',
         width: '100%',

@@ -873,12 +873,13 @@ export default function BrailleEditor() {
                   elements={parsedElements}
                   width={scoreWidth}
                   height={180}
-                  onMeasureClick={(sourceIndex) => {
-                    // Move cursor in Braille textarea to the start of the clicked measure
+                  onNoteClick={(sourceIndex) => {
+                    // Move cursor in Braille textarea to the clicked note's position
                     const textarea = brailleTextareaRef.current;
                     if (!textarea) return;
                     textarea.focus();
-                    textarea.setSelectionRange(sourceIndex, sourceIndex);
+                    // Select the character at sourceIndex to highlight the Braille cell
+                    textarea.setSelectionRange(sourceIndex, sourceIndex + 1);
                     // Scroll textarea to make cursor visible
                     const lineHeight = 20;
                     const text = textarea.value;
