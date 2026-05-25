@@ -21,6 +21,17 @@ import { asciiToUnicodeBraille, detectBrailleFormat } from "@/lib/brailleAscii";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
 import {
   ArrowLeft,
@@ -231,6 +242,14 @@ export default function BrailleEditor() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const brailleTextareaRef = useRef<HTMLTextAreaElement>(null);
   const romanTextareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Export BRF modal state
+  const [showExportDialog, setShowExportDialog] = useState(false);
+  const [exportPageFormat, setExportPageFormat] = useState("a4-brasil");
+  const [exportCellsPerLine, setExportCellsPerLine] = useState<string>("");
+  const [exportLinesPerPage, setExportLinesPerPage] = useState<string>("");
+  const [exportIncludeHeader, setExportIncludeHeader] = useState(false);
+  const [exportPageNumbering, setExportPageNumbering] = useState(true);
   
   // Cursor position tracking for line-based rendering
   const [cursorPos, setCursorPos] = useState(0);
@@ -466,10 +485,24 @@ export default function BrailleEditor() {
   );
 
   const handleExport = useCallback(
-    async (format: "brf" | "txt") => {
+    async (format: "brf" | "txt", options?: {
+      pageFormat?: string;
+      cellsPerLine?: number;
+      linesPerPage?: number;
+      includeHeader?: boolean;
+      pageNumbering?: boolean;
+    }) => {
       if (!currentProjectId) return;
       try {
-        const result = await exportMutation.mutateAsync({ id: currentProjectId, format });
+        const result = await exportMutation.mutateAsync({
+          id: currentProjectId,
+          format,
+          pageFormat: options?.pageFormat ?? "a4-brasil",
+          cellsPerLine: options?.cellsPerLine,
+          linesPerPage: options?.linesPerPage,
+          includeHeader: options?.includeHeader ?? false,
+          pageNumbering: options?.pageNumbering ?? true,
+        });
         const blob = new Blob([result.content], { type: "text/plain;charset=utf-8" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
@@ -486,6 +519,17 @@ export default function BrailleEditor() {
     },
     [currentProjectId, exportMutation]
   );
+
+  const handleExportBrfWithOptions = useCallback(async () => {
+    await handleExport("brf", {
+      pageFormat: exportPageFormat,
+      cellsPerLine: exportCellsPerLine ? parseInt(exportCellsPerLine, 10) : undefined,
+      linesPerPage: exportLinesPerPage ? parseInt(exportLinesPerPage, 10) : undefined,
+      includeHeader: exportIncludeHeader,
+      pageNumbering: exportPageNumbering,
+    });
+    setShowExportDialog(false);
+  }, [handleExport, exportPageFormat, exportCellsPerLine, exportLinesPerPage, exportIncludeHeader, exportPageNumbering]);
 
   // ─── IMPORT HANDLER ────────────────────────────────────────────────────────
 
@@ -841,9 +885,9 @@ export default function BrailleEditor() {
             </Button>
             <div className="flex border rounded-lg overflow-hidden">
               <button
-                onClick={() => handleExport("brf")}
+                onClick={() => setShowExportDialog(true)}
                 className="px-2 py-1 text-xs flex items-center gap-1 bg-card text-card-foreground hover:bg-accent transition-colors"
-                title="Exportar como BRF"
+                title="Exportar como BRF (escolher formato de página)"
               >
                 <Download className="w-3 h-3" />
                 .brf
@@ -855,7 +899,6 @@ export default function BrailleEditor() {
               >
                 .txt
               </button>
-
             </div>
           </div>
         </div>
@@ -1013,6 +1056,106 @@ export default function BrailleEditor() {
           </Card>
         </div>
       </div>
+
+      {/* Export BRF Dialog */}
+      <Dialog open={showExportDialog} onOpenChange={setShowExportDialog}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Exportar como BRF</DialogTitle>
+            <DialogDescription>
+              Escolha o formato de página para o arquivo BRF. O padrão ASCII-2 é compatível com impressoras Index, Juliet e ViewPlus.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-5 py-2">
+            {/* Page format selection */}
+            <div className="space-y-3">
+              <Label className="text-sm font-semibold">Formato de Página</Label>
+              <RadioGroup value={exportPageFormat} onValueChange={setExportPageFormat} className="grid grid-cols-1 gap-2">
+                {[
+                  { value: "a4-brasil", label: "A4 Brasil", dims: "40 células × 25 linhas", note: "Padrão MEC" },
+                  { value: "a4-internacional", label: "A4 Internacional", dims: "32 células × 27 linhas", note: "ISO 17049" },
+                  { value: "bana", label: "BANA Padrão", dims: "40 células × 25 linhas", note: "EUA" },
+                  { value: "letter", label: "Letter (EUA)", dims: "34 células × 25 linhas", note: "Papel Letter" },
+                  { value: "continuo", label: "Formulário Contínuo", dims: "42 células × 25 linhas", note: "Papel contínuo" },
+                  { value: "braille-facil", label: "Braille Fácil", dims: "40 células × 25 linhas", note: "Software Braille Fácil" },
+                ].map((fmt) => (
+                  <div key={fmt.value} className="flex items-center gap-3 rounded-md border px-3 py-2 cursor-pointer hover:bg-accent/50" onClick={() => setExportPageFormat(fmt.value)}>
+                    <RadioGroupItem value={fmt.value} id={`fmt-${fmt.value}`} />
+                    <Label htmlFor={`fmt-${fmt.value}`} className="flex-1 cursor-pointer">
+                      <span className="font-medium">{fmt.label}</span>
+                      <span className="text-muted-foreground ml-2 text-xs">{fmt.dims}</span>
+                    </Label>
+                    <span className="text-xs text-muted-foreground">{fmt.note}</span>
+                  </div>
+                ))}
+              </RadioGroup>
+            </div>
+
+            {/* Custom dimensions */}
+            <div className="space-y-2">
+              <Label className="text-sm font-semibold">Personalizar Dimensões (opcional)</Label>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label htmlFor="cells-per-line" className="text-xs text-muted-foreground">Células por linha</Label>
+                  <Input
+                    id="cells-per-line"
+                    type="number"
+                    min={20}
+                    max={60}
+                    placeholder="Ex: 40"
+                    value={exportCellsPerLine}
+                    onChange={(e) => setExportCellsPerLine(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="lines-per-page" className="text-xs text-muted-foreground">Linhas por página</Label>
+                  <Input
+                    id="lines-per-page"
+                    type="number"
+                    min={10}
+                    max={40}
+                    placeholder="Ex: 25"
+                    value={exportLinesPerPage}
+                    onChange={(e) => setExportLinesPerPage(e.target.value)}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Additional options */}
+            <div className="space-y-2">
+              <Label className="text-sm font-semibold">Opções Adicionais</Label>
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="include-header"
+                    checked={exportIncludeHeader}
+                    onCheckedChange={(v) => setExportIncludeHeader(v === true)}
+                  />
+                  <Label htmlFor="include-header" className="text-sm cursor-pointer">Incluir cabeçalho (título e autor)</Label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="page-numbering"
+                    checked={exportPageNumbering}
+                    onCheckedChange={(v) => setExportPageNumbering(v === true)}
+                  />
+                  <Label htmlFor="page-numbering" className="text-sm cursor-pointer">Numeração de páginas</Label>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowExportDialog(false)}>Cancelar</Button>
+            <Button onClick={handleExportBrfWithOptions} disabled={exportMutation.isPending}>
+              <Download className="w-4 h-4 mr-2" />
+              {exportMutation.isPending ? "Exportando..." : "Exportar BRF"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </SiteLayout>
   );
 }
