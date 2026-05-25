@@ -60,11 +60,18 @@ function PerkinsKeyboard({
   onNewline: () => void;
 }) {
   const [pressed, setPressed] = useState<Set<string>>(new Set());
+  const [lastInsertedChar, setLastInsertedChar] = useState<string>('');
   const pressedRef = useRef<Set<string>>(new Set());
   const activeDotsRef = useRef<PerkinsKeyState>({
     dot1: false, dot2: false, dot3: false,
     dot4: false, dot5: false, dot6: false,
   });
+  const callbacksRef = useRef({ onChar, onSpace, onBackspace, onNewline });
+
+  // Update callbacks ref whenever they change
+  useEffect(() => {
+    callbacksRef.current = { onChar, onSpace, onBackspace, onNewline };
+  }, [onChar, onSpace, onBackspace, onNewline]);
 
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
@@ -87,9 +94,9 @@ function PerkinsKeyboard({
 
     const up = (e: KeyboardEvent) => {
       const key = e.key.toLowerCase();
-      if (key === " ") { e.preventDefault(); onSpace(); return; }
-      if (key === "backspace") { e.preventDefault(); onBackspace(); return; }
-      if (key === "enter") { e.preventDefault(); onNewline(); return; }
+      if (key === " ") { e.preventDefault(); callbacksRef.current.onSpace(); return; }
+      if (key === "backspace") { e.preventDefault(); callbacksRef.current.onBackspace(); return; }
+      if (key === "enter") { e.preventDefault(); callbacksRef.current.onNewline(); return; }
       if (["f", "d", "s", "j", "k", "l"].includes(key)) {
         e.preventDefault();
         pressedRef.current.delete(key);
@@ -99,7 +106,8 @@ function PerkinsKeyboard({
           const dots = { ...activeDotsRef.current };
           if (dots.dot1 || dots.dot2 || dots.dot3 || dots.dot4 || dots.dot5 || dots.dot6) {
             const char = perkinsDotsToUnicode(dots);
-            onChar(char);
+            setLastInsertedChar(char);
+            callbacksRef.current.onChar(char);
           }
           activeDotsRef.current = {
             dot1: false, dot2: false, dot3: false,
@@ -115,7 +123,7 @@ function PerkinsKeyboard({
       window.removeEventListener("keydown", down);
       window.removeEventListener("keyup", up);
     };
-  }, [onChar, onSpace, onBackspace, onNewline]);
+  }, []);
 
   const keys = [
     { label: "S", sub: "Ponto 3", key: "s" },
@@ -128,6 +136,10 @@ function PerkinsKeyboard({
 
   return (
     <div className="flex flex-col items-center gap-2 py-2">
+      {/* Accessibility: Screen reader announcement for last inserted Braille cell */}
+      <span className="sr-only" aria-live="polite" aria-atomic="true">
+        {lastInsertedChar ? `Célula Braille inserida: ${describeBrailleChar(lastInsertedChar)}` : ''}
+      </span>
       <div className="flex gap-2 items-center">
         {keys.map((k, i) => (
           <div key={k.key} className="flex items-center">
@@ -139,7 +151,7 @@ function PerkinsKeyboard({
                   : "bg-card text-card-foreground border-border hover:border-primary/50"
               }`}
               aria-label={`Tecla ${k.label} - ${k.sub}`}
-              tabIndex={-1}
+              tabIndex={0}
             >
               <span>{k.label}</span>
               <span className="text-[9px] font-normal opacity-70">{k.sub}</span>

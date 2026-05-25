@@ -4,7 +4,7 @@
  * Supports: notes, rests, barlines, time signatures, accidentals, dots, slurs, ties.
  * Click on a note to jump to the corresponding Braille cell in the editor.
  */
-import { useEffect, useRef, useMemo } from 'react';
+import { useEffect, useLayoutEffect, useRef, useMemo } from 'react';
 import { Renderer, Stave, StaveNote, Voice, Formatter, Accidental, Dot, Curve } from 'vexflow';
 import type { ParsedElement, ParsedNote, ParsedRest, ParsedKeySignature } from '../lib/brailleMusic';
 
@@ -188,8 +188,14 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
   // Group elements into measures
   const measures = useMemo(() => groupIntoMeasures(elements), [elements]);
 
-  useEffect(() => {
-    if (!containerRef.current || measures.length === 0) return;
+  useLayoutEffect(() => {
+    if (!containerRef.current || measures.length === 0) {
+      // Ensure container is cleaned up even if no measures
+      if (containerRef.current) {
+        containerRef.current.innerHTML = '';
+      }
+      return;
+    }
 
     // Clear container and hit areas
     containerRef.current.innerHTML = '';
