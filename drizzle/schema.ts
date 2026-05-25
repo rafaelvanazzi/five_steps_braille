@@ -1,4 +1,4 @@
-import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, bigint, uniqueIndex, boolean, longtext } from "drizzle-orm/mysql-core";
+import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, bigint, uniqueIndex, boolean, longtext, index } from "drizzle-orm/mysql-core";
 
 export const users = mysqlTable("users", {
   id: int("id").autoincrement().primaryKey(),
@@ -249,3 +249,49 @@ export const brailleProjects = mysqlTable("braille_projects", {
 
 export type BrailleProject = typeof brailleProjects.$inferSelect;
 export type InsertBrailleProject = typeof brailleProjects.$inferInsert;
+
+// ─── Email Campaigns (Scheduled) ────────────────────────────────────────────
+export const emailCampaigns = mysqlTable("email_campaigns", {
+  id: int("id").autoincrement().primaryKey(),
+  createdBy: int("createdBy").notNull(),
+  name: varchar("name", { length: 255 }).notNull(),
+  subject: varchar("subject", { length: 255 }).notNull(),
+  htmlContent: longtext("htmlContent").notNull(),
+  replyTo: varchar("replyTo", { length: 320 }),
+  recipients: longtext("recipients").notNull(), // JSON array of emails
+  intervalMinutes: int("intervalMinutes").default(2).notNull(), // interval between emails
+  status: mysqlEnum("status", ["draft", "scheduled", "running", "completed", "cancelled"]).default("draft").notNull(),
+  scheduleCronTaskUid: varchar("scheduleCronTaskUid", { length: 65 }), // Heartbeat task UID
+  totalRecipients: int("totalRecipients").default(0).notNull(),
+  sentCount: int("sentCount").default(0).notNull(),
+  failedCount: int("failedCount").default(0).notNull(),
+  startedAt: timestamp("startedAt"),
+  completedAt: timestamp("completedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => [
+  index("idx_created_by").on(table.createdBy),
+  index("idx_status").on(table.status),
+  index("idx_schedule_cron_task_uid").on(table.scheduleCronTaskUid),
+]);
+
+export type EmailCampaign = typeof emailCampaigns.$inferSelect;
+export type InsertEmailCampaign = typeof emailCampaigns.$inferInsert;
+
+// ─── Email Campaign Logs (Track each email sent) ─────────────────────────────
+export const emailCampaignLogs = mysqlTable("email_campaign_logs", {
+  id: int("id").autoincrement().primaryKey(),
+  campaignId: int("campaignId").notNull(),
+  recipient: varchar("recipient", { length: 320 }).notNull(),
+  status: mysqlEnum("status", ["pending", "sent", "failed"]).default("pending").notNull(),
+  errorMessage: text("errorMessage"),
+  sentAt: timestamp("sentAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, (table) => [
+  index("idx_campaign_id").on(table.campaignId),
+  index("idx_recipient").on(table.recipient),
+  index("idx_status").on(table.status),
+]);
+
+export type EmailCampaignLog = typeof emailCampaignLogs.$inferSelect;
+export type InsertEmailCampaignLog = typeof emailCampaignLogs.$inferInsert;

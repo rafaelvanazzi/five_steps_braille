@@ -73,6 +73,7 @@ import { storagePut, storageGet } from "./storage";
 import { notifyOwner } from "./_core/notification";
 import { sendContactEmail, sendBulkEmail } from "./email";
 import { editorRouter } from "./editor-router";
+import { emailCampaignsRouter } from "./routers/email-campaigns";
 
 // ─── Permission helpers ───────────────────────────────────────────────────────
 
@@ -696,6 +697,8 @@ export const appRouter = router({
         return { success: true };
       }),
   }),
+
+  emailCampaigns: emailCampaignsRouter,
 });
 
 export type AppRouter = typeof appRouter;

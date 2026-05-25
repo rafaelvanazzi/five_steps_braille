@@ -20,10 +20,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { toast } from "sonner";
 import { Link } from "wouter";
 import BrailleProjectsAdmin from "@/components/BrailleProjectsAdmin";
+import AdminEmailCampaigns from "./AdminEmailCampaigns";
 
 const gradeStages: Record<number, number> = { 1: 2, 2: 5, 3: 5, 4: 3, 5: 8 };
 
-type AdminTab = "dashboard" | "users" | "materials" | "downloads" | "comments" | "ratings" | "messages" | "upload" | "events" | "registrations" | "forum" | "braille-projects" | "bulk-email";
+type AdminTab = "dashboard" | "users" | "materials" | "downloads" | "comments" | "ratings" | "messages" | "upload" | "events" | "registrations" | "forum" | "braille-projects" | "bulk-email" | "email-campaigns";
 
 // ─── AdminForumTab ────────────────────────────────────────────────────────────
 function AdminForumTab() {
@@ -533,6 +534,7 @@ export default function Admin() {
     { key: "forum", label: "Fórum", icon: MessagesSquare },
     { key: "braille-projects", label: "Musicografia Braille", icon: FileMusic },
     { key: "bulk-email", label: "Envio de Emails", icon: Mail },
+    { key: "email-campaigns", label: "Campanhas Agendadas", icon: CalendarDays },
     { key: "upload", label: "Enviar", icon: Upload },
   ];
 
@@ -1063,6 +1065,13 @@ export default function Admin() {
               </CardContent>
             </Card>
           </Link>
+        )}
+
+        {/* === Email Campaigns === */}
+        {activeTab === "email-campaigns" && (
+          <div className="w-full">
+            <AdminEmailCampaigns />
+          </div>
         )}
 
         {/* ═══ Upload ═══ */}
