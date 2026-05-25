@@ -248,6 +248,13 @@
 - [x] Criação automática de projeto ao importar sem projeto aberto
 - [x] Botão de importação disponível tanto na lista de projetos quanto dentro do editor
 
+## Dashboard Card com Informações de Importação/Exportação
+- [x] Adicionar card informativo na página de seleção de projetos
+- [x] Seção "Edição" com informações sobre teclado Perkins
+- [x] Seção "Importação" com suporte a .brf e .musicxml
+- [x] Seção "Exportação" com 5 formatos de página e compatibilidade de impressoras
+- [x] Layout responsivo com 3 colunas em desktop, 1 coluna em mobile
+
 ## Melhorias do Editor v2 - Feedback do Utilizador
 - [ ] Corrigir importação BRF: converter ASCII Braille → Unicode e disparar renderização da partitura
 - [ ] Redesenhar celas Braille: círculos menores com espaçamento real entre pontos

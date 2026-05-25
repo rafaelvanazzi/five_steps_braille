@@ -663,11 +663,39 @@ export default function BrailleEditor() {
             aria-label="Importar arquivo BRF ou MusicXML"
           />
 
-          <p className="text-muted-foreground">
-            Escreva em Braille musical usando o teclado Perkins ou o teclado padrão.
-            A partitura é renderizada em tempo real conforme você digita.
-            Você também pode <strong>importar arquivos .brf</strong> ou <strong>.musicxml</strong>.
-          </p>
+          <Card className="bg-muted/50 border-muted">
+            <CardContent className="pt-6 space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="space-y-2">
+                  <h3 className="font-semibold text-sm flex items-center gap-2">
+                    <Keyboard className="w-4 h-4" />
+                    Edicao
+                  </h3>
+                  <p className="text-sm text-muted-foreground">
+                    Escreva em Braille musical usando o <strong>teclado Perkins</strong> (F, D, S, J, K, L) ou o <strong>teclado padrao</strong>. A partitura e renderizada em tempo real.
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <h3 className="font-semibold text-sm flex items-center gap-2">
+                    <Upload className="w-4 h-4" />
+                    Importacao
+                  </h3>
+                  <p className="text-sm text-muted-foreground">
+                    Importe arquivos <strong>.brf</strong> (Braille) ou <strong>.musicxml</strong> (partitura). MusicXML e convertido automaticamente para Braille musical (modo basico).
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <h3 className="font-semibold text-sm flex items-center gap-2">
+                    <Download className="w-4 h-4" />
+                    Exportacao
+                  </h3>
+                  <p className="text-sm text-muted-foreground">
+                    Exporte como <strong>.brf</strong> (5 formatos de pagina) ou <strong>.txt</strong>. Padrao ASCII compativel com impressoras <strong>Index, Juliet e ViewPlus</strong>.
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
 
           {projectsQuery.isLoading ? (
             <div className="flex justify-center py-10">
