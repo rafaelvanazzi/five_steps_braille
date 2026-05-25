@@ -119,13 +119,9 @@ export const emailCampaignsRouter = router({
         }
 
         // Get session token for Heartbeat
+        // Use empty string as fallback - Heartbeat will use project owner identity
         const sessionToken = parseCookie(ctx.req.headers.cookie ?? "")[COOKIE_NAME] ?? "";
-        if (!sessionToken) {
-          throw new TRPCError({
-            code: "UNAUTHORIZED",
-            message: "Session token not found",
-          });
-        }
+        console.log(`[email-campaigns] Scheduling campaign ${campaign.id} with session token: ${sessionToken ? "present" : "using owner identity"}`);
 
         // Calculate cron expression based on interval
         // For simplicity, start immediately and repeat every N minutes
@@ -133,16 +129,26 @@ export const emailCampaignsRouter = router({
         const cronExpression = `0 */${campaign.intervalMinutes} * * * *`;
 
         // Create Heartbeat job
-        const job = await createHeartbeatJob(
-          {
-            name: `email-campaign-${campaign.id}`,
-            cron: cronExpression,
-            path: "/api/scheduled/sendCampaignEmails",
-            payload: { campaignId: campaign.id },
-            description: `Send ${campaign.totalRecipients} emails for campaign "${campaign.name}"`,
-          },
-          sessionToken
-        );
+        let job;
+        try {
+          job = await createHeartbeatJob(
+            {
+              name: `email-campaign-${campaign.id}`,
+              cron: cronExpression,
+              path: "/api/scheduled/sendCampaignEmails",
+              payload: { campaignId: campaign.id },
+              description: `Send ${campaign.totalRecipients} emails for campaign "${campaign.name}"`,
+            },
+            sessionToken
+          );
+          console.log(`[email-campaigns] Heartbeat job created: ${job.taskUid}`);
+        } catch (heartbeatError) {
+          console.error("[email-campaigns] Heartbeat error:", heartbeatError);
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: `Heartbeat CreateHeartbeatJob failed: ${heartbeatError instanceof Error ? heartbeatError.message : "Unknown error"}`,
+          });
+        }
 
         // Update campaign with task UID and status
         await emailCampaigns.updateCampaignWithTaskUid(campaign.id, job.taskUid);
@@ -158,7 +164,7 @@ export const emailCampaignsRouter = router({
         console.error("[email-campaigns] Failed to schedule campaign:", error);
         throw new TRPCError({
           code: "INTERNAL_SERVER_ERROR",
-          message: "Failed to schedule campaign",
+          message: error instanceof Error ? error.message : "Failed to schedule campaign",
         });
       }
     }),

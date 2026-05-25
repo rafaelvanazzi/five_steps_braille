@@ -7,11 +7,12 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { trpc } from "@/lib/trpc";
-import { AlertCircle, CheckCircle2, Mail, Clock, Trash2, Play, Pause } from "lucide-react";
+import { AlertCircle, CheckCircle2, Mail, Clock, Trash2, Play, Pause, Edit, X } from "lucide-react";
 import { toast } from "sonner";
 
 export default function AdminEmailCampaigns() {
   const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
   const [recipients, setRecipients] = useState("");
   const [name, setName] = useState("");
   const [subject, setSubject] = useState("");
@@ -35,6 +36,29 @@ export default function AdminEmailCampaigns() {
   };
 
   const recipientList = parseRecipients(recipients);
+
+  const resetForm = () => {
+    setShowForm(false);
+    setEditingId(null);
+    setRecipients("");
+    setName("");
+    setSubject("");
+    setHtmlContent("");
+    setReplyTo("contato@braille5steps.com");
+    setIntervalMinutes(2);
+    setIsPreview(false);
+  };
+
+  const handleEdit = (campaign: any) => {
+    setEditingId(campaign.id);
+    setName(campaign.name);
+    setSubject(campaign.subject);
+    setHtmlContent(campaign.htmlContent);
+    setReplyTo(campaign.replyTo || "contato@braille5steps.com");
+    setIntervalMinutes(campaign.intervalMinutes);
+    setRecipients(campaign.recipients?.join("\n") || "");
+    setShowForm(true);
+  };
 
   const handleCreate = async () => {
     if (!name.trim()) {
@@ -64,14 +88,8 @@ export default function AdminEmailCampaigns() {
         intervalMinutes,
       });
 
-      toast.success("Campanha criada com sucesso!");
-      setShowForm(false);
-      setRecipients("");
-      setName("");
-      setSubject("");
-      setHtmlContent("");
-      setReplyTo("contato@braille5steps.com");
-      setIntervalMinutes(2);
+      toast.success(editingId ? "Campanha atualizada com sucesso!" : "Campanha criada com sucesso!");
+      resetForm();
       utils.emailCampaigns.list.invalidate();
     } catch (error) {
       toast.error(`Erro ao criar campanha: ${error instanceof Error ? error.message : "Erro desconhecido"}`);
@@ -138,7 +156,7 @@ export default function AdminEmailCampaigns() {
       {showForm && (
         <Card>
           <CardHeader>
-            <CardTitle>Criar Nova Campanha</CardTitle>
+            <CardTitle>{editingId ? "Editar Campanha" : "Criar Nova Campanha"}</CardTitle>
             <CardDescription>Emails serão enviados com intervalo de N minutos entre cada um</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -237,9 +255,10 @@ export default function AdminEmailCampaigns() {
                   recipientList.length === 0
                 }
               >
-                {createMutation.isPending ? "Criando..." : "Criar Campanha"}
+                {createMutation.isPending ? (editingId ? "Atualizando..." : "Criando...") : (editingId ? "Atualizar Campanha" : "Criar Campanha")}
               </Button>
-              <Button variant="outline" onClick={() => setShowForm(false)}>
+              <Button variant="outline" onClick={resetForm}>
+                <X className="w-4 h-4 mr-2" />
                 Cancelar
               </Button>
             </div>
@@ -290,6 +309,17 @@ export default function AdminEmailCampaigns() {
                   </TableCell>
                   <TableCell>
                     <div className="flex gap-1">
+                      {campaign.status === "draft" && (
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-7 w-7"
+                          onClick={() => handleEdit(campaign)}
+                          title="Editar campanha"
+                        >
+                          <Edit className="w-4 h-4 text-blue-600" />
+                        </Button>
+                      )}
                       {campaign.status === "draft" && (
                         <Button
                           size="icon"
