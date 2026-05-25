@@ -11,7 +11,6 @@ export const users = mysqlTable("users", {
   countryCode: varchar("countryCode", { length: 4 }),
   regionName: varchar("regionName", { length: 100 }),
   city: varchar("city", { length: 100 }),
-  preferredBrfExportFormat: varchar("preferredBrfExportFormat", { length: 32 }).default("a4-brasil"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   lastSignedIn: timestamp("lastSignedIn").defaultNow().notNull(),
