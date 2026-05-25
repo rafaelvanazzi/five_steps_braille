@@ -1,7 +1,6 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { parse as parseCookie } from "cookie";
-import { COOKIE_NAME } from "@shared/const";
+// parseCookie and COOKIE_NAME removed - using owner identity (empty string) for Heartbeat
 import { router, protectedProcedure } from "../_core/trpc";
 import { createHeartbeatJob, updateHeartbeatJob, deleteHeartbeatJob } from "../_core/heartbeat";
 import * as emailCampaigns from "../email-campaigns";
@@ -118,10 +117,9 @@ export const emailCampaignsRouter = router({
           throw new TRPCError({ code: "FORBIDDEN", message: "Access denied" });
         }
 
-        // Get session token for Heartbeat
-        // Use empty string as fallback - Heartbeat will use project owner identity
-        const sessionToken = parseCookie(ctx.req.headers.cookie ?? "")[COOKIE_NAME] ?? "";
-        console.log(`[email-campaigns] Scheduling campaign ${campaign.id} with session token: ${sessionToken ? "present" : "using owner identity"}`);
+        // Use empty string to force project owner identity for Heartbeat
+        // This avoids 401 errors from expired/invalid user session cookies
+        const sessionToken = "";
 
         // Calculate cron expression based on interval
         // For simplicity, start immediately and repeat every N minutes
@@ -184,16 +182,13 @@ export const emailCampaignsRouter = router({
           throw new TRPCError({ code: "FORBIDDEN", message: "Access denied" });
         }
 
-        // Delete Heartbeat job if exists
+        // Delete Heartbeat job if exists (use empty string for owner identity)
         if (campaign.scheduleCronTaskUid) {
-          const sessionToken = parseCookie(ctx.req.headers.cookie ?? "")[COOKIE_NAME] ?? "";
-          if (sessionToken) {
-            try {
-              await deleteHeartbeatJob(campaign.scheduleCronTaskUid, sessionToken);
-            } catch (err) {
-              console.error("[email-campaigns] Failed to delete Heartbeat job:", err);
-              // Continue anyway
-            }
+          try {
+            await deleteHeartbeatJob(campaign.scheduleCronTaskUid, "");
+          } catch (err) {
+            console.error("[email-campaigns] Failed to delete Heartbeat job:", err);
+            // Continue anyway
           }
         }
 
@@ -226,16 +221,13 @@ export const emailCampaignsRouter = router({
           throw new TRPCError({ code: "FORBIDDEN", message: "Access denied" });
         }
 
-        // Delete Heartbeat job if exists
+        // Delete Heartbeat job if exists (use empty string for owner identity)
         if (campaign.scheduleCronTaskUid) {
-          const sessionToken = parseCookie(ctx.req.headers.cookie ?? "")[COOKIE_NAME] ?? "";
-          if (sessionToken) {
-            try {
-              await deleteHeartbeatJob(campaign.scheduleCronTaskUid, sessionToken);
-            } catch (err) {
-              console.error("[email-campaigns] Failed to delete Heartbeat job:", err);
-              // Continue anyway
-            }
+          try {
+            await deleteHeartbeatJob(campaign.scheduleCronTaskUid, "");
+          } catch (err) {
+            console.error("[email-campaigns] Failed to delete Heartbeat job:", err);
+            // Continue anyway
           }
         }
 
