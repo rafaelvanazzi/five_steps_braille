@@ -466,7 +466,7 @@ export default function BrailleEditor() {
   );
 
   const handleExport = useCallback(
-    async (format: "brf" | "txt" | "musicxml") => {
+    async (format: "brf" | "txt") => {
       if (!currentProjectId) return;
       try {
         const result = await exportMutation.mutateAsync({ id: currentProjectId, format });
@@ -827,13 +827,7 @@ export default function BrailleEditor() {
               >
                 .txt
               </button>
-              <button
-                onClick={() => handleExport("musicxml")}
-                className="px-2 py-1 text-xs bg-card text-card-foreground hover:bg-accent transition-colors border-l"
-                title="Exportar como MusicXML"
-              >
-                .xml
-              </button>
+
             </div>
           </div>
         </div>

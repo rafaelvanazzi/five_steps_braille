@@ -1,138 +1,324 @@
 /**
  * Braille Music Export Module
- * Handles conversion of Braille content to .brf (Braille Ready Format)
+ * Handles conversion of Braille Unicode content to .brf (Braille Ready Format)
+ * 
+ * BRF uses North American ASCII Braille (Computer Braille Code) mapping:
+ * Each Unicode Braille character (U+2800-U+283F) maps to an ASCII character.
+ * Page formatting uses CR+LF for line breaks and FF (0x0C) for page breaks.
  */
+
+// ============================================================
+// Page Format Presets
+// ============================================================
+
+export interface PageFormat {
+  name: string;
+  description: string;
+  cellsPerLine: number;
+  linesPerPage: number;
+  paperSize: string;
+}
+
+export const PAGE_FORMATS: Record<string, PageFormat> = {
+  "bana-standard": {
+    name: "BANA Padrão (EUA)",
+    description: "Formulário contínuo 11½\" × 11\" - Padrão americano",
+    cellsPerLine: 40,
+    linesPerPage: 25,
+    paperSize: "11.5x11in",
+  },
+  "a4-brasil": {
+    name: "A4 Brasil",
+    description: "Papel A4 (210×297mm) - Padrão brasileiro para impressoras braille",
+    cellsPerLine: 40,
+    linesPerPage: 25,
+    paperSize: "A4",
+  },
+  "a4-internacional": {
+    name: "A4 Internacional",
+    description: "Papel A4 com margens maiores - Padrão internacional",
+    cellsPerLine: 32,
+    linesPerPage: 27,
+    paperSize: "A4",
+  },
+  "letter-us": {
+    name: "Letter (EUA)",
+    description: "Papel Letter 8½\" × 11\" - Impressoras cut-sheet",
+    cellsPerLine: 34,
+    linesPerPage: 25,
+    paperSize: "Letter",
+  },
+  "formulario-continuo": {
+    name: "Formulário Contínuo",
+    description: "Papel contínuo para impressoras tractor-feed (12\" × 11\")",
+    cellsPerLine: 42,
+    linesPerPage: 25,
+    paperSize: "12x11in",
+  },
+  "braille-facil": {
+    name: "Braille Fácil (Brasil)",
+    description: "Configuração padrão do software Braille Fácil",
+    cellsPerLine: 40,
+    linesPerPage: 25,
+    paperSize: "Formulário contínuo",
+  },
+  custom: {
+    name: "Personalizado",
+    description: "Configuração personalizada de células e linhas",
+    cellsPerLine: 40,
+    linesPerPage: 25,
+    paperSize: "Custom",
+  },
+};
+
+// ============================================================
+// Unicode Braille → ASCII BRF Mapping
+// ============================================================
+
+/**
+ * North American ASCII Braille (Computer Braille Code) mapping.
+ * Maps Unicode Braille U+2800..U+283F (6-dot patterns) to ASCII characters.
+ * This is the standard used by BRF files.
+ */
+const UNICODE_TO_ASCII_BRF: Record<number, string> = {
+  0x2800: " ",  // ⠀ (empty/space)
+  0x2801: "A",  // ⠁ dots 1
+  0x2802: "1",  // ⠂ dots 2
+  0x2803: "B",  // ⠃ dots 12
+  0x2804: "'",  // ⠄ dots 3
+  0x2805: "K",  // ⠅ dots 13
+  0x2806: "2",  // ⠆ dots 23
+  0x2807: "L",  // ⠇ dots 123
+  0x2808: "@",  // ⠈ dots 4
+  0x2809: "C",  // ⠉ dots 14
+  0x280A: "I",  // ⠊ dots 24
+  0x280B: "F",  // ⠋ dots 124
+  0x280C: "/",  // ⠌ dots 34
+  0x280D: "M",  // ⠍ dots 134
+  0x280E: "S",  // ⠎ dots 234
+  0x280F: "P",  // ⠏ dots 1234
+  0x2810: "\"", // ⠐ dots 5
+  0x2811: "E",  // ⠑ dots 15
+  0x2812: "3",  // ⠒ dots 25
+  0x2813: "H",  // ⠓ dots 125
+  0x2814: "9",  // ⠔ dots 35
+  0x2815: "O",  // ⠕ dots 135
+  0x2816: "6",  // ⠖ dots 235
+  0x2817: "R",  // ⠗ dots 1235
+  0x2818: "^",  // ⠘ dots 45
+  0x2819: "D",  // ⠙ dots 145
+  0x281A: "J",  // ⠚ dots 245
+  0x281B: "G",  // ⠛ dots 1245
+  0x281C: ">",  // ⠜ dots 345
+  0x281D: "N",  // ⠝ dots 1345
+  0x281E: "T",  // ⠞ dots 2345
+  0x281F: "Q",  // ⠟ dots 12345
+  0x2820: ",",  // ⠠ dots 6
+  0x2821: "*",  // ⠡ dots 16
+  0x2822: "5",  // ⠢ dots 26
+  0x2823: "<",  // ⠣ dots 126
+  0x2824: "-",  // ⠤ dots 36
+  0x2825: "U",  // ⠥ dots 136
+  0x2826: "8",  // ⠦ dots 236
+  0x2827: "V",  // ⠧ dots 1236
+  0x2828: ".",  // ⠨ dots 46
+  0x2829: "%",  // ⠩ dots 146
+  0x282A: "[",  // ⠪ dots 246
+  0x282B: "$",  // ⠫ dots 1246
+  0x282C: "+",  // ⠬ dots 346
+  0x282D: "X",  // ⠭ dots 1346
+  0x282E: "!",  // ⠮ dots 2346
+  0x282F: "&",  // ⠯ dots 12346
+  0x2830: ";",  // ⠰ dots 56
+  0x2831: ":",  // ⠱ dots 156
+  0x2832: "4",  // ⠲ dots 256
+  0x2833: "\\", // ⠳ dots 1256
+  0x2834: "0",  // ⠴ dots 356
+  0x2835: "Z",  // ⠵ dots 1356
+  0x2836: "7",  // ⠶ dots 2356
+  0x2837: "(",  // ⠷ dots 12356
+  0x2838: "_",  // ⠸ dots 456
+  0x2839: "?",  // ⠹ dots 1456
+  0x283A: "W",  // ⠺ dots 2456
+  0x283B: ")",  // ⠻ dots 12456
+  0x283C: "#",  // ⠼ dots 3456
+  0x283D: "Y",  // ⠽ dots 13456
+  0x283E: "}",  // ⠾ dots 23456
+  0x283F: "=",  // ⠿ dots 123456
+};
+
+// ============================================================
+// Export Options
+// ============================================================
 
 export interface BrfExportOptions {
   title?: string;
   author?: string;
-  language?: "pt" | "en" | "es";
-  pageWidth?: number; // Characters per line (default 40)
-  pageHeight?: number; // Lines per page (default 25)
+  format?: string; // key from PAGE_FORMATS
+  cellsPerLine?: number; // override for custom
+  linesPerPage?: number; // override for custom
+  includeHeader?: boolean;
+  pageNumbering?: boolean;
+  startPage?: number;
 }
 
+// ============================================================
+// Core Conversion Functions
+// ============================================================
+
 /**
- * Convert Braille Unicode content to .brf format
- * .brf is a text format where each Braille character is represented as a 2-character code
+ * Convert a single Unicode Braille character to its ASCII BRF equivalent.
  */
-export function brailleUnicodeToUtf8Braille(brailleContent: string): string {
-  // Convert Unicode Braille (U+2800-U+28FF) to UTF-8 Braille representation
-  // This is a direct pass-through since Unicode Braille IS UTF-8 Braille
-  return brailleContent;
+function unicodeBrailleToAscii(char: string): string {
+  const code = char.charCodeAt(0);
+  if (code >= 0x2800 && code <= 0x283F) {
+    return UNICODE_TO_ASCII_BRF[code] || " ";
+  }
+  // Pass through regular ASCII characters (spaces, newlines, etc.)
+  if (code === 32 || code === 10 || code === 13 || code === 9) {
+    return char;
+  }
+  // For 8-dot braille (U+2840-U+28FF), map to space (not supported in standard BRF)
+  if (code >= 0x2840 && code <= 0x28FF) {
+    return " ";
+  }
+  // Non-braille characters: pass through as-is (for text headers)
+  return char;
 }
 
 /**
- * Generate .brf file content from Braille content
- * Includes header with metadata and formatted Braille content
+ * Convert a string of Unicode Braille to ASCII BRF string.
+ */
+export function convertToBrfAscii(unicodeBraille: string): string {
+  let result = "";
+  for (const char of unicodeBraille) {
+    result += unicodeBrailleToAscii(char);
+  }
+  return result;
+}
+
+/**
+ * Format content into pages with proper line wrapping and page breaks.
+ * Respects musical measure boundaries when possible (breaks at spaces).
+ */
+function formatIntoPages(
+  content: string,
+  cellsPerLine: number,
+  linesPerPage: number,
+  pageNumbering: boolean,
+  startPage: number
+): string {
+  const lines = content.split("\n");
+  const formattedLines: string[] = [];
+
+  for (const line of lines) {
+    if (line.length <= cellsPerLine) {
+      formattedLines.push(line);
+    } else {
+      // Word-wrap at spaces (measure boundaries in braille music)
+      let remaining = line;
+      while (remaining.length > cellsPerLine) {
+        // Find last space within cellsPerLine
+        let breakPoint = remaining.lastIndexOf(" ", cellsPerLine);
+        if (breakPoint <= 0) {
+          // No space found, hard break
+          breakPoint = cellsPerLine;
+        }
+        formattedLines.push(remaining.substring(0, breakPoint));
+        remaining = remaining.substring(breakPoint + 1); // skip the space
+      }
+      if (remaining.length > 0) {
+        formattedLines.push(remaining);
+      }
+    }
+  }
+
+  // Split into pages
+  const pages: string[] = [];
+  let currentPageLines: string[] = [];
+  const effectiveLinesPerPage = pageNumbering ? linesPerPage - 1 : linesPerPage;
+
+  for (const line of formattedLines) {
+    currentPageLines.push(line);
+    if (currentPageLines.length >= effectiveLinesPerPage) {
+      pages.push(currentPageLines.join("\r\n"));
+      currentPageLines = [];
+    }
+  }
+  // Add last page
+  if (currentPageLines.length > 0) {
+    pages.push(currentPageLines.join("\r\n"));
+  }
+
+  // Add page numbers if requested
+  if (pageNumbering) {
+    for (let i = 0; i < pages.length; i++) {
+      const pageNum = (startPage + i).toString();
+      // Page number right-aligned on last line
+      const padding = " ".repeat(cellsPerLine - pageNum.length);
+      pages[i] = pages[i] + "\r\n" + padding + pageNum;
+    }
+  }
+
+  // Join pages with Form Feed (FF = 0x0C)
+  return pages.join("\r\n\x0C\r\n");
+}
+
+// ============================================================
+// Main Export Functions
+// ============================================================
+
+/**
+ * Generate .brf file content from Unicode Braille content.
+ * Converts Unicode to ASCII BRF and formats into pages.
  */
 export function generateBrfContent(
   brailleContent: string,
   options: BrfExportOptions = {}
 ): string {
   const {
-    title = "Untitled",
-    author = "Unknown",
-    language = "pt",
-    pageWidth = 40,
-    pageHeight = 25,
+    format = "a4-brasil",
+    cellsPerLine: customCells,
+    linesPerPage: customLines,
+    includeHeader = false,
+    pageNumbering = true,
+    startPage = 1,
   } = options;
 
-  // BRF header
-  const header = `
-⠠⠠⠠⠠⠠⠠⠠⠠⠠⠠⠠⠠⠠⠠⠠⠠⠠⠠⠠⠠
-⠠⠠⠠⠠⠠⠠⠠⠠⠠⠠⠠⠠⠠⠠⠠⠠⠠⠠⠠⠠
+  // Determine page dimensions
+  const pageFormat = PAGE_FORMATS[format] || PAGE_FORMATS["a4-brasil"];
+  const cellsPerLine = customCells || pageFormat.cellsPerLine;
+  const linesPerPage = customLines || pageFormat.linesPerPage;
 
-⠠⠞⠊⠞⠇⠑: ${title}
-⠠⠁⠥⠞⠓⠕⠗: ${author}
-⠠⠇⠁⠝⠛⠥⠁⠛⠑: ${language}
+  // Convert Unicode Braille to ASCII BRF
+  const asciiContent = convertToBrfAscii(brailleContent);
 
-⠠⠠⠠⠠⠠⠠⠠⠠⠠⠠⠠⠠⠠⠠⠠⠠⠠⠠⠠⠠
-⠠⠠⠠⠠⠠⠠⠠⠠⠠⠠⠠⠠⠠⠠⠠⠠⠠⠠⠠⠠
-
-`;
-
-  // Format content into pages
-  const lines = brailleContent.split("\n");
-  let currentPage = "";
-  let currentLine = "";
-  let lineCount = 0;
-  const pages: string[] = [];
-
-  for (const line of lines) {
-    // Wrap long lines
-    let remainingLine = line;
-    while (remainingLine.length > pageWidth) {
-      currentLine = remainingLine.substring(0, pageWidth);
-      currentPage += currentLine + "\n";
-      lineCount++;
-
-      if (lineCount >= pageHeight) {
-        pages.push(currentPage);
-        currentPage = "";
-        lineCount = 0;
-      }
-
-      remainingLine = remainingLine.substring(pageWidth);
+  // Optional header (in BRF ASCII)
+  let header = "";
+  if (includeHeader && options.title) {
+    const titleBrf = options.title.toUpperCase();
+    header = titleBrf + "\r\n";
+    if (options.author) {
+      header += options.author.toUpperCase() + "\r\n";
     }
-
-    // Add remaining line
-    if (remainingLine.length > 0) {
-      currentLine = remainingLine;
-      currentPage += currentLine + "\n";
-      lineCount++;
-
-      if (lineCount >= pageHeight) {
-        pages.push(currentPage);
-        currentPage = "";
-        lineCount = 0;
-      }
-    }
+    header += "\r\n";
   }
 
-  // Add last page if not empty
-  if (currentPage.trim().length > 0) {
-    pages.push(currentPage);
-  }
+  const fullContent = header + asciiContent;
 
-  // Combine all pages with page breaks
-  const pageBreak = "\n" + "⠠".repeat(pageWidth) + "\n";
-  const content = pages.join(pageBreak);
-
-  return header + content;
+  // Format into pages
+  return formatIntoPages(fullContent, cellsPerLine, linesPerPage, pageNumbering, startPage);
 }
 
 /**
- * Convert Braille content to ASCII representation for compatibility
- * Uses dot patterns: 1-8 representing the 8 dots in a Braille cell
- */
-export function brailleToAsciiRepresentation(brailleContent: string): string {
-  const asciiMap: Record<string, string> = {
-    "\u2800": "0", // Empty cell
-    "\u2801": "1", // Dot 1
-    "\u2802": "2", // Dot 2
-    "\u2804": "3", // Dot 3
-    "\u2808": "4", // Dot 4
-    "\u2810": "5", // Dot 5
-    "\u2820": "6", // Dot 6
-    "\u2840": "7", // Dot 7
-    "\u2880": "8", // Dot 8
-  };
-
-  let result = "";
-  for (const char of brailleContent) {
-    result += asciiMap[char] || "?";
-  }
-  return result;
-}
-
-/**
- * Export Braille content as .brf file (returns file content as string)
+ * Export Braille content as .brf file (returns file content as Buffer)
  */
 export function exportAsBrf(
   brailleContent: string,
   options: BrfExportOptions = {}
-): string {
-  return generateBrfContent(brailleContent, options);
+): Buffer {
+  const content = generateBrfContent(brailleContent, options);
+  return Buffer.from(content, "ascii");
 }
 
 /**
@@ -143,204 +329,92 @@ export function exportAsPlainText(
   textContent: string,
   options: BrfExportOptions = {}
 ): string {
-  const { title = "Untitled", author = "Unknown", language = "pt" } = options;
+  const { title = "Sem título", author = "Desconhecido" } = options;
 
-  const header = `Title: ${title}
-Author: ${author}
-Language: ${language}
-Format: Braille Music Notation
-Generated: ${new Date().toISOString()}
+  return `Título: ${title}
+Autor: ${author}
+Formato: Musicografia Braille
+Gerado: ${new Date().toISOString()}
 
 ---
 
-`;
-
-  const content = `BRAILLE CONTENT:
+CONTEÚDO BRAILLE:
 ${brailleContent}
 
-TEXT CONTENT:
+CONTEÚDO TEXTO:
 ${textContent}
 
 ---
-End of Document`;
-
-  return header + content;
+Fim do Documento`;
 }
 
 /**
- * Validate Braille content
- * Checks if all characters are valid Braille Unicode
+ * Validate Braille content for BRF export.
+ * Checks if all characters are valid 6-dot Braille Unicode or whitespace.
  */
 export function validateBrailleContent(content: string): {
   valid: boolean;
   errors: string[];
+  warnings: string[];
 } {
   const errors: string[] = [];
+  const warnings: string[] = [];
 
   for (let i = 0; i < content.length; i++) {
     const code = content.charCodeAt(i);
-    // Valid Braille Unicode range: U+2800 to U+28FF
-    if ((code < 0x2800 || code > 0x28ff) && code !== 10 && code !== 13 && code !== 32 && code !== 9) {
-      // Allow newlines (10), carriage returns (13), spaces (32), tabs (9)
-      errors.push(`Invalid character at position ${i}: U+${code.toString(16).toUpperCase()}`);
+    // Valid: 6-dot Braille (U+2800-U+283F), whitespace
+    if (code >= 0x2800 && code <= 0x283F) continue;
+    if (code === 32 || code === 10 || code === 13 || code === 9) continue;
+    // 8-dot braille: warning (will be converted to space)
+    if (code >= 0x2840 && code <= 0x28FF) {
+      warnings.push(`Caractere 8-pontos na posição ${i} será convertido para espaço`);
+      continue;
     }
+    errors.push(`Caractere inválido na posição ${i}: U+${code.toString(16).toUpperCase()}`);
   }
 
   return {
     valid: errors.length === 0,
     errors,
+    warnings,
   };
 }
 
 /**
- * Get file size estimation for Braille content
+ * Get available page formats for the UI
  */
-export function estimateFileSize(brailleContent: string): {
-  bytes: number;
-  kilobytes: number;
-} {
-  // Each Braille character is 3 bytes in UTF-8
-  const bytes = brailleContent.length * 3;
-  const kilobytes = bytes / 1024;
-
-  return { bytes, kilobytes };
+export function getPageFormats(): Array<PageFormat & { key: string }> {
+  return Object.entries(PAGE_FORMATS)
+    .filter(([key]) => key !== "custom")
+    .map(([key, format]) => ({ key, ...format }));
 }
 
 /**
- * Convert Braille content to MusicXML format
- * MusicXML is a standard format for music notation
+ * Estimate file size and page count for BRF export
  */
-export function exportAsMusicXML(
+export function estimateExport(
   brailleContent: string,
   options: BrfExportOptions = {}
-): string {
-  const { title = "Untitled", author = "Unknown", language = "pt" } = options;
+): {
+  estimatedPages: number;
+  estimatedBytes: number;
+  cellsPerLine: number;
+  linesPerPage: number;
+} {
+  const format = options.format || "a4-brasil";
+  const pageFormat = PAGE_FORMATS[format] || PAGE_FORMATS["a4-brasil"];
+  const cellsPerLine = options.cellsPerLine || pageFormat.cellsPerLine;
+  const linesPerPage = options.linesPerPage || pageFormat.linesPerPage;
 
-  // Mapeamento simplificado de símbolos Braille para notas
-  const brailleToNoteMap: Record<string, { pitch: string; octave: number }> = {
-    "\u2801": { pitch: "C", octave: 4 }, // Ponto 1
-    "\u2802": { pitch: "D", octave: 4 }, // Ponto 2
-    "\u2804": { pitch: "E", octave: 4 }, // Ponto 3
-    "\u2808": { pitch: "F", octave: 4 }, // Ponto 4
-    "\u2810": { pitch: "G", octave: 4 }, // Ponto 5
-    "\u2820": { pitch: "A", octave: 4 }, // Ponto 6
-    "\u2840": { pitch: "B", octave: 4 }, // Ponto 7
-  };
-
-  // Converter Braille em notas
-  const notes: Array<{ pitch: string; octave: number; duration: number }> = [];
-  for (const char of brailleContent) {
-    const noteData = brailleToNoteMap[char];
-    if (noteData) {
-      notes.push({
-        pitch: noteData.pitch,
-        octave: noteData.octave,
-        duration: 4, // Semínima (padrão)
-      });
-    }
+  const lines = brailleContent.split("\n");
+  let totalLines = 0;
+  for (const line of lines) {
+    totalLines += Math.max(1, Math.ceil(line.length / cellsPerLine));
   }
 
-  // Gerar MusicXML
-  let musicXML = `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 3.1 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">
-<score-partwise version="3.1">
-  <work>
-    <work-title>${escapeXml(title)}</work-title>
-  </work>
-  <movement-title>${escapeXml(title)}</movement-title>
-  <identification>
-    <creator type="software">Five Steps - Musicografia Braille</creator>
-    <creator type="composer">${escapeXml(author)}</creator>
-    <encoding>
-      <software>Five Steps Editor</software>
-      <encoding-date>${new Date().toISOString().split("T")[0]}</encoding-date>
-    </encoding>
-  </identification>
-  <part-list>
-    <score-part id="P1">
-      <part-name>Braille Music</part-name>
-      <score-instrument id="P1-I1">
-        <instrument-name>Piano</instrument-name>
-      </score-instrument>
-      <midi-instrument id="P1-I1">
-        <midi-program>1</midi-program>
-      </midi-instrument>
-    </score-part>
-  </part-list>
-  <part id="P1">
-    <measure number="1">
-      <attributes>
-        <divisions>4</divisions>
-        <key>
-          <fifths>0</fifths>
-        </key>
-        <time>
-          <beats>4</beats>
-          <beat-type>4</beat-type>
-        </time>
-        <clef>
-          <sign>G</sign>
-          <line>2</line>
-        </clef>
-      </attributes>
-`;
+  const estimatedPages = Math.max(1, Math.ceil(totalLines / linesPerPage));
+  // Each character = 1 byte in ASCII BRF + CR+LF per line + FF per page
+  const estimatedBytes = brailleContent.length + totalLines * 2 + estimatedPages;
 
-  // Adicionar notas
-  let measureCount = 1;
-  let beatCount = 0;
-
-  for (const note of notes) {
-    if (beatCount >= 4) {
-      measureCount++;
-      beatCount = 0;
-      musicXML += `    </measure>
-    <measure number="${measureCount}">
-`;
-    }
-
-    const pitchStep = note.pitch;
-    const octave = note.octave;
-    const duration = note.duration;
-
-    musicXML += `      <note>
-        <pitch>
-          <step>${pitchStep}</step>
-          <octave>${octave}</octave>
-        </pitch>
-        <duration>${duration}</duration>
-        <type>quarter</type>
-      </note>
-`;
-
-    beatCount += duration / 4;
-  }
-
-  // Adicionar rest se necessário para completar a última medida
-  if (beatCount > 0 && beatCount < 4) {
-    const restDuration = (4 - beatCount) * 4;
-    musicXML += `      <note>
-        <rest/>
-        <duration>${restDuration}</duration>
-        <type>quarter</type>
-      </note>
-`;
-  }
-
-  musicXML += `    </measure>
-  </part>
-</score-partwise>`;
-
-  return musicXML;
-}
-
-/**
- * Escape XML special characters
- */
-function escapeXml(str: string): string {
-  return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
+  return { estimatedPages, estimatedBytes, cellsPerLine, linesPerPage };
 }

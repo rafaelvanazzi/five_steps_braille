@@ -163,6 +163,19 @@ const BARLINE_MAP: Record<string, 'end' | 'repeat-begin' | 'repeat-end'> = {
   '\u2823\u2806': 'repeat-end',    // ⠣⠆ = ritornelo fim (REPEAT_END = =:|)
 }
 
+// ─── KEY SIGNATURE ─────────────────────────────────────────────────────────────
+// In braille music, key signature is written as:
+// Number of sharps: ⠩ repeated N times (after time signature)
+// Number of flats: ⠣ repeated N times (after time signature)
+// The key signature appears right after the time signature, before the first note.
+
+// Map from number of sharps/flats to VexFlow key name
+const FIFTHS_TO_VEX_KEY: Record<number, string> = {
+  '-7': 'Cb', '-6': 'Gb', '-5': 'Db', '-4': 'Ab', '-3': 'Eb', '-2': 'Bb', '-1': 'F',
+  '0': 'C',
+  '1': 'G', '2': 'D', '3': 'A', '4': 'E', '5': 'B', '6': 'F#', '7': 'C#',
+};
+
 // ─── PARSED TYPES ──────────────────────────────────────────────────────────────
 
 export interface ParsedNote {
@@ -211,7 +224,16 @@ export interface ParsedTimeSignature {
   sourceIndex?: number;
 }
 
-export type ParsedElement = ParsedNote | ParsedRest | ParsedBarline | ParsedTimeSignature | ParsedNoteTie;
+export interface ParsedKeySignature {
+  type: 'keysignature';
+  /** Number of sharps (positive) or flats (negative). E.g. 2 = D major, -3 = Eb major */
+  fifths: number;
+  /** VexFlow key spec string like 'G', 'D', 'Bb', 'Eb' etc. */
+  vexKey: string;
+  sourceIndex?: number;
+}
+
+export type ParsedElement = ParsedNote | ParsedRest | ParsedBarline | ParsedTimeSignature | ParsedNoteTie | ParsedKeySignature;
 
 export interface ParseResult {
   elements: ParsedElement[];
@@ -600,6 +622,49 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
         } as ParsedTimeSignature);
         beatsPerMeasure = ts.numerator;
         i += 3;
+        
+        // After time signature, check for key signature (consecutive sharps or flats)
+        const sharpChar = '\u2829'; // ⠩
+        const flatChar = '\u2823';  // ⠣
+        let keySigStart = i;
+        let sharpsCount = 0;
+        let flatsCount = 0;
+        
+        // Count consecutive sharps
+        while (i < input.length && input[i] === sharpChar) {
+          sharpsCount++;
+          i++;
+        }
+        
+        // If no sharps, check for consecutive flats
+        // But be careful: ⠣ is also used in barlines (⠣⠅, ⠣⠶, ⠣⠆)
+        if (sharpsCount === 0) {
+          let tempI = i;
+          while (tempI < input.length && input[tempI] === flatChar) {
+            // Check if this flat is part of a barline pattern
+            const nextAfterFlat = tempI + 1 < input.length ? input[tempI + 1] : '';
+            if (nextAfterFlat === '\u2805' || nextAfterFlat === '\u2836' || nextAfterFlat === '\u2806') {
+              break; // This is a barline, not a key signature flat
+            }
+            flatsCount++;
+            tempI++;
+          }
+          if (flatsCount > 0) {
+            i = tempI;
+          }
+        }
+        
+        if (sharpsCount > 0 || flatsCount > 0) {
+          const fifths = sharpsCount > 0 ? sharpsCount : -flatsCount;
+          const vexKey = FIFTHS_TO_VEX_KEY[fifths.toString() as any] || 'C';
+          elements.push({
+            type: 'keysignature',
+            fifths,
+            vexKey,
+            sourceIndex: keySigStart,
+          } as ParsedKeySignature);
+        }
+        
         continue;
       }
     }

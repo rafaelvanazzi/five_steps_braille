@@ -15,9 +15,12 @@ import { storagePut } from "./storage";
 import {
   exportAsBrf,
   exportAsPlainText,
-  exportAsMusicXML,
   validateBrailleContent,
+  getPageFormats,
+  estimateExport,
+  PAGE_FORMATS,
 } from "./braille-export";
+import type { BrfExportOptions } from "./braille-export";
 import { generateScale, noteTobraille } from "./braille-symbols";
 
 export const editorRouter = router({
@@ -130,11 +133,39 @@ export const editorRouter = router({
     return { total };
   }),
 
+  getExportFormats: protectedProcedure.query(() => {
+    return getPageFormats();
+  }),
+
+  estimateExport: protectedProcedure
+    .input(
+      z.object({
+        id: z.number(),
+        pageFormat: z.string().default("a4-brasil"),
+        cellsPerLine: z.number().optional(),
+        linesPerPage: z.number().optional(),
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      const project = await getBrailleProjectById(input.id);
+      if (!project) throw new TRPCError({ code: "NOT_FOUND", message: "Projeto não encontrado" });
+      return estimateExport(project.contentBraille || "", {
+        format: input.pageFormat,
+        cellsPerLine: input.cellsPerLine,
+        linesPerPage: input.linesPerPage,
+      });
+    }),
+
   export: protectedProcedure
     .input(
       z.object({
         id: z.number(),
-        format: z.enum(["brf", "txt", "musicxml"]),
+        format: z.enum(["brf", "txt"]),
+        pageFormat: z.string().default("a4-brasil"),
+        cellsPerLine: z.number().optional(),
+        linesPerPage: z.number().optional(),
+        includeHeader: z.boolean().default(false),
+        pageNumbering: z.boolean().default(true),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -169,18 +200,24 @@ export const editorRouter = router({
       let fileName = "";
       let mimeType = "text/plain";
 
-      const exportOptions = {
+      const exportOptions: BrfExportOptions = {
         title: project.title,
         author: ctx.user.name || "Unknown",
-        language: project.language,
+        format: input.pageFormat,
+        cellsPerLine: input.cellsPerLine,
+        linesPerPage: input.linesPerPage,
+        includeHeader: input.includeHeader,
+        pageNumbering: input.pageNumbering,
       };
 
       switch (input.format) {
-        case "brf":
-          fileContent = exportAsBrf(brailleContent, exportOptions);
+        case "brf": {
+          const brfBuffer = exportAsBrf(brailleContent, exportOptions);
+          fileContent = brfBuffer.toString("ascii");
           fileName = `${project.title}.brf`;
-          mimeType = "text/plain";
+          mimeType = "application/octet-stream";
           break;
+        }
 
         case "txt":
           fileContent = exportAsPlainText(
@@ -190,12 +227,6 @@ export const editorRouter = router({
           );
           fileName = `${project.title}.txt`;
           mimeType = "text/plain";
-          break;
-
-        case "musicxml":
-          fileContent = exportAsMusicXML(brailleContent, exportOptions);
-          fileName = `${project.title}.musicxml`;
-          mimeType = "application/vnd.recordare.musicxml+xml";
           break;
 
         default:

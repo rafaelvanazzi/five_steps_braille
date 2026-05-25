@@ -1,47 +1,80 @@
 import { describe, it, expect } from "vitest";
 import {
-  brailleUnicodeToUtf8Braille,
+  convertToBrfAscii,
   generateBrfContent,
-  brailleToAsciiRepresentation,
   validateBrailleContent,
-  estimateFileSize,
+  estimateExport,
   exportAsBrf,
   exportAsPlainText,
+  getPageFormats,
+  PAGE_FORMATS,
 } from "./braille-export";
 
 describe("Braille Export Module", () => {
-  describe("brailleUnicodeToUtf8Braille", () => {
-    it("should convert Unicode Braille to UTF-8 Braille", () => {
-      const input = "\u2801\u2802\u2804"; // Braille characters
-      const result = brailleUnicodeToUtf8Braille(input);
-      expect(result).toBe(input); // Direct pass-through
+  describe("convertToBrfAscii", () => {
+    it("should convert Unicode Braille to ASCII BRF characters", () => {
+      // ⠁ = dots 1 = A, ⠃ = dots 12 = B, ⠉ = dots 14 = C
+      const input = "\u2801\u2803\u2809";
+      const result = convertToBrfAscii(input);
+      expect(result).toBe("ABC");
+    });
+
+    it("should convert space (⠀ U+2800) to space", () => {
+      const input = "\u2800";
+      const result = convertToBrfAscii(input);
+      expect(result).toBe(" ");
     });
 
     it("should handle empty string", () => {
-      const result = brailleUnicodeToUtf8Braille("");
+      const result = convertToBrfAscii("");
       expect(result).toBe("");
+    });
+
+    it("should convert number indicator (⠼ dots 3456) to #", () => {
+      const input = "\u283C";
+      const result = convertToBrfAscii(input);
+      expect(result).toBe("#");
+    });
+
+    it("should convert full braille (⠿ dots 123456) to =", () => {
+      const input = "\u283F";
+      const result = convertToBrfAscii(input);
+      expect(result).toBe("=");
+    });
+
+    it("should preserve regular whitespace", () => {
+      const input = "\u2801 \u2803\n\u2809";
+      const result = convertToBrfAscii(input);
+      expect(result).toBe("A B\nC");
     });
   });
 
   describe("validateBrailleContent", () => {
-    it("should validate correct Braille content", () => {
-      const content = "\u2801\u2802\u2804"; // Valid Braille
+    it("should validate correct 6-dot Braille content", () => {
+      const content = "\u2801\u2802\u2804";
       const result = validateBrailleContent(content);
       expect(result.valid).toBe(true);
       expect(result.errors).toHaveLength(0);
     });
 
     it("should detect invalid characters", () => {
-      const content = "Hello\u2801World"; // Mix of ASCII and Braille
+      const content = "Hello\u2801World";
       const result = validateBrailleContent(content);
       expect(result.valid).toBe(false);
       expect(result.errors.length).toBeGreaterThan(0);
     });
 
-    it("should allow newlines and carriage returns", () => {
-      const content = "\u2801\n\u2802\r\u2804";
+    it("should allow newlines and spaces", () => {
+      const content = "\u2801\n\u2802 \u2804";
       const result = validateBrailleContent(content);
       expect(result.valid).toBe(true);
+    });
+
+    it("should warn about 8-dot braille characters", () => {
+      const content = "\u2801\u2840\u2802"; // U+2840 is 8-dot
+      const result = validateBrailleContent(content);
+      expect(result.valid).toBe(true); // valid but with warnings
+      expect(result.warnings.length).toBeGreaterThan(0);
     });
 
     it("should handle empty content", () => {
@@ -50,87 +83,65 @@ describe("Braille Export Module", () => {
     });
   });
 
-  describe("estimateFileSize", () => {
-    it("should estimate file size correctly", () => {
-      const content = "\u2801\u2802\u2804"; // 3 Braille characters
-      const result = estimateFileSize(content);
-      expect(result.bytes).toBe(9); // 3 chars * 3 bytes each
-      expect(result.kilobytes).toBe(9 / 1024);
-    });
-
-    it("should handle empty content", () => {
-      const result = estimateFileSize("");
-      expect(result.bytes).toBe(0);
-      expect(result.kilobytes).toBe(0);
-    });
-
-    it("should handle large content", () => {
-      const content = "\u2801".repeat(1000);
-      const result = estimateFileSize(content);
-      expect(result.bytes).toBe(3000);
-      expect(result.kilobytes).toBeCloseTo(2.93, 1);
-    });
-  });
-
-  describe("brailleToAsciiRepresentation", () => {
-    it("should convert Braille to ASCII representation", () => {
-      const content = "\u2800\u2801\u2802"; // Empty, dot 1, dot 2
-      const result = brailleToAsciiRepresentation(content);
-      expect(result).toBe("012");
-    });
-
-    it("should handle unknown characters", () => {
-      const content = "A\u2801B"; // Mix of ASCII and Braille
-      const result = brailleToAsciiRepresentation(content);
-      expect(result).toContain("?");
-    });
-  });
-
   describe("generateBrfContent", () => {
-    it("should generate BRF content with header", () => {
-      const content = "\u2801\u2802\u2804";
-      const result = generateBrfContent(content, {
-        title: "Test Project",
-        author: "Test Author",
-        language: "pt",
-      });
-
-      expect(result).toContain("Test Project");
-      expect(result).toContain("Test Author");
-      expect(result).toContain("pt");
-      expect(result).toContain(content);
-    });
-
-    it("should use default options", () => {
-      const content = "\u2801\u2802";
+    it("should generate ASCII BRF content from Unicode Braille", () => {
+      const content = "\u2801\u2803\u2809"; // ABC in braille
       const result = generateBrfContent(content);
-
-      expect(result).toContain("Untitled");
-      expect(result).toContain("Unknown");
-      expect(result).toContain("pt");
+      expect(result).toContain("ABC");
     });
 
-    it("should wrap long lines", () => {
-      const longContent = "\u2801".repeat(100);
-      const result = generateBrfContent(longContent, { pageWidth: 40 });
+    it("should wrap long lines at cellsPerLine boundary", () => {
+      // 50 characters of ⠁ (A) with 40 cells per line should wrap
+      const longContent = "\u2801".repeat(50);
+      const result = generateBrfContent(longContent, { format: "a4-brasil" });
+      const lines = result.split("\r\n");
+      // First line should be 40 chars, second should have the rest
+      expect(lines[0].length).toBeLessThanOrEqual(40);
+    });
 
-      // Should have multiple lines due to wrapping
-      const lines = result.split("\n").filter((line) => line.length > 0);
-      expect(lines.length).toBeGreaterThan(1);
+    it("should use page break (FF) between pages", () => {
+      // Create content that spans multiple pages
+      const lines = Array(30).fill("\u2801".repeat(10)).join("\n");
+      const result = generateBrfContent(lines, { format: "a4-brasil" });
+      expect(result).toContain("\x0C"); // Form Feed
+    });
+
+    it("should add page numbers when pageNumbering is true", () => {
+      const content = "\u2801\u2803\u2809";
+      const result = generateBrfContent(content, { pageNumbering: true });
+      expect(result).toContain("1"); // Page number
+    });
+
+    it("should include header when includeHeader is true", () => {
+      const content = "\u2801\u2803\u2809";
+      const result = generateBrfContent(content, {
+        includeHeader: true,
+        title: "Test Title",
+      });
+      expect(result).toContain("TEST TITLE");
     });
   });
 
   describe("exportAsBrf", () => {
-    it("should export content as BRF format", () => {
-      const content = "\u2801\u2802\u2804";
-      const result = exportAsBrf(content, {
-        title: "My Project",
-        author: "Me",
-      });
+    it("should return a Buffer", () => {
+      const content = "\u2801\u2803\u2809";
+      const result = exportAsBrf(content);
+      expect(result).toBeInstanceOf(Buffer);
+    });
 
-      expect(result).toContain("My Project");
-      expect(result).toContain("Me");
-      expect(result).toContain(content);
+    it("should contain ASCII-only content", () => {
+      const content = "\u2801\u2803\u2809";
+      const result = exportAsBrf(content);
+      const str = result.toString("ascii");
+      // All characters should be valid ASCII (0-127)
+      for (let i = 0; i < str.length; i++) {
+        expect(str.charCodeAt(i)).toBeLessThan(128);
+      }
+    });
+
+    it("should handle empty content", () => {
+      const result = exportAsBrf("");
+      expect(result).toBeInstanceOf(Buffer);
     });
   });
 
@@ -145,55 +156,100 @@ describe("Braille Export Module", () => {
 
       expect(result).toContain("My Project");
       expect(result).toContain("Me");
-      expect(result).toContain("BRAILLE CONTENT:");
-      expect(result).toContain("TEXT CONTENT:");
+      expect(result).toContain("CONTEÚDO BRAILLE:");
+      expect(result).toContain("CONTEÚDO TEXTO:");
       expect(result).toContain(brailleContent);
       expect(result).toContain(textContent);
     });
+  });
 
-    it("should include ISO timestamp", () => {
-      const result = exportAsPlainText("\u2801", "test");
-      expect(result).toMatch(/Generated: \d{4}-\d{2}-\d{2}T/);
+  describe("getPageFormats", () => {
+    it("should return available page formats", () => {
+      const formats = getPageFormats();
+      expect(formats.length).toBeGreaterThan(0);
+      expect(formats.some((f) => f.key === "a4-brasil")).toBe(true);
+      expect(formats.some((f) => f.key === "bana-standard")).toBe(true);
+    });
+
+    it("should not include custom format", () => {
+      const formats = getPageFormats();
+      expect(formats.some((f) => f.key === "custom")).toBe(false);
+    });
+  });
+
+  describe("estimateExport", () => {
+    it("should estimate pages and bytes correctly", () => {
+      const content = "\u2801".repeat(100);
+      const result = estimateExport(content, { format: "a4-brasil" });
+      expect(result.estimatedPages).toBeGreaterThan(0);
+      expect(result.estimatedBytes).toBeGreaterThan(0);
+      expect(result.cellsPerLine).toBe(40);
+      expect(result.linesPerPage).toBe(25);
+    });
+
+    it("should use custom dimensions when provided", () => {
+      const content = "\u2801".repeat(100);
+      const result = estimateExport(content, {
+        cellsPerLine: 32,
+        linesPerPage: 27,
+      });
+      expect(result.cellsPerLine).toBe(32);
+      expect(result.linesPerPage).toBe(27);
+    });
+  });
+
+  describe("PAGE_FORMATS", () => {
+    it("should have A4 Brasil with 40 cells and 25 lines", () => {
+      expect(PAGE_FORMATS["a4-brasil"].cellsPerLine).toBe(40);
+      expect(PAGE_FORMATS["a4-brasil"].linesPerPage).toBe(25);
+    });
+
+    it("should have BANA standard with 40 cells and 25 lines", () => {
+      expect(PAGE_FORMATS["bana-standard"].cellsPerLine).toBe(40);
+      expect(PAGE_FORMATS["bana-standard"].linesPerPage).toBe(25);
+    });
+
+    it("should have A4 internacional with 32 cells and 27 lines", () => {
+      expect(PAGE_FORMATS["a4-internacional"].cellsPerLine).toBe(32);
+      expect(PAGE_FORMATS["a4-internacional"].linesPerPage).toBe(27);
     });
   });
 
   describe("Integration tests", () => {
     it("should handle complete export workflow", () => {
-      const brailleContent = "\u2801\u2802\u2804\u2808";
-      const textContent = "Do Re Mi Fa";
+      const brailleContent = "\u2801\u2803\u2809\u2819"; // A B C D
 
       // Validate
       const validation = validateBrailleContent(brailleContent);
       expect(validation.valid).toBe(true);
 
       // Export as BRF
-      const brfContent = exportAsBrf(brailleContent, {
+      const brfBuffer = exportAsBrf(brailleContent, {
         title: "Music Piece",
-        author: "Composer",
+        format: "a4-brasil",
       });
-      expect(brfContent).toContain("Music Piece");
+      expect(brfBuffer).toBeInstanceOf(Buffer);
+      const brfStr = brfBuffer.toString("ascii");
+      expect(brfStr).toContain("ABCD");
 
       // Export as plain text
-      const txtContent = exportAsPlainText(brailleContent, textContent, {
+      const txtContent = exportAsPlainText(brailleContent, "Do Re Mi Fa", {
         title: "Music Piece",
         author: "Composer",
       });
-      expect(txtContent).toContain(textContent);
+      expect(txtContent).toContain("Do Re Mi Fa");
 
-      // Estimate size
-      const size = estimateFileSize(brailleContent);
-      expect(size.bytes).toBeGreaterThan(0);
+      // Estimate
+      const estimate = estimateExport(brailleContent);
+      expect(estimate.estimatedPages).toBe(1);
     });
 
     it("should handle empty Braille content gracefully", () => {
       const validation = validateBrailleContent("");
       expect(validation.valid).toBe(true);
 
-      const brfContent = exportAsBrf("");
-      expect(brfContent).toBeDefined();
-
-      const size = estimateFileSize("");
-      expect(size.bytes).toBe(0);
+      const brfBuffer = exportAsBrf("");
+      expect(brfBuffer).toBeInstanceOf(Buffer);
     });
   });
 });

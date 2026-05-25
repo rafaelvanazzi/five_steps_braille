@@ -33,7 +33,7 @@ export default function BrailleProjectsAdmin() {
   const [selectedProject, setSelectedProject] = useState<BrailleProject | null>(null);
   const [showDetails, setShowDetails] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
-  const [exportFormat, setExportFormat] = useState<"brf" | "txt" | "musicxml">("brf");
+  const [exportFormat, setExportFormat] = useState<"brf" | "txt">("brf");
 
   const { data: projects = [], isLoading } = trpc.editor.all.useQuery();
   const { data: stats } = trpc.editor.stats.useQuery();
@@ -71,7 +71,7 @@ export default function BrailleProjectsAdmin() {
     await deleteMutation.mutateAsync({ id });
   };
 
-  const handleExport = async (id: number, format: "brf" | "txt" | "musicxml") => {
+  const handleExport = async (id: number, format: "brf" | "txt") => {
     await exportMutation.mutateAsync({ id, format });
   };
 
@@ -193,15 +193,7 @@ export default function BrailleProjectsAdmin() {
                           >
                             <FileText className="w-4 h-4" />
                           </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            title="Exportar como MusicXML"
-                            onClick={() => handleExport(proj.id, "musicxml")}
-                            disabled={exportMutation.isPending}
-                          >
-                            <FileMusic className="w-4 h-4" />
-                          </Button>
+
                           <Button
                             size="sm"
                             variant="outline"
@@ -266,13 +258,7 @@ export default function BrailleProjectsAdmin() {
                   <Download className="w-4 h-4 mr-2" />
                   Exportar BRF
                 </Button>
-                <Button
-                  onClick={() => handleExport(selectedProject.id, "musicxml")}
-                  disabled={exportMutation.isPending}
-                >
-                  <Download className="w-4 h-4 mr-2" />
-                  Exportar MusicXML
-                </Button>
+
                 <Button
                   onClick={() => handleExport(selectedProject.id, "txt")}
                   disabled={exportMutation.isPending}

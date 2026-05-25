@@ -6,7 +6,7 @@
  */
 import { useEffect, useRef, useMemo } from 'react';
 import { Renderer, Stave, StaveNote, Voice, Formatter, Accidental, Dot, Curve } from 'vexflow';
-import type { ParsedElement, ParsedNote, ParsedRest } from '../lib/brailleMusic';
+import type { ParsedElement, ParsedNote, ParsedRest, ParsedKeySignature } from '../lib/brailleMusic';
 
 interface ScoreRendererProps {
   elements: ParsedElement[];
@@ -179,6 +179,12 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
     return { numerator: 4, denominator: 4 };
   }, [elements]);
 
+  // Extract key signature from parsed elements
+  const keySignature = useMemo(() => {
+    const keySigEl = elements.find(el => el.type === 'keysignature') as ParsedKeySignature | undefined;
+    return keySigEl?.vexKey || null;
+  }, [elements]);
+
   // Group elements into measures
   const measures = useMemo(() => groupIntoMeasures(elements), [elements]);
 
@@ -213,7 +219,7 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
     for (let i = 0; i < measures.length; i++) {
       const measure = measures[i];
       const measureNotes = measure.notes.filter(n => n.type === 'note' || n.type === 'rest');
-      const extraW = i === 0 ? 80 : 0; // Extra space for clef + time signature
+      const extraW = i === 0 ? (80 + (keySignature ? 40 : 0)) : 0; // Extra space for clef + key sig + time signature
       const notesWidth = measureNotes.reduce((sum, n) => sum + getNoteWidth(n), 0);
       const staveW = Math.max(minStaveWidth, notesWidth + extraW + 40); // +40 for padding
 
@@ -240,7 +246,7 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
 
       // Calculate stave width dynamically based on note durations
       // Add extra space for first measure (clef + time signature take ~80px)
-      const extraWidth = isFirst ? 80 : 0;
+      const extraWidth = isFirst ? (80 + (keySignature ? 40 : 0)) : 0;
       const notesWidth = measureNotes.reduce((sum, n) => sum + getNoteWidth(n), 0);
       const currentStaveWidth = Math.max(minStaveWidth, notesWidth + extraWidth + 40); // +40 for padding
 
@@ -249,6 +255,10 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
       const stave = new Stave(x, y, currentStaveWidth);
       if (isFirst) {
         stave.addClef('treble');
+        // Add key signature if present
+        if (keySignature) {
+          stave.addKeySignature(keySignature);
+        }
         // Add time signature on first measure (from parsed or prop)
         stave.addTimeSignature(`${timeSignature.numerator}/${timeSignature.denominator}`);
       }
