@@ -883,7 +883,6 @@ export async function updateBrailleProject(id: number, data: Partial<InsertBrail
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   await db.update(brailleProjects).set(data).where(eq(brailleProjects.id, id));
-  return getBrailleProjectById(id);
 }
 
 export async function deleteBrailleProject(id: number) {
