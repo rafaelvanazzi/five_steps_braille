@@ -147,3 +147,40 @@ export async function deleteEmailCampaign(id: number): Promise<void> {
   await db.delete(emailCampaignLogs).where(eq(emailCampaignLogs.campaignId, id));
   await db.delete(emailCampaigns).where(eq(emailCampaigns.id, id));
 }
+
+/**
+ * Get all logs for a campaign
+ */
+export async function getCampaignLogs(campaignId: number): Promise<EmailCampaignLog[]> {
+  const db = await getDatabase();
+  return db.select().from(emailCampaignLogs).where(eq(emailCampaignLogs.campaignId, campaignId)).orderBy(emailCampaignLogs.createdAt);
+}
+
+/**
+ * Update a campaign log status
+ */
+export async function updateCampaignLogStatus(logId: number, status: "sent" | "failed", errorMessage?: string): Promise<void> {
+  const db = await getDatabase();
+  const updateData: Record<string, unknown> = { status };
+  if (status === "sent") {
+    updateData.sentAt = new Date();
+  }
+  if (errorMessage) {
+    updateData.errorMessage = errorMessage;
+  }
+  await db.update(emailCampaignLogs).set(updateData).where(eq(emailCampaignLogs.id, logId));
+}
+
+/**
+ * Increment campaign sent count
+ */
+export async function incrementCampaignSentCount(campaignId: number): Promise<void> {
+  const db = await getDatabase();
+  const campaign = await getEmailCampaignById(campaignId);
+  if (campaign) {
+    await db.update(emailCampaigns).set({
+      sentCount: (campaign.sentCount || 0) + 1,
+      updatedAt: new Date(),
+    }).where(eq(emailCampaigns.id, campaignId));
+  }
+}

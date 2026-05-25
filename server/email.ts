@@ -105,6 +105,26 @@ export interface BulkEmailPayload {
   replyTo?: string;
 }
 
+/**
+ * Send a single email - used by the email queue
+ */
+export async function sendEmail(opts: { to: string; subject: string; html: string; replyTo?: string }): Promise<void> {
+  const client = getResend();
+  if (!client) {
+    throw new Error("RESEND_API_KEY not configured");
+  }
+  const { error } = await client.emails.send({
+    from: FROM_ADDRESS,
+    to: opts.to,
+    replyTo: opts.replyTo ? [opts.replyTo] : [REPLY_TO],
+    subject: opts.subject,
+    html: opts.html,
+  });
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
 export async function sendBulkEmail(payload: BulkEmailPayload): Promise<{ success: number; failed: number; errors: string[] }> {
   const client = getResend();
   if (!client) {

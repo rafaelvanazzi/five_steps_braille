@@ -1,9 +1,8 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-// parseCookie and COOKIE_NAME removed - using owner identity (empty string) for Heartbeat
 import { router, protectedProcedure } from "../_core/trpc";
-import { createHeartbeatJob, updateHeartbeatJob, deleteHeartbeatJob } from "../_core/heartbeat";
 import * as emailCampaigns from "../email-campaigns";
+import { startCampaignSending, cancelCampaignSending, getCampaignQueueStatus, getActiveCampaignIds } from "../email-queue";
 
 const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
   if (ctx.user.role !== "admin") {
@@ -56,14 +55,81 @@ export const emailCampaignsRouter = router({
     }),
 
   /**
+   * Update an existing campaign (only if draft)
+   */
+  update: adminProcedure
+    .input(
+      z.object({
+        id: z.number(),
+        name: z.string().min(1).optional(),
+        subject: z.string().min(1).optional(),
+        htmlContent: z.string().min(1).optional(),
+        replyTo: z.string().email().optional(),
+        recipients: z.array(z.string().email()).min(1).optional(),
+        intervalMinutes: z.number().min(1).max(1440).optional(),
+      })
+    )
+    .mutation(async ({ input, ctx }) => {
+      const campaign = await emailCampaigns.getEmailCampaignById(input.id);
+      if (!campaign) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Campaign not found" });
+      }
+      if (campaign.createdBy !== ctx.user.id && ctx.user.role !== "admin") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Access denied" });
+      }
+      if (campaign.status !== "draft") {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Só é possível editar campanhas em rascunho." });
+      }
+
+      // If recipients changed, delete old logs and recreate
+      if (input.recipients) {
+        await emailCampaigns.deleteEmailCampaign(campaign.id);
+        const updatedCampaign = await emailCampaigns.createEmailCampaign({
+          createdBy: ctx.user.id,
+          name: input.name || campaign.name,
+          subject: input.subject || campaign.subject,
+          htmlContent: input.htmlContent || campaign.htmlContent,
+          replyTo: input.replyTo || campaign.replyTo,
+          recipients: JSON.stringify(input.recipients),
+          intervalMinutes: input.intervalMinutes || campaign.intervalMinutes,
+          totalRecipients: input.recipients.length,
+          status: "draft",
+        });
+        await emailCampaigns.createCampaignLogs(updatedCampaign.id, input.recipients);
+        return updatedCampaign;
+      }
+
+      // Otherwise just update the fields
+      // Simple field update via raw DB access
+      const { getDb } = await import("../db");
+      const { emailCampaigns: emailCampaignsTable } = await import("../../drizzle/schema");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB error" });
+
+      const updateData: Record<string, unknown> = { updatedAt: new Date() };
+      if (input.name) updateData.name = input.name;
+      if (input.subject) updateData.subject = input.subject;
+      if (input.htmlContent) updateData.htmlContent = input.htmlContent;
+      if (input.replyTo) updateData.replyTo = input.replyTo;
+      if (input.intervalMinutes) updateData.intervalMinutes = input.intervalMinutes;
+
+      await db.update(emailCampaignsTable).set(updateData).where(eq(emailCampaignsTable.id, campaign.id));
+      return await emailCampaigns.getEmailCampaignById(campaign.id);
+    }),
+
+  /**
    * List campaigns for the current user
    */
   list: adminProcedure.query(async ({ ctx }) => {
     try {
       const campaigns = await emailCampaigns.getEmailCampaignsByUser(ctx.user.id);
+      const activeIds = getActiveCampaignIds();
       return campaigns.map((c) => ({
         ...c,
         recipients: JSON.parse(c.recipients || "[]"),
+        isActive: activeIds.includes(c.id),
+        queueStatus: getCampaignQueueStatus(c.id),
       }));
     } catch (error) {
       console.error("[email-campaigns] Failed to list campaigns:", error);
@@ -75,7 +141,7 @@ export const emailCampaignsRouter = router({
   }),
 
   /**
-   * Get a specific campaign
+   * Get a specific campaign with stats
    */
   getById: adminProcedure
     .input(z.object({ id: z.number() }))
@@ -88,9 +154,13 @@ export const emailCampaignsRouter = router({
         if (campaign.createdBy !== ctx.user.id && ctx.user.role !== "admin") {
           throw new TRPCError({ code: "FORBIDDEN", message: "Access denied" });
         }
+        const stats = await emailCampaigns.getCampaignStats(input.id);
+        const queueStatus = getCampaignQueueStatus(input.id);
         return {
           ...campaign,
           recipients: JSON.parse(campaign.recipients || "[]"),
+          stats,
+          queueStatus,
         };
       } catch (error) {
         if (error instanceof TRPCError) throw error;
@@ -103,7 +173,7 @@ export const emailCampaignsRouter = router({
     }),
 
   /**
-   * Schedule a campaign to start sending emails
+   * Start sending a campaign (uses in-memory queue with interval)
    */
   schedule: adminProcedure
     .input(z.object({ id: z.number() }))
@@ -117,58 +187,33 @@ export const emailCampaignsRouter = router({
           throw new TRPCError({ code: "FORBIDDEN", message: "Access denied" });
         }
 
-        // Use empty string to force project owner identity for Heartbeat
-        // This avoids 401 errors from expired/invalid user session cookies
-        const sessionToken = "";
+        // Start sending using in-memory queue
+        const result = await startCampaignSending(campaign.id);
 
-        // Calculate cron expression based on interval
-        // For simplicity, start immediately and repeat every N minutes
-        // Format: "sec min hour dom mon dow" (UTC)
-        const cronExpression = `0 */${campaign.intervalMinutes} * * * *`;
-
-        // Create Heartbeat job
-        let job;
-        try {
-          job = await createHeartbeatJob(
-            {
-              name: `email-campaign-${campaign.id}`,
-              cron: cronExpression,
-              path: "/api/scheduled/sendCampaignEmails",
-              payload: { campaignId: campaign.id },
-              description: `Send ${campaign.totalRecipients} emails for campaign "${campaign.name}"`,
-            },
-            sessionToken
-          );
-          console.log(`[email-campaigns] Heartbeat job created: ${job.taskUid}`);
-        } catch (heartbeatError) {
-          console.error("[email-campaigns] Heartbeat error:", heartbeatError);
+        if (!result.success) {
           throw new TRPCError({
-            code: "INTERNAL_SERVER_ERROR",
-            message: `Heartbeat CreateHeartbeatJob failed: ${heartbeatError instanceof Error ? heartbeatError.message : "Unknown error"}`,
+            code: "BAD_REQUEST",
+            message: result.message,
           });
         }
 
-        // Update campaign with task UID and status
-        await emailCampaigns.updateCampaignWithTaskUid(campaign.id, job.taskUid);
-        await emailCampaigns.updateCampaignStatus(campaign.id, "scheduled");
-
         return {
           id: campaign.id,
-          taskUid: job.taskUid,
-          nextExecutionAt: job.nextExecutionAt,
+          message: result.message,
+          totalEmails: result.totalEmails,
         };
       } catch (error) {
         if (error instanceof TRPCError) throw error;
-        console.error("[email-campaigns] Failed to schedule campaign:", error);
+        console.error("[email-campaigns] Failed to start campaign:", error);
         throw new TRPCError({
           code: "INTERNAL_SERVER_ERROR",
-          message: error instanceof Error ? error.message : "Failed to schedule campaign",
+          message: error instanceof Error ? error.message : "Failed to start campaign",
         });
       }
     }),
 
   /**
-   * Cancel a scheduled campaign
+   * Cancel a running campaign
    */
   cancel: adminProcedure
     .input(z.object({ id: z.number() }))
@@ -182,15 +227,8 @@ export const emailCampaignsRouter = router({
           throw new TRPCError({ code: "FORBIDDEN", message: "Access denied" });
         }
 
-        // Delete Heartbeat job if exists (use empty string for owner identity)
-        if (campaign.scheduleCronTaskUid) {
-          try {
-            await deleteHeartbeatJob(campaign.scheduleCronTaskUid, "");
-          } catch (err) {
-            console.error("[email-campaigns] Failed to delete Heartbeat job:", err);
-            // Continue anyway
-          }
-        }
+        // Cancel in-memory queue
+        cancelCampaignSending(campaign.id);
 
         // Update campaign status
         await emailCampaigns.updateCampaignStatus(campaign.id, "cancelled");
@@ -221,15 +259,8 @@ export const emailCampaignsRouter = router({
           throw new TRPCError({ code: "FORBIDDEN", message: "Access denied" });
         }
 
-        // Delete Heartbeat job if exists (use empty string for owner identity)
-        if (campaign.scheduleCronTaskUid) {
-          try {
-            await deleteHeartbeatJob(campaign.scheduleCronTaskUid, "");
-          } catch (err) {
-            console.error("[email-campaigns] Failed to delete Heartbeat job:", err);
-            // Continue anyway
-          }
-        }
+        // Cancel if running
+        cancelCampaignSending(campaign.id);
 
         // Delete campaign and logs
         await emailCampaigns.deleteEmailCampaign(campaign.id);
@@ -243,5 +274,33 @@ export const emailCampaignsRouter = router({
           message: "Failed to delete campaign",
         });
       }
+    }),
+
+  /**
+   * Get real-time status of a running campaign
+   */
+  status: adminProcedure
+    .input(z.object({ id: z.number() }))
+    .query(async ({ input, ctx }) => {
+      const campaign = await emailCampaigns.getEmailCampaignById(input.id);
+      if (!campaign) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Campaign not found" });
+      }
+      if (campaign.createdBy !== ctx.user.id && ctx.user.role !== "admin") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Access denied" });
+      }
+
+      const stats = await emailCampaigns.getCampaignStats(input.id);
+      const queueStatus = getCampaignQueueStatus(input.id);
+
+      return {
+        campaign: {
+          ...campaign,
+          recipients: JSON.parse(campaign.recipients || "[]"),
+        },
+        stats,
+        queueStatus,
+        isActive: queueStatus !== null,
+      };
     }),
 });
