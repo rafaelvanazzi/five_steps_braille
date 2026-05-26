@@ -8,10 +8,11 @@ import {
   parseBrailleMusic,
   parseBrailleLine,
   parseBrailleSelection,
+  perkinsKeysToBraille,
+  brailleToPerkins,
   perkinsDotsToUnicode,
   describeBrailleChar,
-  unicodeToDots,
-  getQuickReference,
+  QUICK_REFERENCE,
   type ParsedElement,
   type PerkinsKeyState,
   type ParseOptions,
@@ -169,11 +170,10 @@ function PerkinsKeyboard({
 // ─── QUICK REFERENCE PANEL ─────────────────────────────────────────────────────
 
 function QuickReferencePanel({ onInsert }: { onInsert: (char: string) => void }) {
-  const ref = useMemo(() => getQuickReference(), []);
+  const ref = QUICK_REFERENCE;
   const [filter, setFilter] = useState<string>("all");
 
   const categories = [
-    
     { key: "note-whole-half", label: "Semibreves / Semicolcheias" },
     { key: "note-half-32nd", label: "Mínimas / Fusas" },
     { key: "note-quarter", label: "Semínimas" },

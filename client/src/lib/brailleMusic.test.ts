@@ -220,3 +220,125 @@ describe('Braille Music Parser', () => {
     });
   });
 });
+
+describe('Key Signature Mapping - Official Braille Standard', () => {
+  it('should parse 1 sharp (F major) correctly', () => {
+    // ⠩ = 1 sharp (F major)
+    const result = parseBrailleMusic('⠩ ⠼⠋ ⠐⠹');
+    
+    expect(result.errors).toEqual([]);
+    expect(result.elements.length).toBeGreaterThan(0);
+    
+    // First element should be key signature
+    const keySignature = result.elements.find(el => el.type === 'keysignature');
+    expect(keySignature).toBeDefined();
+    expect(keySignature?.vexKey).toBe('F');
+  });
+
+  it('should parse 2 sharps (G major) correctly', () => {
+    // ⠩⠩ = 2 sharps (G major)
+    const result = parseBrailleMusic('⠩⠩ ⠼⠋ ⠐⠹');
+    
+    expect(result.errors).toEqual([]);
+    const keySignature = result.elements.find(el => el.type === 'keysignature');
+    expect(keySignature).toBeDefined();
+    expect(keySignature?.vexKey).toBe('C');
+  });
+
+  it('should parse 3 sharps (A major) correctly', () => {
+    // ⠩⠩⠩ = 3 sharps (A major)
+    const result = parseBrailleMusic('⠩⠩⠩ ⠼⠋ ⠐⠹');
+    
+    expect(result.errors).toEqual([]);
+    const keySignature = result.elements.find(el => el.type === 'keysignature');
+    expect(keySignature).toBeDefined();
+    expect(keySignature?.vexKey).toBe('G');
+  });
+
+  it('should parse 1 flat (F major) correctly', () => {
+    // ⠣ = 1 flat (F major)
+    const result = parseBrailleMusic('⠣ ⠼⠋ ⠐⠹');
+    
+    expect(result.errors).toEqual([]);
+    const keySignature = result.elements.find(el => el.type === 'keysignature');
+    expect(keySignature).toBeDefined();
+    expect(keySignature?.vexKey).toBe('f');
+  });
+
+  it('should parse 2 flats (Bb major) correctly', () => {
+    // ⠣⠣ = 2 flats (Bb major)
+    const result = parseBrailleMusic('⠣⠣ ⠼⠋ ⠐⠹');
+    
+    expect(result.errors).toEqual([]);
+    const keySignature = result.elements.find(el => el.type === 'keysignature');
+    expect(keySignature).toBeDefined();
+    expect(keySignature?.vexKey).toBe('c');
+  });
+
+  it('should parse 3 flats (Eb major) correctly', () => {
+    // ⠣⠣⠣ = 3 flats (Eb major)
+    const result = parseBrailleMusic('⠣⠣⠣ ⠼⠋ ⠐⠹');
+    
+    expect(result.errors).toEqual([]);
+    const keySignature = result.elements.find(el => el.type === 'keysignature');
+    expect(keySignature).toBeDefined();
+    expect(keySignature?.vexKey).toBe('g');
+  });
+
+  it('should parse key signature with spaces correctly', () => {
+    // ⠩ ⠼⠙ ⠐⠹ = 1 sharp + 4/4 + Do
+    const result = parseBrailleMusic('⠩ ⠼⠙ ⠐⠹');
+    
+    expect(result.errors).toEqual([]);
+    expect(result.elements.length).toBeGreaterThan(0);
+    
+    const keySignature = result.elements.find(el => el.type === 'keysignature');
+    expect(keySignature).toBeDefined();
+    expect(keySignature?.vexKey).toBe('F');
+    
+    // Should also have time signature and note
+    const timeSignature = result.elements.find(el => el.type === 'timesignature');
+    expect(timeSignature).toBeDefined();
+    
+    const note = result.elements.find(el => el.type === 'note');
+    expect(note).toBeDefined();
+  });
+
+  it('should parse 2 flats with spaces correctly', () => {
+    // ⠣⠣ ⠼⠉ ⠐⠹⠱ = 2 flats + 3/4 + Do Re
+    const result = parseBrailleMusic('⠣⠣ ⠼⠉ ⠐⠹⠱');
+    
+    expect(result.errors).toEqual([]);
+    
+    const keySignature = result.elements.find(el => el.type === 'keysignature');
+    expect(keySignature).toBeDefined();
+    expect(keySignature?.vexKey).toBe('c');
+    
+    const timeSignature = result.elements.find(el => el.type === 'timesignature');
+    expect(timeSignature).toBeDefined();
+    expect(timeSignature?.numerator).toBe(3);
+    expect(timeSignature?.denominator).toBe(4);
+    
+    // Should have 2 notes
+    const notes = result.elements.filter(el => el.type === 'note');
+    expect(notes.length).toBe(2);
+  });
+
+  it('should handle no key signature (C major)', () => {
+    // No key signature = C major
+    const result = parseBrailleMusic('⠼⠙ ⠐⠹');
+    
+    expect(result.errors).toEqual([]);
+    
+    // Should NOT have a key signature element
+    const keySignature = result.elements.find(el => el.type === 'keysignature');
+    expect(keySignature).toBeUndefined();
+    
+    // Should have time signature and note
+    const timeSignature = result.elements.find(el => el.type === 'timesignature');
+    expect(timeSignature).toBeDefined();
+    
+    const note = result.elements.find(el => el.type === 'note');
+    expect(note).toBeDefined();
+  });
+});
