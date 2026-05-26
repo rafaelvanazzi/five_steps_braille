@@ -43,7 +43,7 @@ function Router() {
       <Route path="/forum/:slug" component={ForumCategory} />
       <Route path="/forum" component={Forum} />
       <Route path="/contato" component={Contact} />
-      <Route path="/editor-musicografia-braille" component={BrailleEditor} />
+      <Route path="/editor-musicografia-braille" element={<BrailleEditor />} />
       {/* @ts-ignore */}
       <Route path="/editor-demo" component={BrailleEditorDemo} />
       <Route path="/admin" component={Admin} />

@@ -443,6 +443,9 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
   // Measure context for disambiguation
   let beatsUsedInMeasure = 0;
   
+  // Track if we're in a note sequence (after octave sign or after a note)
+  let inNoteContext = false;
+  
   let i = 0;
   while (i < processInput.length) {
     let ch = processInput[i];
@@ -463,6 +466,7 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
           } as any);
         }
         beatsUsedInMeasure = 0;
+        inNoteContext = false; // End of note sequence
         i += 2;
         continue;
       }
@@ -475,6 +479,7 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
       }
       // Reset measure beat counter
       beatsUsedInMeasure = 0;
+      inNoteContext = false; // End of note sequence
       i++;
       continue;
     }
@@ -492,6 +497,7 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
         continue;
       }
       pendingOctave = OCTAVE_MAP[ch];
+      inNoteContext = true; // We're now in a note sequence
       i++;
       continue;
     }
@@ -511,15 +517,15 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
     }
     
     // Check for forced whole note marker
-    // CRITICAL: Only treat as marker if followed by a DIFFERENT note
+    // CRITICAL: Only treat as marker if followed by a DIFFERENT note AND we're NOT in a note context
     // (⠱ is both D and FORCED_WHOLE_MARKER, so check context)
     let forceWhole = false;
     let force32nd = false;
-    if (ch === FORCED_WHOLE_MARKER && i + 1 < processInput.length && NOTE_MAP[processInput[i + 1]]) {
+    if (ch === FORCED_WHOLE_MARKER && !inNoteContext && i + 1 < processInput.length && NOTE_MAP[processInput[i + 1]]) {
       forceWhole = true;
       i++;
       ch = processInput[i];
-    } else if (ch === FORCED_32ND_MARKER && i + 1 < processInput.length && NOTE_MAP[processInput[i + 1]]) {
+    } else if (ch === FORCED_32ND_MARKER && !inNoteContext && i + 1 < processInput.length && NOTE_MAP[processInput[i + 1]]) {
       force32nd = true;
       i++;
       ch = processInput[i];
@@ -602,6 +608,7 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
       currentOctave = octave;
       pendingAccidental = undefined;
       pendingArticulation = undefined;
+      inNoteContext = true; // We're in a note sequence
       
       i++;
       if (dotted && i < processInput.length && processInput[i] === AUGMENTATION_DOT) {

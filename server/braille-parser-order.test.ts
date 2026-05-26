@@ -36,7 +36,7 @@ describe('Braille Parser - Structural Order Validation', () => {
     });
   });
 
-  describe.skip('VALIDATION 2: ⠼⠙⠩ ⠼⠉ ⠐⠹⠱⠫ (4 sharps + 3/4 + 4th octave + C D E)', () => {
+  describe('VALIDATION 2: ⠼⠙⠩ ⠼⠉ ⠐⠹⠱⠫ (4 sharps + 3/4 + 4th octave + C D E)', () => {
     it('should parse 4 sharps, 3/4 time, and 3 notes without extra rests', () => {
       const result = parseBrailleMusic('⠼⠙⠩ ⠼⠉ ⠐⠹⠱⠫');
       
