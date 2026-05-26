@@ -176,6 +176,29 @@ const FIFTHS_TO_VEX_KEY: Record<number, string> = {
   '1': 'G', '2': 'D', '3': 'A', '4': 'E', '5': 'B', '6': 'F#', '7': 'C#',
 };
 
+// Official Braille Music Notation key signature mapping
+// Sharps (VexFlow uses uppercase): ⠩ (1) → "F", ⠩⠩ (2) → "C", etc.
+// Flats (VexFlow uses lowercase): ⠣ (1) → "f", ⠣⠣ (2) → "c", etc.
+const OFFICIAL_KEY_SIGNATURE_MAP: Record<string, string> = {
+  // Sharps (uppercase for VexFlow)
+  '\u2829': 'F',           // ⠩ (1 sharp)
+  '\u2829\u2829': 'C',    // ⠩⠩ (2 sharps)
+  '\u2829\u2829\u2829': 'G', // ⠩⠩⠩ (3 sharps)
+  '\u283C\u2819\u2829': 'D', // ⠼⠙⠩ (4 sharps)
+  '\u283C\u2811\u2829': 'A', // ⠼⠑⠩ (5 sharps)
+  '\u283C\u280B\u2829': 'E', // ⠼⠋⠩ (6 sharps)
+  '\u283C\u281B\u2829': 'B', // ⠼⠛⠩ (7 sharps)
+  
+  // Flats (lowercase for VexFlow)
+  '\u2823': 'f',           // ⠣ (1 flat)
+  '\u2823\u2823': 'c',    // ⠣⠣ (2 flats)
+  '\u2823\u2823\u2823': 'g', // ⠣⠣⠣ (3 flats)
+  '\u283C\u2819\u2823': 'd', // ⠼⠙⠣ (4 flats)
+  '\u283C\u2811\u2823': 'a', // ⠼⠑⠣ (5 flats)
+  '\u283C\u280B\u2823': 'e', // ⠼⠋⠣ (6 flats)
+  '\u283C\u281B\u2823': 'b', // ⠼⠛⠣ (7 flats)
+};
+
 // ─── PARSED TYPES ──────────────────────────────────────────────────────────────
 
 export interface ParsedNote {
@@ -656,7 +679,15 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
         
         if (sharpsCount > 0 || flatsCount > 0) {
           const fifths = sharpsCount > 0 ? sharpsCount : -flatsCount;
-          const vexKey = FIFTHS_TO_VEX_KEY[fifths.toString() as any] || 'C';
+          // Try to use official mapping first, fallback to fifths-based mapping
+          let vexKey = FIFTHS_TO_VEX_KEY[fifths.toString() as any] || 'C';
+          
+          // Check if we can extract the exact braille pattern for official mapping
+          const keySigPattern = input.substring(keySigStart, i);
+          if (OFFICIAL_KEY_SIGNATURE_MAP[keySigPattern]) {
+            vexKey = OFFICIAL_KEY_SIGNATURE_MAP[keySigPattern];
+          }
+          
           elements.push({
             type: 'keysignature',
             fifths,

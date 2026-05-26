@@ -17,6 +17,8 @@ interface ScoreRendererProps {
   onNoteClick?: (sourceIndex: number) => void;
   /** @deprecated Use onNoteClick instead */
   onMeasureClick?: (sourceIndex: number) => void;
+  /** Source index of the note to highlight (for bidirectional sync with Braille cursor) */
+  highlightedSourceIndex?: number | null;
 }
 
 // Hit area for individual notes (for click detection)
@@ -162,7 +164,7 @@ function accidentalToVex(acc: string): string {
   }
 }
 
-export default function ScoreRenderer({ elements, width = 1000, height = 300, beatsPerMeasure = 4, onNoteClick, onMeasureClick }: ScoreRendererProps) {
+export default function ScoreRenderer({ elements, width = 1000, height = 300, beatsPerMeasure = 4, onNoteClick, onMeasureClick, highlightedSourceIndex }: ScoreRendererProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   // Store note hit areas for click detection (per individual note)
   const noteHitAreas = useRef<NoteHitArea[]>([]);
@@ -406,7 +408,29 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
 
       x += currentStaveWidth;
     }
-  }, [elements, measures, width, height, timeSignature]);
+    
+    // Apply visual highlight to the selected note using hit areas
+    if (highlightedSourceIndex !== null && highlightedSourceIndex !== undefined) {
+      const svg = containerRef.current?.querySelector('svg');
+      if (svg) {
+        // Find the hit area for the highlighted note
+        const highlightedArea = noteHitAreas.current.find(area => area.sourceIndex === highlightedSourceIndex);
+        if (highlightedArea) {
+          // Create a highlight rectangle
+          const highlightRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+          highlightRect.setAttribute('x', String(highlightedArea.x - 5));
+          highlightRect.setAttribute('y', String(highlightedArea.y - 5));
+          highlightRect.setAttribute('width', String(highlightedArea.w + 10));
+          highlightRect.setAttribute('height', String(highlightedArea.h + 10));
+          highlightRect.setAttribute('fill', 'rgba(59, 130, 246, 0.2)');
+          highlightRect.setAttribute('stroke', '#3b82f6');
+          highlightRect.setAttribute('stroke-width', '2');
+          highlightRect.setAttribute('rx', '4');
+          svg.appendChild(highlightRect);
+        }
+      }
+    }
+  }, [elements, measures, width, height, timeSignature, highlightedSourceIndex]);
 
   // Add click listener on the SVG canvas to detect note clicks
   useEffect(() => {

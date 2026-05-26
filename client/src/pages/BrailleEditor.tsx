@@ -271,6 +271,9 @@ export default function BrailleEditor({ allowAnonymous = false }: BrailleEditorP
   const [cursorPos, setCursorPos] = useState(0);
   const [selectionRange, setSelectionRange] = useState<[number, number] | null>(null);
   
+  // Highlight note in score when cursor is on it (for bidirectional sync)
+  const [highlightedIndex, setHighlightedIndex] = useState<number | null>(null);
+  
   // Time signature for disambiguation
   const [beatsPerMeasure, setBeatsPerMeasure] = useState(4);
   
@@ -369,7 +372,13 @@ export default function BrailleEditor({ allowAnonymous = false }: BrailleEditorP
     } else {
       setSelectionRange(null);
     }
-  }, []);
+    
+    // Find and highlight the note at cursor position
+    const noteAtCursor = parsedElements.find(
+      el => el.sourceIndex === start && (el.type === 'note' || el.type === 'rest')
+    );
+    setHighlightedIndex(noteAtCursor?.sourceIndex ?? null);
+  }, [parsedElements]);
 
   // ─── BRAILLE INPUT HANDLERS ────────────────────────────────────────────────
 
@@ -964,6 +973,7 @@ export default function BrailleEditor({ allowAnonymous = false }: BrailleEditorP
                   elements={parsedElements}
                   width={scoreWidth}
                   height={180}
+                  highlightedSourceIndex={highlightedIndex}
                   onNoteClick={(sourceIndex) => {
                     // Move cursor in Braille textarea to the clicked note's position
                     // Only move cursor (not select) to keep parseBrailleLine rendering the full line
@@ -1182,6 +1192,11 @@ export default function BrailleEditor({ allowAnonymous = false }: BrailleEditorP
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      
+      {/* Accessibility: Announce highlighted note */}
+      <span className="sr-only" aria-live="polite" aria-atomic="true">
+        {highlightedIndex !== null ? `Nota selecionada na partitura, posição ${highlightedIndex}` : ''}
+      </span>
     </SiteLayout>
   );
 }
