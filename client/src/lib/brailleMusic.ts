@@ -111,10 +111,11 @@ const BARLINE_MAP: Record<string, 'single' | 'end' | 'repeat-begin' | 'repeat-en
 
 // Time signature map
 const TIME_SIGNATURE_MAP: Record<string, { numerator: number; denominator: number }> = {
-  '\u2830\u2819': { numerator: 2, denominator: 4 },  // ⠰⠙
-  '\u2830\u2811': { numerator: 3, denominator: 4 },  // ⠰⠑
-  '\u2830\u280B': { numerator: 4, denominator: 4 },  // ⠰⠋
-  '\u2830\u281B': { numerator: 6, denominator: 8 },  // ⠰⠛
+  '\u283C\u2819': { numerator: 4, denominator: 4 },  // ⠼⠙ = 4/4 (digit 1)
+  '\u283C\u2809': { numerator: 3, denominator: 4 },  // ⠼⠉ = 3/4 (special char)
+  '\u283C\u2811': { numerator: 3, denominator: 4 },  // ⠼⠑ = 3/4 (digit 2)
+  '\u283C\u280B': { numerator: 2, denominator: 4 },  // ⠼⠋ = 2/4 (digit 3)
+  '\u283C\u281B': { numerator: 6, denominator: 8 },  // ⠼⠛ = 6/8 (digit 4)
 };
 
 // Braille digits
@@ -132,18 +133,18 @@ const OFFICIAL_KEY_SIGNATURE_MAP: Record<string, string> = {
   '\u2829': 'F',                              // ⠩ = 1 sharp
   '\u2829\u2829': 'C',                        // ⠩⠩ = 2 sharps
   '\u2829\u2829\u2829': 'G',                  // ⠩⠩⠩ = 3 sharps
-  '\u2830\u281B\u2829': 'D',                  // ⠼⠛⠩ = 4 sharps
-  '\u2830\u2813\u2829': 'A',                  // ⠼⠙⠩ = 5 sharps
-  '\u2830\u280A\u2829': 'E',                  // ⠼⠊⠩ = 6 sharps
-  '\u2830\u281A\u2829': 'B',                  // ⠼⠚⠩ = 7 sharps
+  '\u283C\u2819\u2829': 'D',                  // ⠼⠙⠩ = 4 sharps (digit 1)
+  '\u283C\u2811\u2829': 'A',                  // ⠼⠑⠩ = 5 sharps (digit 2)
+  '\u283C\u280B\u2829': 'E',                  // ⠼⠋⠩ = 6 sharps (digit 3)
+  '\u283C\u281B\u2829': 'B',                  // ⠼⠛⠩ = 7 sharps (digit 4)
   // Flats (VexFlow lowercase)
   '\u2823': 'f',                              // ⠣ = 1 flat
   '\u2823\u2823': 'c',                        // ⠣⠣ = 2 flats
   '\u2823\u2823\u2823': 'g',                  // ⠣⠣⠣ = 3 flats
-  '\u2830\u281B\u2823': 'd',                  // ⠼⠛⠣ = 4 flats
-  '\u2830\u2813\u2823': 'a',                  // ⠼⠙⠣ = 5 flats
-  '\u2830\u280A\u2823': 'e',                  // ⠼⠊⠣ = 6 flats
-  '\u2830\u281A\u2823': 'b',                  // ⠼⠚⠣ = 7 flats
+  '\u283C\u2819\u2823': 'd',                  // ⠼⠙⠣ = 4 flats (digit 1)
+  '\u283C\u2811\u2823': 'a',                  // ⠼⠑⠣ = 5 flats (digit 2)
+  '\u283C\u280B\u2823': 'e',                  // ⠼⠋⠣ = 6 flats (digit 3)
+  '\u283C\u281B\u2823': 'b',                  // ⠼⠛⠣ = 7 flats (digit 4)
 };
 
 // Fifths to VexFlow key mapping
@@ -166,7 +167,7 @@ const FIFTHS_TO_VEX_KEY: Record<string, string> = {
 };
 
 // Other constants
-const NUMBER_SIGN = '\u2830';      // ⠰
+const NUMBER_SIGN = '\u283C';      // ⠼
 const AUGMENTATION_DOT = '\u2824'; // ⠤
 const NOTE_TIE = '\u2824';         // ⠤ (also used for augmentation dot)
 const WORD_SIGN = '\u2820';        // ⠠
@@ -304,6 +305,107 @@ function isKeySignatureToken(token: string): { vexKey: string; fifths: number } 
   return null;
 }
 
+/**
+ * Parse structural tokens in official Braille order:
+ * [Key Signature] + [Time Signature] + [Octave] + [Notes]
+ */
+function parseStructuralTokens(tokens: string[]): {
+  keySignature: ParsedKeySignature | null;
+  timeSignature: ParsedTimeSignature | null;
+  initialOctave: number;
+  remainingTokens: string[];
+  remainingInput: string;
+} {
+  let tokenIndex = 0;
+  let keySignature: ParsedKeySignature | null = null;
+  let timeSignature: ParsedTimeSignature | null = null;
+  let initialOctave = 4;
+  let charOffset = 0;
+
+  // A) FIRST TOKEN: Check for key signature
+  if (tokenIndex < tokens.length) {
+    const keySigResult = isKeySignatureToken(tokens[tokenIndex]);
+    if (keySigResult) {
+      keySignature = {
+        type: 'keysignature',
+        fifths: keySigResult.fifths,
+        vexKey: keySigResult.vexKey,
+        sourceIndex: charOffset,
+      };
+      charOffset += tokens[tokenIndex].length + 1; // +1 for space
+      tokenIndex++;
+    }
+  }
+
+  // B) SECOND TOKEN (or first if no key sig): Check for time signature
+  if (tokenIndex < tokens.length) {
+    const token = tokens[tokenIndex];
+    
+    // Check if it's a time signature pattern (⠼ + 2 digits)
+    if (token.startsWith(NUMBER_SIGN)) {
+      // First try exact match in TIME_SIGNATURE_MAP
+      if (TIME_SIGNATURE_MAP[token]) {
+        const ts = TIME_SIGNATURE_MAP[token];
+        timeSignature = {
+          type: 'timesignature',
+          numerator: ts.numerator,
+          denominator: ts.denominator,
+          sourceIndex: charOffset,
+        };
+        charOffset += token.length + 1; // +1 for space
+        tokenIndex++;
+      } else {
+        // Try digit-based parsing
+        let digitStr = '';
+        for (let i = 1; i < token.length; i++) {
+          if (BRAILLE_DIGITS[token[i]]) {
+            digitStr += BRAILLE_DIGITS[token[i]];
+          } else {
+            break;
+          }
+        }
+        if (digitStr.length >= 2) {
+          const numerator = parseInt(digitStr[0], 10);
+          const denominator = parseInt(digitStr[1], 10);
+          if (!isNaN(numerator) && !isNaN(denominator)) {
+            timeSignature = {
+              type: 'timesignature',
+              numerator,
+              denominator,
+              sourceIndex: charOffset,
+            };
+            charOffset += token.length + 1; // +1 for space
+            tokenIndex++;
+          }
+        }
+      }
+    }
+  }
+
+  // C) NEXT TOKENS: Check for initial octave sign
+  if (tokenIndex < tokens.length) {
+    const token = tokens[tokenIndex];
+    // If first character is an octave sign, use it
+    if (token.length === 1 && OCTAVE_MAP[token] !== undefined) {
+      initialOctave = OCTAVE_MAP[token];
+      charOffset += token.length + 1; // +1 for space
+      tokenIndex++;
+    }
+  }
+
+  // Reconstruct remaining input from remaining tokens
+  const remainingTokens = tokens.slice(tokenIndex);
+  const remainingInput = remainingTokens.join(' ');
+
+  return {
+    keySignature,
+    timeSignature,
+    initialOctave,
+    remainingTokens,
+    remainingInput,
+  };
+}
+
 export function parseBrailleMusic(input: string, options?: ParseOptions): ParseResult {
   let beatsPerMeasure = options?.beatsPerMeasure ?? 4;
   
@@ -312,26 +414,23 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
   
   // Tokenize input by spaces
   const tokens = input.split(/\s+/).filter(t => t.length > 0);
-  let tokenIndex = 0;
   
-  // Check if first token is a key signature
-  if (tokenIndex < tokens.length) {
-    const keySigResult = isKeySignatureToken(tokens[tokenIndex]);
-    if (keySigResult) {
-      elements.push({
-        type: 'keysignature',
-        fifths: keySigResult.fifths,
-        vexKey: keySigResult.vexKey,
-        sourceIndex: 0,
-      } as ParsedKeySignature);
-      tokenIndex++; // Skip the key signature token
-    }
+  // Parse structural elements in official order: key signature -> time signature -> octave
+  const structural = parseStructuralTokens(tokens);
+  
+  // Add key signature and time signature to elements (only once, at the beginning)
+  if (structural.keySignature) {
+    elements.push(structural.keySignature);
+  }
+  if (structural.timeSignature) {
+    elements.push(structural.timeSignature);
+    beatsPerMeasure = structural.timeSignature.numerator;
   }
   
-  // Reconstruct input without the key signature token
-  const processInput = tokens.slice(tokenIndex).join(' ');
+  // Use the remaining input (without structural tokens) for note/rest parsing
+  const processInput = structural.remainingInput;
   
-  let currentOctave = 4; // default to 4th octave (middle C)
+  let currentOctave = structural.initialOctave; // Use initial octave from structural parsing
   let prevPitch: NoteName | null = null;
   let prevOctave = 4;
   let octaveSet = false;
@@ -412,25 +511,17 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
     }
     
     // Check for forced whole note marker
+    // CRITICAL: Only treat as marker if followed by a DIFFERENT note
+    // (⠱ is both D and FORCED_WHOLE_MARKER, so check context)
     let forceWhole = false;
     let force32nd = false;
-    if (ch === FORCED_WHOLE_MARKER) {
+    if (ch === FORCED_WHOLE_MARKER && i + 1 < processInput.length && NOTE_MAP[processInput[i + 1]]) {
       forceWhole = true;
       i++;
-      if (i >= processInput.length || !NOTE_MAP[processInput[i]]) {
-        // Invalid: marker without following note
-        i++;
-        continue;
-      }
       ch = processInput[i];
-    } else if (ch === FORCED_32ND_MARKER) {
+    } else if (ch === FORCED_32ND_MARKER && i + 1 < processInput.length && NOTE_MAP[processInput[i + 1]]) {
       force32nd = true;
       i++;
-      if (i >= processInput.length || !NOTE_MAP[processInput[i]]) {
-        // Invalid: marker without following note
-        i++;
-        continue;
-      }
       ch = processInput[i];
     }
     
