@@ -13,6 +13,7 @@ import { toast } from "sonner";
 export default function AdminEmailCampaigns() {
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [isDuplicating, setIsDuplicating] = useState(false); // Track if we're duplicating a completed campaign
   const [recipients, setRecipients] = useState("");
   const [name, setName] = useState("");
   const [subject, setSubject] = useState("");
@@ -40,6 +41,7 @@ export default function AdminEmailCampaigns() {
   const resetForm = () => {
     setShowForm(false);
     setEditingId(null);
+    setIsDuplicating(false);
     setRecipients("");
     setName("");
     setSubject("");
@@ -52,6 +54,18 @@ export default function AdminEmailCampaigns() {
   const handleEdit = (campaign: any) => {
     setEditingId(campaign.id);
     setName(campaign.name);
+    setSubject(campaign.subject);
+    setHtmlContent(campaign.htmlContent);
+    setReplyTo(campaign.replyTo || "contato@braille5steps.com");
+    setIntervalMinutes(campaign.intervalMinutes);
+    setRecipients(campaign.recipients?.join("\n") || "");
+    setShowForm(true);
+  };
+
+  const handleDuplicate = (campaign: any) => {
+    setEditingId(null);
+    setIsDuplicating(true);
+    setName(`${campaign.name} (Cópia)`);
     setSubject(campaign.subject);
     setHtmlContent(campaign.htmlContent);
     setReplyTo(campaign.replyTo || "contato@braille5steps.com");
@@ -156,7 +170,9 @@ export default function AdminEmailCampaigns() {
       {showForm && (
         <Card>
           <CardHeader>
-            <CardTitle>{editingId ? "Editar Campanha" : "Criar Nova Campanha"}</CardTitle>
+            <CardTitle>
+              {isDuplicating ? "Duplicar Campanha" : editingId ? "Editar Campanha" : "Criar Nova Campanha"}
+            </CardTitle>
             <CardDescription>Emails serão enviados com intervalo de N minutos entre cada um</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -255,7 +271,17 @@ export default function AdminEmailCampaigns() {
                   recipientList.length === 0
                 }
               >
-                {createMutation.isPending ? (editingId ? "Atualizando..." : "Criando...") : (editingId ? "Atualizar Campanha" : "Criar Campanha")}
+                {createMutation.isPending
+                  ? isDuplicating
+                    ? "Duplicando..."
+                    : editingId
+                    ? "Atualizando..."
+                    : "Criando..."
+                  : isDuplicating
+                  ? "Duplicar Campanha"
+                  : editingId
+                  ? "Atualizar Campanha"
+                  : "Criar Campanha"}
               </Button>
               <Button variant="outline" onClick={resetForm}>
                 <X className="w-4 h-4 mr-2" />
@@ -318,6 +344,17 @@ export default function AdminEmailCampaigns() {
                           title="Editar campanha"
                         >
                           <Edit className="w-4 h-4 text-blue-600" />
+                        </Button>
+                      )}
+                      {campaign.status === "completed" && (
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-7 w-7"
+                          onClick={() => handleDuplicate(campaign)}
+                          title="Duplicar campanha"
+                        >
+                          <Edit className="w-4 h-4 text-purple-600" />
                         </Button>
                       )}
                       {campaign.status === "draft" && (
