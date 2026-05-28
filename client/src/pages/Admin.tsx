@@ -410,6 +410,8 @@ export default function Admin() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [activeTab, setActiveTab] = useState<AdminTab>("dashboard");
   const [userSearch, setUserSearch] = useState("");
+  const [selectedMaterials, setSelectedMaterials] = useState<Set<number>>(new Set());
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; materialId: number } | null>(null);
 
   const utils = trpc.useUtils();
 
@@ -467,6 +469,29 @@ export default function Admin() {
     onError: () => toast.error("Erro ao remover comentário."),
   });
 
+  const bulkDeleteMutation = trpc.materials.bulkDelete.useMutation({
+    onSuccess: (count) => {
+      toast.success(`${count} material(is) removido(s).`);
+      setSelectedMaterials(new Set());
+      utils.materials.list.invalidate();
+      utils.materials.listAll.invalidate();
+      utils.admin.materialsWithUploader.invalidate();
+      utils.admin.stats.invalidate();
+    },
+    onError: (e) => toast.error(`Erro ao remover: ${e.message}`),
+  });
+
+  const bulkToggleVisibilityMutation = trpc.materials.bulkToggleVisibility.useMutation({
+    onSuccess: (result) => {
+      toast.success(`${result.count} material(is) ${result.hidden ? "ocultado(s)" : "publicado(s)"}`);
+      setSelectedMaterials(new Set());
+      utils.materials.list.invalidate();
+      utils.materials.listAll.invalidate();
+      utils.admin.materialsWithUploader.invalidate();
+    },
+    onError: (e) => toast.error(`Erro: ${e.message}`),
+  });
+
   // Computed
   const filteredUsers = useMemo(() => {
     if (!userSearch.trim()) return allUsers;
@@ -506,6 +531,43 @@ export default function Admin() {
       });
     };
     reader.readAsDataURL(selectedFile);
+  };
+
+  const handleSelectMaterial = (id: number) => {
+    const newSelected = new Set(selectedMaterials);
+    if (newSelected.has(id)) {
+      newSelected.delete(id);
+    } else {
+      newSelected.add(id);
+    }
+    setSelectedMaterials(newSelected);
+  };
+
+  const handleSelectAll = () => {
+    if (selectedMaterials.size === materialsWithUploader.length) {
+      setSelectedMaterials(new Set());
+    } else {
+      setSelectedMaterials(new Set(materialsWithUploader.map(m => m.id)));
+    }
+  };
+
+  const handleBulkDelete = () => {
+    if (selectedMaterials.size === 0) return;
+    if (confirm(`Remover permanentemente ${selectedMaterials.size} material(is)?`)) {
+      bulkDeleteMutation.mutate({ ids: Array.from(selectedMaterials) });
+    }
+  };
+
+  const handleBulkToggleVisibility = (hidden: boolean) => {
+    if (selectedMaterials.size === 0) return;
+    if (confirm(`${hidden ? "Ocultar" : "Publicar"} ${selectedMaterials.size} material(is)?`)) {
+      bulkToggleVisibilityMutation.mutate({ ids: Array.from(selectedMaterials), hidden });
+    }
+  };
+
+  const handleContextMenu = (e: React.MouseEvent, materialId: number) => {
+    e.preventDefault();
+    setContextMenu({ x: e.clientX, y: e.clientY, materialId });
   };
 
   if (!isAuthenticated || user?.role !== "admin") {
@@ -742,11 +804,39 @@ export default function Admin() {
             ) : materialsWithUploader.length === 0 ? (
               <p className="text-muted-foreground text-center py-12">Nenhum material cadastrado.</p>
             ) : (
-              <Card className="border-border shadow-sm overflow-hidden">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Título</TableHead>
+              <>
+                {selectedMaterials.size > 0 && (
+                  <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 bg-primary text-primary-foreground rounded-lg shadow-lg p-4 flex items-center gap-4 z-50">
+                    <span className="font-medium">{selectedMaterials.size} selecionado(s)</span>
+                    <div className="flex gap-2">
+                      <Button size="sm" variant="secondary" onClick={() => handleBulkToggleVisibility(true)}>
+                        <EyeOff className="w-4 h-4 mr-2" />
+                        Ocultar
+                      </Button>
+                      <Button size="sm" variant="secondary" onClick={() => handleBulkToggleVisibility(false)}>
+                        <Eye className="w-4 h-4 mr-2" />
+                        Publicar
+                      </Button>
+                      <Button size="sm" variant="destructive" onClick={handleBulkDelete}>
+                        <Trash2 className="w-4 h-4 mr-2" />
+                        Deletar
+                      </Button>
+                    </div>
+                  </div>
+                )}
+                <Card className="border-border shadow-sm overflow-hidden">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-12">
+                          <input
+                            type="checkbox"
+                            checked={selectedMaterials.size === materialsWithUploader.length && materialsWithUploader.length > 0}
+                            onChange={handleSelectAll}
+                            className="rounded"
+                          />
+                        </TableHead>
+                        <TableHead>Título</TableHead>
                       <TableHead>Grau</TableHead>
                       <TableHead>Idioma</TableHead>
                       <TableHead>Tipo</TableHead>
@@ -759,7 +849,15 @@ export default function Admin() {
                   </TableHeader>
                   <TableBody>
                     {materialsWithUploader.map((m) => (
-                      <TableRow key={m.id} className={m.hidden ? "bg-amber-50/40 dark:bg-amber-900/10" : ""}>
+                      <TableRow key={m.id} className={m.hidden ? "bg-amber-50/40 dark:bg-amber-900/10" : ""} onContextMenu={(e) => handleContextMenu(e, m.id)}>
+                        <TableCell className="w-12">
+                          <input
+                            type="checkbox"
+                            checked={selectedMaterials.has(m.id)}
+                            onChange={() => handleSelectMaterial(m.id)}
+                            className="rounded"
+                          />
+                        </TableCell>
                         <TableCell className="font-medium text-sm max-w-[180px] truncate">{m.title}</TableCell>
                         <TableCell>
                           <Badge variant="outline" className="text-xs">G{m.grade}{m.stage ? `.${m.stage}` : ""}</Badge>
@@ -820,6 +918,50 @@ export default function Admin() {
                   </TableBody>
                 </Table>
               </Card>
+                {contextMenu && (
+                  <div
+                    className="fixed bg-white dark:bg-slate-900 border border-border rounded-lg shadow-lg z-50"
+                    style={{ top: `${contextMenu.y}px`, left: `${contextMenu.x}px` }}
+                    onMouseLeave={() => setContextMenu(null)}
+                  >
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="w-full justify-start px-4 py-2 rounded-none"
+                      onClick={() => {
+                        handleSelectMaterial(contextMenu.materialId);
+                        setContextMenu(null);
+                      }}
+                    >
+                      Selecionar
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="w-full justify-start px-4 py-2 rounded-none"
+                      onClick={() => {
+                        const material = materialsWithUploader.find(m => m.id === contextMenu.materialId);
+                        if (material) handleBulkToggleVisibility(!material.hidden);
+                        setContextMenu(null);
+                      }}
+                    >
+                      {materialsWithUploader.find(m => m.id === contextMenu.materialId)?.hidden ? "Publicar" : "Ocultar"}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="w-full justify-start px-4 py-2 rounded-none text-destructive hover:text-destructive"
+                      onClick={() => {
+                        setSelectedMaterials(new Set([contextMenu.materialId]));
+                        handleBulkDelete();
+                        setContextMenu(null);
+                      }}
+                    >
+                      Deletar
+                    </Button>
+                  </div>
+                )}
+              </>
             )}
           </div>
         )}

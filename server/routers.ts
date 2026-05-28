@@ -557,6 +557,44 @@ export const appRouter = router({
         await deleteFile(input.fileId);
         return { success: true };
       }),
+
+    // Admin only: bulk delete materials
+    bulkDelete: protectedProcedure
+      .input(z.object({ ids: z.array(z.number()).min(1) }))
+      .mutation(async ({ input, ctx }) => {
+        if (ctx.user.role !== "admin") {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Apenas administradores podem deletar em massa" });
+        }
+        let deleted = 0;
+        for (const id of input.ids) {
+          try {
+            await deleteMaterial(id);
+            deleted++;
+          } catch (e) {
+            console.warn(`[Bulk Delete] Failed to delete material ${id}:`, e);
+          }
+        }
+        return deleted;
+      }),
+
+    // Admin only: bulk toggle visibility
+    bulkToggleVisibility: protectedProcedure
+      .input(z.object({ ids: z.array(z.number()).min(1), hidden: z.boolean() }))
+      .mutation(async ({ input, ctx }) => {
+        if (ctx.user.role !== "admin") {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Apenas administradores podem alterar visibilidade em massa" });
+        }
+        let updated = 0;
+        for (const id of input.ids) {
+          try {
+            await toggleMaterialVisibility(id, input.hidden);
+            updated++;
+          } catch (e) {
+            console.warn(`[Bulk Toggle] Failed to toggle material ${id}:`, e);
+          }
+        }
+        return { count: updated, hidden: input.hidden };
+      }),
   }),
 
   // ─── Ratings ──────────────────────────────────────────────────────────────
