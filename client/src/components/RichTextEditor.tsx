@@ -48,12 +48,28 @@ export function RichTextEditor({ value, onChange, placeholder }: RichTextEditorP
 
   const handlePaste = (e: React.ClipboardEvent) => {
     e.preventDefault();
-    const text = e.clipboardData.getData("text/plain");
-    document.execCommand("insertText", false, text);
+    try {
+      // Try to get HTML first, fall back to plain text
+      let content = e.clipboardData.getData("text/html");
+      if (!content) {
+        content = e.clipboardData.getData("text/plain");
+        // Convert plain text line breaks to HTML paragraphs
+        content = content
+          .split("\n\n")
+          .map((para) => `<p>${para.replace(/\n/g, "<br>")}</p>`)
+          .join("");
+      }
+      document.execCommand("insertHTML", false, content);
+    } catch (error) {
+      console.error("Paste error:", error);
+      // Fallback: insert as plain text
+      const text = e.clipboardData.getData("text/plain");
+      document.execCommand("insertText", false, text);
+    }
   };
 
   return (
-    <div className="border border-border rounded-lg overflow-hidden bg-background">
+    <div className="border border-border rounded-lg overflow-hidden bg-background relative">
       {/* Toolbar */}
       <div className="flex flex-wrap gap-1 p-2 bg-muted border-b border-border">
         <Button
@@ -149,17 +165,19 @@ export function RichTextEditor({ value, onChange, placeholder }: RichTextEditorP
         contentEditable
         onInput={handleInput}
         onPaste={handlePaste}
-        className="min-h-64 p-4 focus:outline-none focus:ring-0 prose prose-sm dark:prose-invert max-w-none"
+        className="min-h-64 p-4 focus:outline-none focus:ring-0 prose prose-sm dark:prose-invert max-w-none text-foreground"
         style={{
           wordWrap: "break-word",
           overflowWrap: "break-word",
+          whiteSpace: "pre-wrap",
         }}
         suppressContentEditableWarning
-      >
-        {placeholder && !value && (
-          <p className="text-muted-foreground">{placeholder}</p>
-        )}
-      </div>
+      />
+      {!value && placeholder && (
+        <div className="absolute top-4 left-4 text-muted-foreground pointer-events-none">
+          {placeholder}
+        </div>
+      )}
 
       {/* Info */}
       <div className="px-4 py-2 bg-muted border-t border-border text-xs text-muted-foreground">
