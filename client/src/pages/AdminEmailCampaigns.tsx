@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { RichTextEditor } from "@/components/RichTextEditor";
 import { trpc } from "@/lib/trpc";
 import { AlertCircle, CheckCircle2, Mail, Clock, Trash2, Play, Pause, Edit, X } from "lucide-react";
 import { toast } from "sonner";
@@ -230,12 +231,11 @@ export default function AdminEmailCampaigns() {
             </div>
 
             <div>
-              <label className="text-sm font-medium">Conteúdo do Email (HTML)</label>
-              <Textarea
-                placeholder="<h1>Olá!</h1><p>Este é um email de teste.</p>"
+              <label className="text-sm font-medium">Conteúdo do Email</label>
+              <RichTextEditor
                 value={htmlContent}
-                onChange={(e) => setHtmlContent(e.target.value)}
-                className="min-h-48 font-mono text-sm"
+                onChange={setHtmlContent}
+                placeholder="Escreva o conteúdo do seu email aqui..."
               />
             </div>
 
