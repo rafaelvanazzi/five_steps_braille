@@ -9,6 +9,7 @@ import {
   Link2,
   Heading2,
 } from "lucide-react";
+import { convertPlainTextToHtml } from "@/lib/emailFormatter";
 
 interface RichTextEditorProps {
   value: string;
@@ -19,6 +20,13 @@ interface RichTextEditorProps {
 export function RichTextEditor({ value, onChange, placeholder }: RichTextEditorProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [cursorPos, setCursorPos] = useState(0);
+
+  // Auto-format plain text to HTML on blur
+  const handleBlur = () => {
+    if (!value || value.includes("<")) return; // Already HTML or empty
+    const html = convertPlainTextToHtml(value);
+    onChange(html);
+  };
 
   const insertTag = (openTag: string, closeTag: string) => {
     if (!textareaRef.current) return;
@@ -164,6 +172,7 @@ export function RichTextEditor({ value, onChange, placeholder }: RichTextEditorP
         value={value}
         onChange={(e) => onChange(e.target.value)}
         onSelect={(e) => setCursorPos((e.target as HTMLTextAreaElement).selectionStart)}
+        onBlur={handleBlur}
         className="min-h-64 font-mono text-sm rounded-none border-none focus-visible:ring-0"
       />
 
@@ -173,7 +182,9 @@ export function RichTextEditor({ value, onChange, placeholder }: RichTextEditorP
         <ul className="list-disc list-inside space-y-0.5 text-xs">
           <li>Use os botões acima para adicionar formatação</li>
           <li>Você pode colar textos grandes sem problemas</li>
-          <li>O HTML será convertido automaticamente para email</li>
+          <li>Quebras de linha duplas viram parágrafos</li>
+          <li>Linhas com • viram listas</li>
+          <li>HTML será convertido automaticamente ao sair do campo</li>
         </ul>
       </div>
     </div>
