@@ -36,10 +36,11 @@ const typeLabels: Record<string, string> = {
 };
 
 /**
- * Converts plain text to simple HTML, preserving paragraphs and line breaks.
- * Avoids aggressive list detection to prevent "bullet point" issues.
+ * Converts plain text to clean HTML paragraphs.
+ * NO lists, NO bullets, NO complex templates.
+ * Just preserves line breaks and paragraphs exactly as written.
  */
-function textToHtml(text: string): string {
+function simpleTextToHtml(text: string): string {
   if (!text) return "";
   
   // Escape HTML entities to prevent XSS
@@ -50,8 +51,7 @@ function textToHtml(text: string): string {
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
 
-  // Convert double newlines to paragraph breaks
-  // Convert single newlines to <br>
+  // Split by double newlines to identify paragraphs
   const paragraphs = safeText.split(/\n\s*\n/);
   
   return paragraphs
@@ -59,8 +59,9 @@ function textToHtml(text: string): string {
       const trimmed = p.trim();
       if (!trimmed) return "";
       // Replace single newlines within the paragraph with <br>
+      // This preserves the exact line structure without adding bullets
       const withBreaks = trimmed.replace(/\n/g, "<br>");
-      return `<p style="margin: 0 0 16px 0;">${withBreaks}</p>`;
+      return `<p style="margin: 0 0 16px 0; font-family: Arial, sans-serif; font-size: 16px; line-height: 1.5; color: #333;">${withBreaks}</p>`;
     })
     .join("");
 }
@@ -69,82 +70,29 @@ export async function sendContactEmail(payload: ContactEmailPayload): Promise<vo
   const typeLabel = typeLabels[payload.type] ?? payload.type;
 
   // Convert the user's message to clean HTML
-  const messageHtml = textToHtml(payload.message);
+  const messageHtml = simpleTextToHtml(payload.message);
 
+  // Simple, clean HTML structure. No boxes, no heavy headers.
   const html = `
     <!DOCTYPE html>
     <html>
     <head>
       <meta charset="utf-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
     </head>
-    <body style="margin: 0; padding: 0; background-color: #f4f4f4; font-family: Arial, sans-serif;">
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color: #f4f4f4;">
-        <tr>
-          <td align="center" style="padding: 20px 10px;">
-            <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="max-width: 600px; width: 100%; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
-              <!-- Header -->
-              <tr>
-                <td style="background-color: #1a2a5e; padding: 24px 30px; text-align: center;">
-                  <h1 style="margin: 0; color: #f5c842; font-size: 24px; font-weight: bold;">Five Steps</h1>
-                  <p style="margin: 5px 0 0; color: #ffffff; font-size: 14px; opacity: 0.9;">Nova Mensagem de Contato</p>
-                </td>
-              </tr>
-              
-              <!-- Content -->
-              <tr>
-                <td style="padding: 30px; font-size: 16px; line-height: 1.6; color: #333333;">
-                  
-                  <!-- Meta Data Table -->
-                  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom: 25px; border-bottom: 1px solid #eeeeee; padding-bottom: 20px;">
-                    <tr>
-                      <td width="120" style="padding: 5px 0; color: #666666; font-size: 14px; font-weight: bold; vertical-align: top;">Nome:</td>
-                      <td style="padding: 5px 0; color: #333333; font-size: 14px;">${escapeHtml(payload.name)}</td>
-                    </tr>
-                    <tr>
-                      <td style="padding: 5px 0; color: #666666; font-size: 14px; font-weight: bold; vertical-align: top;">E-mail:</td>
-                      <td style="padding: 5px 0; color: #333333; font-size: 14px;">
-                        <a href="mailto:${escapeHtml(payload.email)}" style="color: #1a2a5e; text-decoration: none;">${escapeHtml(payload.email)}</a>
-                      </td>
-                    </tr>
-                    ${payload.institution ? `
-                    <tr>
-                      <td style="padding: 5px 0; color: #666666; font-size: 14px; font-weight: bold; vertical-align: top;">Instituição:</td>
-                      <td style="padding: 5px 0; color: #333333; font-size: 14px;">${escapeHtml(payload.institution)}</td>
-                    </tr>` : ""}
-                    <tr>
-                      <td style="padding: 5px 0; color: #666666; font-size: 14px; font-weight: bold; vertical-align: top;">Tipo:</td>
-                      <td style="padding: 5px 0; color: #333333; font-size: 14px;">${escapeHtml(typeLabel)}</td>
-                    </tr>
-                    <tr>
-                      <td style="padding: 5px 0; color: #666666; font-size: 14px; font-weight: bold; vertical-align: top;">Assunto:</td>
-                      <td style="padding: 5px 0; color: #333333; font-size: 14px;">${escapeHtml(payload.subject)}</td>
-                    </tr>
-                  </table>
+    <body style="margin: 0; padding: 20px; font-family: Arial, sans-serif; background-color: #ffffff;">
+      
+      <!-- Meta Data (Small and discreet at the top) -->
+      <div style="margin-bottom: 20px; padding-bottom: 10px; border-bottom: 1px solid #eeeeee; font-size: 13px; color: #666666;">
+        <strong>De:</strong> ${escapeHtml(payload.name)} &lt;${escapeHtml(payload.email)}&gt;<br>
+        ${payload.institution ? `<strong>Instituição:</strong> ${escapeHtml(payload.institution)}<br>` : ""}
+        <strong>Tipo:</strong> ${escapeHtml(typeLabel)}
+      </div>
 
-                  <!-- Message Body -->
-                  <div style="background-color: #f9f9f9; border-left: 4px solid #f5c842; padding: 20px; border-radius: 4px;">
-                    <div style="font-size: 15px; line-height: 1.6; color: #333333;">
-                      ${messageHtml}
-                    </div>
-                  </div>
+      <!-- Message Body (Clean Text) -->
+      <div style="font-family: Arial, sans-serif; font-size: 16px; line-height: 1.6; color: #333333;">
+        ${messageHtml}
+      </div>
 
-                </td>
-              </tr>
-
-              <!-- Footer -->
-              <tr>
-                <td style="background-color: #f8f8f8; padding: 20px 30px; text-align: center; border-top: 1px solid #eeeeee;">
-                  <p style="margin: 0; font-size: 12px; color: #999999;">
-                    Esta mensagem foi enviada pelo formulário de contato em 
-                    <a href="https://www.braille5steps.com/contato" style="color: #1a2a5e; text-decoration: none;">braille5steps.com</a>
-                  </p>
-                </td>
-              </tr>
-            </table>
-          </td>
-        </tr>
-      </table>
     </body>
     </html>
   `;
@@ -184,10 +132,21 @@ export async function sendEmail(opts: { to: string; subject: string; html: strin
     throw new Error("RESEND_API_KEY not configured");
   }
   
-  // If the content is plain text, convert it. If it's already HTML, use it.
-  const finalHtml = opts.html.includes('<') ? opts.html : textToHtml(opts.html);
+  // If the content is plain text, convert it simply. If it's already HTML, use it.
+  const finalHtml = opts.html.includes('<') ? opts.html : simpleTextToHtml(opts.html);
   
-  const fullHtml = wrapEmailTemplate(finalHtml);
+  // For bulk emails, we still use a simple wrapper but less intrusive than the contact form
+  const fullHtml = `
+    <!DOCTYPE html>
+    <html>
+    <head><meta charset="utf-8"></head>
+    <body style="margin: 0; padding: 20px; font-family: Arial, sans-serif; background-color: #ffffff;">
+      <div style="max-width: 600px; margin: 0 auto;">
+        ${finalHtml}
+      </div>
+    </body>
+    </html>
+  `;
   
   const { error } = await client.emails.send({
     from: FROM_ADDRESS,
@@ -210,11 +169,55 @@ export async function sendBulkEmail(payload: BulkEmailPayload): Promise<{ succes
   }
 
   // Ensure content is HTML
-  const finalHtml = payload.htmlContent.includes('<') ? payload.htmlContent : textToHtml(payload.htmlContent);
-  const fullHtml = wrapEmailTemplate(finalHtml);
+  const finalHtml = payload.htmlContent.includes('<') ? payload.htmlContent : simpleTextToHtml(payload.htmlContent);
+  
+  const fullHtml = `
+    <!DOCTYPE html>
+    <html>
+    <head><meta charset="utf-8"></head>
+    <body style="margin: 0; padding: 20px; font-family: Arial, sans-serif; background-color: #ffffff;">
+      <div style="max-width: 600px; margin: 0 auto;">
+        ${finalHtml}
+      </div>
+    </body>
+    </html>
+  `;
 
   const results = { success: 0, failed: 0, errors: [] as string[] };
 
   for (const recipient of payload.recipients) {
     try {
-      const { error } = await client.email
+      const { error } = await client.emails.send({
+        from: FROM_ADDRESS,
+        to: recipient,
+        replyTo: payload.replyTo ? [payload.replyTo] : [REPLY_TO],
+        subject: payload.subject,
+        html: fullHtml,
+      });
+
+      if (error) {
+        results.failed++;
+        results.errors.push(`${recipient}: ${error.message}`);
+        console.error(`[email] Failed to send to ${recipient}:`, error);
+      } else {
+        results.success++;
+      }
+    } catch (err) {
+      results.failed++;
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      results.errors.push(`${recipient}: ${errorMsg}`);
+      console.error(`[email] Exception sending to ${recipient}:`, err);
+    }
+  }
+
+  return results;
+}
+
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
