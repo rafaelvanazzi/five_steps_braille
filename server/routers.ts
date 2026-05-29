@@ -664,16 +664,20 @@ export const appRouter = router({
           email: z.string().email().max(320),
           institution: z.string().max(255).optional(),
           subject: z.string().min(1).max(255),
-          message: z.string().min(10),
+          message: z.string().min(1),
           type: z.enum(["institution", "musician_dv", "musician_nodv", "general"]).default("general"),
         })
       )
       .mutation(async ({ input }) => {
         await insertContactMessage(input);
-        await notifyOwner({
-          title: `Nova mensagem: ${input.subject}`,
-          content: `De: ${input.name} (${input.email})\nInstituição: ${input.institution ?? "—"}\n\n${input.message}`,
-        });
+        try {
+          await notifyOwner({
+            title: `Nova mensagem: ${input.subject}`,
+            content: `De: ${input.name} (${input.email})\nInstituição: ${input.institution ?? "—"}\n\n${input.message}`,
+          });
+        } catch (err) {
+          console.error("[contact] notifyOwner failed:", err);
+        }
         sendContactEmail(input).catch((err) =>
           console.error("[contact] email send failed:", err)
         );

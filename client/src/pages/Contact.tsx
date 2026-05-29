@@ -24,7 +24,7 @@ export default function Contact() {
       setSubmitted(true);
       setForm({ name: "", email: "", institution: "", subject: "", message: "", type: "general" });
     },
-    onError: () => toast.error(t.contact_error),
+    onError: (err) => toast.error(err.message || t.contact_error),
   });
 
   const handleSubmit = (e: React.FormEvent) => {
