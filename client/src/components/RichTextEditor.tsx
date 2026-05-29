@@ -1,5 +1,6 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef } from "react";
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Bold,
   Italic,
@@ -7,8 +8,6 @@ import {
   ListOrdered,
   Link2,
   Heading2,
-  Undo2,
-  Redo2,
 } from "lucide-react";
 
 interface RichTextEditorProps {
@@ -18,65 +17,86 @@ interface RichTextEditorProps {
 }
 
 export function RichTextEditor({ value, onChange, placeholder }: RichTextEditorProps) {
-  const editorRef = useRef<HTMLDivElement>(null);
-  const [isInitialized, setIsInitialized] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [cursorPos, setCursorPos] = useState(0);
 
-  useEffect(() => {
-    if (editorRef.current && !isInitialized) {
-      editorRef.current.innerHTML = value || "";
-      setIsInitialized(true);
-    }
-  }, [isInitialized, value]);
+  const insertTag = (openTag: string, closeTag: string) => {
+    if (!textareaRef.current) return;
 
-  const handleInput = () => {
-    if (editorRef.current) {
-      onChange(editorRef.current.innerHTML);
-    }
-  };
+    const textarea = textareaRef.current;
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const selectedText = value.substring(start, end) || "texto";
+    const newValue =
+      value.substring(0, start) +
+      openTag +
+      selectedText +
+      closeTag +
+      value.substring(end);
 
-  const execCommand = (command: string, value?: string) => {
-    document.execCommand(command, false, value);
-    editorRef.current?.focus();
+    onChange(newValue);
+
+    // Restore cursor position
+    setTimeout(() => {
+      textarea.focus();
+      textarea.setSelectionRange(start + openTag.length, start + openTag.length + selectedText.length);
+    }, 0);
   };
 
   const insertLink = () => {
-    const url = prompt("Digite a URL:");
+    const url = prompt("Digite a URL (ex: https://exemplo.com):");
     if (url) {
-      execCommand("createLink", url);
+      insertTag(`<a href="${url}">`, "</a>");
     }
   };
 
-  const handlePaste = (e: React.ClipboardEvent) => {
-    e.preventDefault();
-    try {
-      // Try to get HTML first, fall back to plain text
-      let content = e.clipboardData.getData("text/html");
-      if (!content) {
-        content = e.clipboardData.getData("text/plain");
-        // Convert plain text line breaks to HTML paragraphs
-        content = content
-          .split("\n\n")
-          .map((para) => `<p>${para.replace(/\n/g, "<br>")}</p>`)
-          .join("");
-      }
-      document.execCommand("insertHTML", false, content);
-    } catch (error) {
-      console.error("Paste error:", error);
-      // Fallback: insert as plain text
-      const text = e.clipboardData.getData("text/plain");
-      document.execCommand("insertText", false, text);
-    }
+  const insertHeading = () => {
+    insertTag("<h2>", "</h2>");
+  };
+
+  const insertBulletList = () => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const selectedText = value.substring(start, end) || "Item 1\nItem 2\nItem 3";
+    const items = selectedText.split("\n").filter((item) => item.trim());
+    const listHtml = items.map((item) => `<li>${item}</li>`).join("\n");
+    const newValue =
+      value.substring(0, start) +
+      `<ul>\n${listHtml}\n</ul>` +
+      value.substring(end);
+
+    onChange(newValue);
+  };
+
+  const insertOrderedList = () => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const selectedText = value.substring(start, end) || "Item 1\nItem 2\nItem 3";
+    const items = selectedText.split("\n").filter((item) => item.trim());
+    const listHtml = items.map((item) => `<li>${item}</li>`).join("\n");
+    const newValue =
+      value.substring(0, start) +
+      `<ol>\n${listHtml}\n</ol>` +
+      value.substring(end);
+
+    onChange(newValue);
   };
 
   return (
-    <div className="border border-border rounded-lg overflow-hidden bg-background relative">
+    <div className="border border-border rounded-lg overflow-hidden bg-background">
       {/* Toolbar */}
       <div className="flex flex-wrap gap-1 p-2 bg-muted border-b border-border">
         <Button
           size="sm"
           variant="outline"
-          onClick={() => execCommand("bold")}
-          title="Negrito (Ctrl+B)"
+          onClick={() => insertTag("<b>", "</b>")}
+          title="Negrito"
           className="w-10 h-10 p-0"
         >
           <Bold className="w-4 h-4" />
@@ -85,8 +105,8 @@ export function RichTextEditor({ value, onChange, placeholder }: RichTextEditorP
         <Button
           size="sm"
           variant="outline"
-          onClick={() => execCommand("italic")}
-          title="Itálico (Ctrl+I)"
+          onClick={() => insertTag("<i>", "</i>")}
+          title="Itálico"
           className="w-10 h-10 p-0"
         >
           <Italic className="w-4 h-4" />
@@ -97,7 +117,7 @@ export function RichTextEditor({ value, onChange, placeholder }: RichTextEditorP
         <Button
           size="sm"
           variant="outline"
-          onClick={() => execCommand("insertUnorderedList")}
+          onClick={insertBulletList}
           title="Lista com pontos"
           className="w-10 h-10 p-0"
         >
@@ -107,7 +127,7 @@ export function RichTextEditor({ value, onChange, placeholder }: RichTextEditorP
         <Button
           size="sm"
           variant="outline"
-          onClick={() => execCommand("insertOrderedList")}
+          onClick={insertOrderedList}
           title="Lista numerada"
           className="w-10 h-10 p-0"
         >
@@ -119,7 +139,7 @@ export function RichTextEditor({ value, onChange, placeholder }: RichTextEditorP
         <Button
           size="sm"
           variant="outline"
-          onClick={() => execCommand("formatBlock", "h2")}
+          onClick={insertHeading}
           title="Título"
           className="w-10 h-10 p-0"
         >
@@ -135,53 +155,26 @@ export function RichTextEditor({ value, onChange, placeholder }: RichTextEditorP
         >
           <Link2 className="w-4 h-4" />
         </Button>
-
-        <div className="w-px bg-border mx-1" />
-
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => execCommand("undo")}
-          title="Desfazer"
-          className="w-10 h-10 p-0"
-        >
-          <Undo2 className="w-4 h-4" />
-        </Button>
-
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => execCommand("redo")}
-          title="Refazer"
-          className="w-10 h-10 p-0"
-        >
-          <Redo2 className="w-4 h-4" />
-        </Button>
       </div>
 
       {/* Editor */}
-      <div
-        ref={editorRef}
-        contentEditable
-        onInput={handleInput}
-        onPaste={handlePaste}
-        className="min-h-64 p-4 focus:outline-none focus:ring-0 prose prose-sm dark:prose-invert max-w-none text-foreground"
-        style={{
-          wordWrap: "break-word",
-          overflowWrap: "break-word",
-          whiteSpace: "pre-wrap",
-        }}
-        suppressContentEditableWarning
+      <Textarea
+        ref={textareaRef}
+        placeholder={placeholder}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onSelect={(e) => setCursorPos((e.target as HTMLTextAreaElement).selectionStart)}
+        className="min-h-64 font-mono text-sm rounded-none border-none focus-visible:ring-0"
       />
-      {!value && placeholder && (
-        <div className="absolute top-4 left-4 text-muted-foreground pointer-events-none">
-          {placeholder}
-        </div>
-      )}
 
       {/* Info */}
       <div className="px-4 py-2 bg-muted border-t border-border text-xs text-muted-foreground">
-        Escreva como um email normal. A formatação será convertida automaticamente para HTML.
+        <p className="mb-1">💡 Dicas:</p>
+        <ul className="list-disc list-inside space-y-0.5 text-xs">
+          <li>Use os botões acima para adicionar formatação</li>
+          <li>Você pode colar textos grandes sem problemas</li>
+          <li>O HTML será convertido automaticamente para email</li>
+        </ul>
       </div>
     </div>
   );

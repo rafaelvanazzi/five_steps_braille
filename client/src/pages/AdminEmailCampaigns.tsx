@@ -20,8 +20,15 @@ export default function AdminEmailCampaigns() {
   const [subject, setSubject] = useState("");
   const [htmlContent, setHtmlContent] = useState("");
   const [replyTo, setReplyTo] = useState("contato@braille5steps.com");
+  const [fromEmail, setFromEmail] = useState("contato@braille5steps.com");
   const [intervalMinutes, setIntervalMinutes] = useState(2);
   const [isPreview, setIsPreview] = useState(false);
+
+  // Available from addresses
+  const fromAddresses = [
+    "contato@braille5steps.com",
+    "rafaelvanazzi@gmail.com",
+  ];
 
   const utils = trpc.useUtils();
   const { data: campaigns = [], isLoading } = trpc.emailCampaigns.list.useQuery();
@@ -48,6 +55,7 @@ export default function AdminEmailCampaigns() {
     setSubject("");
     setHtmlContent("");
     setReplyTo("contato@braille5steps.com");
+    setFromEmail("contato@braille5steps.com");
     setIntervalMinutes(2);
     setIsPreview(false);
   };
@@ -58,6 +66,7 @@ export default function AdminEmailCampaigns() {
     setSubject(campaign.subject);
     setHtmlContent(campaign.htmlContent);
     setReplyTo(campaign.replyTo || "contato@braille5steps.com");
+    setFromEmail(campaign.fromEmail || "contato@braille5steps.com");
     setIntervalMinutes(campaign.intervalMinutes);
     setRecipients(campaign.recipients?.join("\n") || "");
     setShowForm(true);
@@ -70,6 +79,7 @@ export default function AdminEmailCampaigns() {
     setSubject(campaign.subject);
     setHtmlContent(campaign.htmlContent);
     setReplyTo(campaign.replyTo || "contato@braille5steps.com");
+    setFromEmail(campaign.fromEmail || "contato@braille5steps.com");
     setIntervalMinutes(campaign.intervalMinutes);
     setRecipients(campaign.recipients?.join("\n") || "");
     setShowForm(true);
@@ -99,6 +109,7 @@ export default function AdminEmailCampaigns() {
         subject,
         htmlContent,
         replyTo: replyTo || undefined,
+        fromEmail,
         recipients: recipientList,
         intervalMinutes,
       });
@@ -228,6 +239,24 @@ export default function AdminEmailCampaigns() {
                 value={replyTo}
                 onChange={(e) => setReplyTo(e.target.value)}
               />
+            </div>
+
+            <div>
+              <label className="text-sm font-medium">Remetente (From)</label>
+              <select
+                value={fromEmail}
+                onChange={(e) => setFromEmail(e.target.value)}
+                className="w-full px-3 py-2 border border-border rounded-md bg-background text-foreground"
+              >
+                {fromAddresses.map((addr) => (
+                  <option key={addr} value={addr}>
+                    {addr}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-muted-foreground mt-1">
+                Escolha o endereço que será exibido como remetente do email
+              </p>
             </div>
 
             <div>

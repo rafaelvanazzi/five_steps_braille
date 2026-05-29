@@ -22,6 +22,7 @@ export const emailCampaignsRouter = router({
         subject: z.string().min(1),
         htmlContent: z.string().min(1),
         replyTo: z.string().email().optional(),
+        fromEmail: z.string().email().default("contato@braille5steps.com"),
         recipients: z.array(z.string().email()).min(1),
         intervalMinutes: z.number().min(1).max(1440).default(2), // 1 minute to 1 day
       })
@@ -35,6 +36,7 @@ export const emailCampaignsRouter = router({
           subject: input.subject,
           htmlContent: input.htmlContent,
           replyTo: input.replyTo,
+          fromEmail: input.fromEmail,
           recipients: JSON.stringify(input.recipients),
           intervalMinutes: input.intervalMinutes,
           totalRecipients: input.recipients.length,
