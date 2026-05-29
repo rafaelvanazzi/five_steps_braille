@@ -9,7 +9,7 @@ function getResend() {
 
 // Recipients who receive all contact form submissions
 const CONTACT_RECIPIENTS = [
-  "acervo.musicografia@gmail.com",
+  "contato@braille5steps.com",
   "rafaelvanazzi@gmail.com",
 ];
 

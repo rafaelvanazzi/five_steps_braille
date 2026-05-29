@@ -33,7 +33,7 @@ describe("sendContactEmail", () => {
     expect(instance.emails.send).toHaveBeenCalledOnce();
 
     const call = instance.emails.send.mock.calls[0][0];
-    expect(call.to).toContain("acervo.musicografia@gmail.com");
+    expect(call.to).toContain("contato@braille5steps.com");
     expect(call.to).toContain("rafaelvanazzi@gmail.com");
     expect(call.subject).toBe("[Five Steps] Test Subject");
     expect(call.replyTo).toContain("test@example.com");
