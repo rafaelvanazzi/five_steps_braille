@@ -1,0 +1,19 @@
+name: Auto Deploy to Manus
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Trigger Manus Deployment
+        run: |
+          echo "✅ Commit detectado na branch main"
+          echo "📦 O Manus sincronizará automaticamente e publicará o site"
+          echo "Commit: ${{ github.sha }}"
+          echo "Autor: ${{ github.actor }}"
