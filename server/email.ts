@@ -21,7 +21,7 @@ export interface ContactEmailPayload {
   email: string;
   institution?: string;
   subject: string;
-  message: string; // Pode vir como texto puro ou HTML
+  message: string;
   type: string;
 }
 
@@ -33,12 +33,16 @@ const typeLabels: Record<string, string> = {
 };
 
 /**
- * Converte texto puro em HTML básico, preservando parágrafos e removendo marcadores visuais indesejados.
+ * Converte texto puro em HTML limpo.
+ * - Remove marcadores visuais (•, -, *) do início das linhas.
+ * - Transforma quebras de linha duplas em parágrafos.
+ * - Transforma quebras de linha simples em <br>.
+ * - Força alinhamento à esquerda em cada parágrafo.
  */
 function plainTextToHtml(text: string): string {
   if (!text) return "";
   
-  // Escapar caracteres HTML para segurança
+  // 1. Escapar caracteres HTML para segurança (evita XSS)
   let safeText = text
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -46,7 +50,7 @@ function plainTextToHtml(text: string): string {
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
 
-  // Dividir por parágrafos (duas quebras de linha)
+  // 2. Dividir por parágrafos (duas quebras de linha consecutivas)
   const paragraphs = safeText.split(/\n\s*\n/);
   
   return paragraphs
@@ -54,11 +58,15 @@ function plainTextToHtml(text: string): string {
       const trimmed = p.trim();
       if (!trimmed) return "";
 
-      // Remover marcadores de lista manuais (•, -, *) do início das linhas para evitar as "bolinhas"
-      const lines = trimmed.split("\n").map(line => line.replace(/^[\s\u2022\-*]\s*/, ""));
+      // 3. Limpar marcadores de lista manuais (•, -, *) do início de CADA linha dentro do parágrafo
+      // Isso garante que não apareçam bolinhas indesejadas
+      const lines = trimmed.split("\n").map(line => {
+        // Regex remove •, - ou * se estiverem no começo da linha, seguidos de espaço opcional
+        return line.replace(/^[\s\u2022\-*]\s*/, "");
+      });
       
-      // Juntar linhas com <br> e envolver em <p>
-      return `<p style="margin: 0 0 16px 0; font-family: Arial, sans-serif; font-size: 16px; line-height: 1.6; color: #333; text-align: left;">${lines.join("<br>")}</p>`;
+      // 4. Juntar as linhas com <br> e envolver em <p> com estilo inline forte
+      return `<p style="margin: 0 0 18px 0; font-family: Arial, Helvetica, sans-serif; font-size: 16px; line-height: 1.6; color: #333333; text-align: left;">${lines.join("<br>")}</p>`;
     })
     .join("");
 }
@@ -76,27 +84,48 @@ export async function sendContactEmail(payload: ContactEmailPayload): Promise<vo
   const isHtml = payload.message.includes('<');
   const messageBody = isHtml ? payload.message : plainTextToHtml(payload.message);
 
-  // Template minimalista e profissional
+  // TEMPLATE DE E-MAIL ROBUSTO COM TABELA
+  // Usamos table-layout: fixed e width: 100% para garantir que ocupe a tela toda
+  // mas com um max-width interno para legibilidade, alinhado à ESQUERDA.
   const html = `
-    <!DOCTYPE html>
-    <html>
-    <head><meta charset="utf-8"></head>
-    <body style="margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #ffffff;">
-      <div style="max-width: 650px; margin: 0 auto; padding: 20px;">
-        
-        <!-- Cabeçalho Discreto -->
-        <div style="margin-bottom: 20px; padding-bottom: 10px; border-bottom: 1px solid #eeeeee; font-size: 14px; color: #666;">
-          <strong>De:</strong> ${escapeHtml(payload.name)} &lt;${escapeHtml(payload.email)}&gt;<br>
-          ${payload.institution ? `<strong>Instituição:</strong> ${escapeHtml(payload.institution)}<br>` : ""}
-          <strong>Tipo:</strong> ${escapeHtml(typeLabel)}
-        </div>
+    <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+    <html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+      <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+      <title>Five Steps Contact</title>
+    </head>
+    <body style="margin: 0; padding: 0; background-color: #ffffff; font-family: Arial, Helvetica, sans-serif;">
+      
+      <!-- Tabela Mestra: Ocupa 100% da largura, fundo branco -->
+      <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #ffffff;">
+        <tr>
+          <td align="left" style="padding: 20px 20px 40px 20px;">
+            
+            <!-- Container Interno: Limita a largura para não ficar esticado demais em telas grandes, mas alinhado à esquerda -->
+            <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 700px;">
+              
+              <!-- Cabeçalho Discreto com Dados do Remetente -->
+              <tr>
+                <td style="padding-bottom: 20px; border-bottom: 1px solid #eeeeee; font-family: Arial, sans-serif; font-size: 14px; color: #666666; text-align: left;">
+                  <strong style="color: #1a2a5e;">De:</strong> ${escapeHtml(payload.name)} &lt;${escapeHtml(payload.email)}&gt;<br/>
+                  ${payload.institution ? `<strong style="color: #1a2a5e;">Instituição:</strong> ${escapeHtml(payload.institution)}<br/>` : ""}
+                  <strong style="color: #1a2a5e;">Tipo:</strong> ${escapeHtml(typeLabel)}
+                </td>
+              </tr>
 
-        <!-- Corpo da Mensagem -->
-        <div style="font-size: 16px; line-height: 1.6; color: #333; text-align: left;">
-          ${messageBody}
-        </div>
+              <!-- Corpo da Mensagem -->
+              <tr>
+                <td style="padding-top: 20px; font-family: Arial, sans-serif; font-size: 16px; line-height: 1.6; color: #333333; text-align: left;">
+                  ${messageBody}
+                </td>
+              </tr>
 
-      </div>
+            </table>
+          </td>
+        </tr>
+      </table>
+
     </body>
     </html>
   `;
@@ -127,12 +156,15 @@ export async function sendEmail(opts: { to: string; subject: string; html: strin
   
   const finalHtml = opts.html.includes('<') ? opts.html : plainTextToHtml(opts.html);
   
+  // Usa o mesmo template robusto para consistência
+  const fullHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="margin:0;padding:20px;font-family:Arial,sans-serif;background:#fff;"><div style="max-width:700px;margin:0 auto;text-align:left;">${finalHtml}</div></body></html>`;
+  
   const { error } = await client.emails.send({
     from: FROM_ADDRESS,
     to: opts.to,
     replyTo: opts.replyTo ? [opts.replyTo] : [REPLY_TO],
     subject: opts.subject,
-    html: finalHtml,
+    html: fullHtml,
   });
   
   if (error) throw new Error(error.message);
