@@ -1,13 +1,11 @@
 import { Resend } from "resend";
 
-// Inicialização segura do Resend
 function getResend() {
   const key = process.env.RESEND_API_KEY;
   if (!key) return null;
   return new Resend(key);
 }
 
-// DESTINATÁRIOS: Certifique-se de que estes e-mails estão verificados no domínio do Resend
 const CONTACT_RECIPIENTS = [
   "contato@braille5steps.com",
   "rafaelvanazzi@gmail.com",
@@ -36,13 +34,12 @@ const typeLabels: Record<string, string> = {
  * Converte texto puro em HTML limpo.
  * - Remove marcadores visuais (•, -, *) do início das linhas.
  * - Transforma quebras de linha duplas em parágrafos.
- * - Transforma quebras de linha simples em <br>.
- * - Força alinhamento à esquerda em cada parágrafo.
+ * - Força alinhamento à esquerda em todos os elementos.
  */
 function plainTextToHtml(text: string): string {
   if (!text) return "";
   
-  // 1. Escapar caracteres HTML para segurança (evita XSS)
+  // 1. Escapar caracteres HTML para segurança
   let safeText = text
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -66,7 +63,8 @@ function plainTextToHtml(text: string): string {
       });
       
       // 4. Juntar as linhas com <br> e envolver em <p> com estilo inline forte
-      return `<p style="margin: 0 0 18px 0; font-family: Arial, Helvetica, sans-serif; font-size: 16px; line-height: 1.6; color: #333333; text-align: left;">${lines.join("<br>")}</p>`;
+      // Usamos align="left" (atributo HTML antigo) E text-align: left !important (CSS)
+      return `<p align="left" style="margin: 0 0 18px 0; font-family: Arial, Helvetica, sans-serif; font-size: 16px; line-height: 1.6; color: #333333; text-align: left !important;">${lines.join("<br>")}</p>`;
     })
     .join("");
 }
@@ -80,34 +78,31 @@ export async function sendContactEmail(payload: ContactEmailPayload): Promise<vo
 
   const typeLabel = typeLabels[payload.type] ?? payload.type;
   
-  // Decide se converte ou usa o HTML direto
-  const isHtml = payload.message.includes('<');
-  const messageBody = isHtml ? payload.message : plainTextToHtml(payload.message);
+  // Converte o texto do usuário para HTML limpo
+  const messageBody = plainTextToHtml(payload.message);
 
   // TEMPLATE DE E-MAIL ROBUSTO COM TABELA
-  // Usamos table-layout: fixed e width: 100% para garantir que ocupe a tela toda
-  // mas com um max-width interno para legibilidade, alinhado à ESQUERDA.
+  // Usamos table-layout e align="left" explícito para evitar centralização
   const html = `
     <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
     <html xmlns="http://www.w3.org/1999/xhtml">
     <head>
       <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
-      <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
       <title>Five Steps Contact</title>
     </head>
     <body style="margin: 0; padding: 0; background-color: #ffffff; font-family: Arial, Helvetica, sans-serif;">
       
-      <!-- Tabela Mestra: Ocupa 100% da largura, fundo branco -->
-      <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #ffffff;">
+      <!-- Tabela Mestra: Ocupa 100% da largura, alinhada à esquerda -->
+      <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" align="left" style="background-color: #ffffff; text-align: left;">
         <tr>
           <td align="left" style="padding: 20px 20px 40px 20px;">
             
-            <!-- Container Interno: Limita a largura para não ficar esticado demais em telas grandes, mas alinhado à esquerda -->
-            <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 700px;">
+            <!-- Container Interno: Limita a largura para legibilidade, mas mantém alinhamento à esquerda -->
+            <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" align="left" style="max-width: 700px; text-align: left;">
               
               <!-- Cabeçalho Discreto com Dados do Remetente -->
               <tr>
-                <td style="padding-bottom: 20px; border-bottom: 1px solid #eeeeee; font-family: Arial, sans-serif; font-size: 14px; color: #666666; text-align: left;">
+                <td align="left" style="padding-bottom: 20px; border-bottom: 1px solid #eeeeee; font-family: Arial, sans-serif; font-size: 14px; color: #666666; text-align: left;">
                   <strong style="color: #1a2a5e;">De:</strong> ${escapeHtml(payload.name)} &lt;${escapeHtml(payload.email)}&gt;<br/>
                   ${payload.institution ? `<strong style="color: #1a2a5e;">Instituição:</strong> ${escapeHtml(payload.institution)}<br/>` : ""}
                   <strong style="color: #1a2a5e;">Tipo:</strong> ${escapeHtml(typeLabel)}
@@ -116,7 +111,7 @@ export async function sendContactEmail(payload: ContactEmailPayload): Promise<vo
 
               <!-- Corpo da Mensagem -->
               <tr>
-                <td style="padding-top: 20px; font-family: Arial, sans-serif; font-size: 16px; line-height: 1.6; color: #333333; text-align: left;">
+                <td align="left" style="padding-top: 20px; font-family: Arial, sans-serif; font-size: 16px; line-height: 1.6; color: #333333; text-align: left !important;">
                   ${messageBody}
                 </td>
               </tr>
@@ -131,21 +126,15 @@ export async function sendContactEmail(payload: ContactEmailPayload): Promise<vo
   `;
 
   try {
-    const { data, error } = await client.emails.send({
+    await client.emails.send({
       from: FROM_ADDRESS,
       to: CONTACT_RECIPIENTS, // Envia para TODOS na lista
       replyTo: [payload.email, REPLY_TO],
       subject: `[Five Steps] ${payload.subject}`,
       html: html,
     });
-
-    if (error) {
-      console.error("[email] Erro ao enviar:", error);
-    } else {
-      console.log("[email] Enviado com sucesso para:", CONTACT_RECIPIENTS);
-    }
   } catch (err) {
-    console.error("[email] Exceção ao enviar:", err);
+    console.error("[email] Erro ao enviar:", err);
   }
 }
 
@@ -154,9 +143,10 @@ export async function sendEmail(opts: { to: string; subject: string; html: strin
   const client = getResend();
   if (!client) throw new Error("RESEND_API_KEY not configured");
   
+  // Se for texto puro, converte. Se já for HTML, usa direto.
   const finalHtml = opts.html.includes('<') ? opts.html : plainTextToHtml(opts.html);
   
-  // Usa o mesmo template robusto para consistência
+  // Usa um template simples para e-mails avulsos
   const fullHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="margin:0;padding:20px;font-family:Arial,sans-serif;background:#fff;"><div style="max-width:700px;margin:0 auto;text-align:left;">${finalHtml}</div></body></html>`;
   
   const { error } = await client.emails.send({
@@ -168,6 +158,33 @@ export async function sendEmail(opts: { to: string; subject: string; html: strin
   });
   
   if (error) throw new Error(error.message);
+}
+
+export async function sendBulkEmail(payload: BulkEmailPayload): Promise<{ success: number; failed: number; errors: string[] }> {
+  const client = getResend();
+  if (!client) return { success: 0, failed: payload.recipients.length, errors: ["RESEND_API_KEY not configured"] };
+
+  const finalHtml = payload.htmlContent.includes('<') ? payload.htmlContent : plainTextToHtml(payload.htmlContent);
+  const fullHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="margin:0;padding:20px;font-family:Arial,sans-serif;background:#fff;"><div style="max-width:700px;margin:0 auto;text-align:left;">${finalHtml}</div></body></html>`;
+
+  const results = { success: 0, failed: 0, errors: [] as string[] };
+
+  for (const recipient of payload.recipients) {
+    try {
+      const { error } = await client.emails.send({
+        from: FROM_ADDRESS,
+        to: recipient,
+        replyTo: payload.replyTo ? [payload.replyTo] : [REPLY_TO],
+        subject: payload.subject,
+        html: fullHtml,
+      });
+      if (error) { results.failed++; results.errors.push(`${recipient}: ${error.message}`); } else { results.success++; }
+    } catch (err) {
+      results.failed++;
+      results.errors.push(`${recipient}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  return results;
 }
 
 function escapeHtml(str: string): string {
