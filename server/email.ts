@@ -31,15 +31,12 @@ const typeLabels: Record<string, string> = {
 };
 
 /**
- * Converte o texto do usuário em HTML limpo.
- * - Remove bolinhas (•, -, *) do início das linhas.
- * - Transforma quebras de linha duplas em parágrafos.
- * - Força alinhamento à esquerda.
+ * Converte texto puro em HTML simples e seguro.
  */
 function formatMessageToHtml(text: string): string {
   if (!text) return "";
   
-  // Escapar HTML para segurança
+  // Escapar HTML
   let safeText = text
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -47,7 +44,7 @@ function formatMessageToHtml(text: string): string {
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
 
-  // Dividir por parágrafos (duas quebras de linha)
+  // Dividir por parágrafos
   const paragraphs = safeText.split(/\n\s*\n/);
   
   return paragraphs
@@ -55,11 +52,11 @@ function formatMessageToHtml(text: string): string {
       const trimmed = p.trim();
       if (!trimmed) return "";
 
-      // Remover marcadores visuais (•, -, *) do início de CADA linha dentro do parágrafo
+      // Remover marcadores visuais (•, -, *)
       const lines = trimmed.split("\n").map(line => line.replace(/^[\s\u2022\-*]\s*/, ""));
       
-      // Juntar as linhas com <br> e envolver em <p> alinhado à esquerda
-      return `<p style="margin: 0 0 16px 0; font-family: Arial, sans-serif; font-size: 14px; line-height: 1.6; color: #333; text-align: left;">${lines.join("<br>")}</p>`;
+      // Usar <p> simples com estilo mínimo
+      return `<p style="margin: 0 0 16px 0; font-family: Arial, sans-serif; font-size: 14px; line-height: 1.5; color: #333333;">${lines.join("<br>")}</p>`;
     })
     .join("");
 }
@@ -69,52 +66,47 @@ export async function sendContactEmail(payload: ContactEmailPayload): Promise<vo
   if (!client) return;
 
   const typeLabel = typeLabels[payload.type] ?? payload.type;
-  
-  // Usamos a nova função para formatar a mensagem corretamente
   const formattedMessage = formatMessageToHtml(payload.message);
 
-  // MANTIVEMOS O SEU DESIGN ORIGINAL, APENAS SUBSTITUÍMOS A PARTE DA MENSAGEM
+  // TEMPLATE MINIMALISTA E VÁLIDO PARA EVITAR TRUNCAMENTO DO GMAIL
   const html = `
-    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background: #f9f9f9;">
-      <div style="background: #1a2a5e; padding: 20px 24px; border-radius: 8px 8px 0 0;">
-        <h1 style="color: #f5c842; margin: 0; font-size: 20px;">Five Steps — Nova Mensagem de Contato</h1>
-      </div>
-      <div style="background: #ffffff; padding: 24px; border-radius: 0 0 8px 8px; border: 1px solid #e0e0e0;">
-        <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
-          <tr>
-            <td style="padding: 8px 0; color: #666; font-size: 13px; width: 130px;"><strong>Nome</strong></td>
-            <td style="padding: 8px 0; font-size: 14px;">${escapeHtml(payload.name)}</td>
-          </tr>
-          <tr>
-            <td style="padding: 8px 0; color: #666; font-size: 13px;"><strong>E-mail</strong></td>
-            <td style="padding: 8px 0; font-size: 14px;"><a href="mailto:${escapeHtml(payload.email)}" style="color: #1a2a5e;">${escapeHtml(payload.email)}</a></td>
-          </tr>
-          ${payload.institution ? `
-          <tr>
-            <td style="padding: 8px 0; color: #666; font-size: 13px;"><strong>Instituição</strong></td>
-            <td style="padding: 8px 0; font-size: 14px;">${escapeHtml(payload.institution)}</td>
-          </tr>` : ""}
-          <tr>
-            <td style="padding: 8px 0; color: #666; font-size: 13px;"><strong>Tipo</strong></td>
-            <td style="padding: 8px 0; font-size: 14px;">${escapeHtml(typeLabel)}</td>
-          </tr>
-          <tr>
-            <td style="padding: 8px 0; color: #666; font-size: 13px;"><strong>Assunto</strong></td>
-            <td style="padding: 8px 0; font-size: 14px;">${escapeHtml(payload.subject)}</td>
-          </tr>
-        </table>
-        
-        <!-- AQUI ESTÁ A CORREÇÃO: Usamos a variável formattedMessage em vez do escapeHtml direto -->
-        <div style="background: #f5f5f5; border-left: 4px solid #f5c842; padding: 16px; border-radius: 4px;">
-          ${formattedMessage}
-        </div>
+    <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+    <html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+      <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+      <title>Five Steps Contact</title>
+    </head>
+    <body style="margin: 0; padding: 0; background-color: #ffffff; font-family: Arial, sans-serif;">
+      
+      <!-- Tabela Mestra -->
+      <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #ffffff;">
+        <tr>
+          <td align="left" style="padding: 20px;">
+            
+            <!-- Cabeçalho Simples -->
+            <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 600px;">
+              <tr>
+                <td style="padding-bottom: 15px; border-bottom: 1px solid #eeeeee; font-size: 12px; color: #666666;">
+                  <strong>De:</strong> ${escapeHtml(payload.name)} &lt;${escapeHtml(payload.email)}&gt;<br/>
+                  ${payload.institution ? `<strong>Instituição:</strong> ${escapeHtml(payload.institution)}<br/>` : ""}
+                  <strong>Tipo:</strong> ${escapeHtml(typeLabel)}
+                </td>
+              </tr>
+              
+              <!-- Corpo da Mensagem -->
+              <tr>
+                <td style="padding-top: 20px; font-size: 14px; line-height: 1.5; color: #333333;">
+                  ${formattedMessage}
+                </td>
+              </tr>
+            </table>
 
-        <p style="margin-top: 20px; font-size: 12px; color: #999;">
-          Esta mensagem foi enviada pelo formulário de contato em 
-          <a href="https://www.braille5steps.com/contato" style="color: #1a2a5e;">braille5steps.com</a>
-        </p>
-      </div>
-    </div>
+          </td>
+        </tr>
+      </table>
+
+    </body>
+    </html>
   `;
 
   try {
@@ -123,14 +115,14 @@ export async function sendContactEmail(payload: ContactEmailPayload): Promise<vo
       to: CONTACT_RECIPIENTS,
       replyTo: [payload.email, REPLY_TO],
       subject: `[Five Steps] ${payload.subject}`,
-      html,
+      html: html,
     });
   } catch (err) {
     console.error("[email] Erro ao enviar:", err);
   }
 }
 
-// Funções auxiliares simplificadas para manter compatibilidade
+// Funções auxiliares simplificadas
 export async function sendEmail(opts: { to: string; subject: string; html: string; replyTo?: string }): Promise<void> {
   const client = getResend();
   if (!client) throw new Error("RESEND_API_KEY not configured");
@@ -147,7 +139,6 @@ export async function sendEmail(opts: { to: string; subject: string; html: strin
 }
 
 export async function sendBulkEmail(payload: any): Promise<any> {
-  // Implementação básica mantida para não quebrar outras partes do sistema
   return { success: 0, failed: 0, errors: ["Não implementado nesta versão simplificada"] };
 }
 
