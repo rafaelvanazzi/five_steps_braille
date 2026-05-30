@@ -31,34 +31,17 @@ const typeLabels: Record<string, string> = {
 };
 
 /**
- * Converte texto puro em HTML simples, removendo marcadores e formatando parágrafos.
+ * Prepara o texto da mensagem para exibição limpa.
+ * Remove marcadores visuais e normaliza espaços.
  */
-function formatMessageToHtml(text: string): string {
+function cleanMessage(text: string): string {
   if (!text) return "";
   
-  // Escapar HTML
-  let safeText = text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
-
-  // Dividir por parágrafos (duas quebras de linha)
-  const paragraphs = safeText.split(/\n\s*\n/);
+  // Remove marcadores visuais (•, -, *) do início das linhas
+  const lines = text.split("\n").map(line => line.replace(/^[\s\u2022\-*]\s*/, ""));
   
-  return paragraphs
-    .map(p => {
-      const trimmed = p.trim();
-      if (!trimmed) return "";
-
-      // Remover marcadores visuais (•, -, *) do início das linhas
-      const lines = trimmed.split("\n").map(line => line.replace(/^[\s\u2022\-*]\s*/, ""));
-      
-      // Usar <p> simples com estilo mínimo e alinhamento à esquerda explícito
-      return `<p style="margin: 0 0 16px 0; font-family: Arial, sans-serif; font-size: 14px; line-height: 1.5; color: #333333; text-align: left;">${lines.join("<br>")}</p>`;
-    })
-    .join("");
+  // Junta as linhas, preservando parágrafos (linhas vazias)
+  return lines.join("\n");
 }
 
 export async function sendContactEmail(payload: ContactEmailPayload): Promise<void> {
@@ -66,41 +49,37 @@ export async function sendContactEmail(payload: ContactEmailPayload): Promise<vo
   if (!client) return;
 
   const typeLabel = typeLabels[payload.type] ?? payload.type;
-  const formattedMessage = formatMessageToHtml(payload.message);
+  const cleanMsg = cleanMessage(payload.message);
 
-  // TEMPLATE MINIMALISTA EM XHTML PARA EVITAR TRUNCAMENTO DO GMAIL
-  const html = `
-<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
-<html xmlns="http://www.w3.org/1999/xhtml">
-<head>
-<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
-<title>Five Steps Contact</title>
-</head>
-<body style="margin: 0; padding: 0; background-color: #ffffff; font-family: Arial, sans-serif;">
-  <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #ffffff;">
-    <tr>
-      <td align="left" style="padding: 20px;">
-        <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 600px;">
-          <!-- Cabeçalho Discreto -->
-          <tr>
-            <td style="padding-bottom: 15px; border-bottom: 1px solid #eeeeee; font-size: 12px; color: #666666; text-align: left;">
-              <strong>De:</strong> ${escapeHtml(payload.name)} &lt;${escapeHtml(payload.email)}&gt;<br/>
-              ${payload.institution ? `<strong>Instituição:</strong> ${escapeHtml(payload.institution)}<br/>` : ""}
-              <strong>Tipo:</strong> ${escapeHtml(typeLabel)}
-            </td>
-          </tr>
-          <!-- Corpo da Mensagem -->
-          <tr>
-            <td style="padding-top: 20px; font-size: 14px; line-height: 1.5; color: #333333; text-align: left;">
-              ${formattedMessage}
-            </td>
-          </tr>
-        </table>
-      </td>
-    </tr>
-  </table>
-</body>
-</html>
+  // VERSÃO EM TEXTO PURO (O Gmail prioriza isso se o HTML for suspeito)
+  const textBody = `Nova Mensagem de Contato - Five Steps
+
+De: ${payload.name} <${payload.email}>
+Instituição: ${payload.institution || "Não informada"}
+Tipo: ${typeLabel}
+Assunto: ${payload.subject}
+
+--------------------------------------------------
+${cleanMsg}
+--------------------------------------------------
+
+Enviado via braille5steps.com`;
+
+  // VERSÃO HTML MINIMALISTA (Apenas para preservar quebras de linha visualmente)
+  const htmlBody = `
+    <div style="font-family: Arial, sans-serif; font-size: 14px; line-height: 1.5; color: #333;">
+      <p><strong>Nova Mensagem de Contato - Five Steps</strong></p>
+      <p>
+        <strong>De:</strong> ${escapeHtml(payload.name)} &lt;${escapeHtml(payload.email)}&gt;<br>
+        ${payload.institution ? `<strong>Instituição:</strong> ${escapeHtml(payload.institution)}<br>` : ""}
+        <strong>Tipo:</strong> ${escapeHtml(typeLabel)}<br>
+        <strong>Assunto:</strong> ${escapeHtml(payload.subject)}
+      </p>
+      <hr style="border: 0; border-top: 1px solid #eee; margin: 16px 0;">
+      <div style="white-space: pre-wrap;">${escapeHtml(cleanMsg)}</div>
+      <hr style="border: 0; border-top: 1px solid #eee; margin: 16px 0;">
+      <p style="font-size: 12px; color: #999;">Enviado via <a href="https://www.braille5steps.com" style="color: #1a2a5e;">braille5steps.com</a></p>
+    </div>
   `;
 
   try {
@@ -109,7 +88,8 @@ export async function sendContactEmail(payload: ContactEmailPayload): Promise<vo
       to: CONTACT_RECIPIENTS,
       replyTo: [payload.email, REPLY_TO],
       subject: `[Five Steps] ${payload.subject}`,
-      html: html,
+      text: textBody, // IMPORTANTE: Enviamos a versão em texto puro também
+      html: htmlBody,
     });
   } catch (err) {
     console.error("[email] Erro ao enviar:", err);
