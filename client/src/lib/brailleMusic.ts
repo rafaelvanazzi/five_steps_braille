@@ -111,11 +111,24 @@ const BARLINE_MAP: Record<string, 'single' | 'end' | 'repeat-begin' | 'repeat-en
 
 // Time signature map
 const TIME_SIGNATURE_MAP: Record<string, { numerator: number; denominator: number }> = {
-  '\u283C\u2819': { numerator: 4, denominator: 4 },  // ⠼⠙ = 4/4 (digit 1)
-  '\u283C\u2809': { numerator: 3, denominator: 4 },  // ⠼⠉ = 3/4 (special char)
-  '\u283C\u2811': { numerator: 3, denominator: 4 },  // ⠼⠑ = 3/4 (digit 2)
-  '\u283C\u280B': { numerator: 2, denominator: 4 },  // ⠼⠋ = 2/4 (digit 3)
-  '\u283C\u281B': { numerator: 6, denominator: 8 },  // ⠼⠛ = 6/8 (digit 4)
+  // 4/4: ⠼ (número) + ⠙ (4) + ⠲ (4)
+  '\u283C\u2819\u2832': { numerator: 4, denominator: 4 },
+  
+  // 3/4: ⠼ (número) + ⠉ (3) + ⠲ (4)
+  '\u283C\u2809\u2832': { numerator: 3, denominator: 4 },
+  
+  // 2/4: ⠼ (número) + ⠋ (2) + ⠲ (4)
+  '\u283C\u280B\u2832': { numerator: 2, denominator: 4 },
+  
+  // 6/8: ⠼ (número) + ⠛ (6) + ⠦ (8)
+  '\u283C\u281B\u2826': { numerator: 6, denominator: 8 },
+  
+  // 2/2: ⠼ (número) + ⠋ (2) + ⠑ (2)
+  '\u283C\u280B\u2811': { numerator: 2, denominator: 2 },
+  
+  // 3/8: ⠼ (número) + ⠉ (3) + ⠦ (8)
+  '\u283C\u2809\u2826': { numerator: 3, denominator: 8 },
+  
 };
 
 // Braille digits
