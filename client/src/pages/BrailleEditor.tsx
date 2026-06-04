@@ -347,7 +347,9 @@ export default function BrailleEditor() {
         setScoreWidth(scoreContainerRef.current.clientWidth);
       }
     });
-    observer.observe(scoreContainerRef.current!);
+    if (scoreContainerRef.current) {
+      observer.observe(scoreContainerRef.current);
+    }
     return () => observer.disconnect();
   }, []);
 
