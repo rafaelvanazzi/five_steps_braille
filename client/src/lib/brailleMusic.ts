@@ -66,7 +66,7 @@ const NOTE_MAP: Record<string, NoteInfo> = {
   '\u283E': { pitch: 'F', duration: 'w', altDuration: '16' },   // ⠾
   '\u2837': { pitch: 'G', duration: 'w', altDuration: '16' },   // ⠷
   '\u282E': { pitch: 'A', duration: 'w', altDuration: '16' },   // ⠮
-  '\u2827': { pitch: 'B', duration: 'w', altDuration: '16' },   // ⠧ ← ADICIONADO
+  '\u2827': { pitch: 'B', duration: 'w', altDuration: '16' },   // ⠧
 };
 
 // Rest map
@@ -118,7 +118,6 @@ const TIME_SIGNATURE_MAP: Record<string, { numerator: number; denominator: numbe
 
 // Interval map - NEW FEATURE
 // Intervals are diatonic and respect the key signature
-// Used after a note to indicate melodic distance to next note
 const INTERVAL_MAP: Record<string, number> = {
   '\u2824': 2,  // ⠤ = segunda (dots 3,6)
   '\u282C': 3,  // ⠬ = terça (dots 3,4,5,6)
@@ -217,7 +216,7 @@ export interface ParsedNoteTie {
 
 export interface ParsedInterval {
   type: 'interval';
-  intervalSize: number; // 2, 3, 4, 5, 6, 7, 8, 9, 10, etc.
+  intervalSize: number;
   sourceIndex: number;
 }
 
@@ -438,8 +437,8 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
       continue;
     }
     
-    // Interval (NEW FEATURE)
-    if (inNoteContext && INTERVAL_MAP[ch] !== undefined) {
+    // Interval (NEW FEATURE) - only in note context
+    if (inNoteContext && INTERVAL_MAP[ch] !== undefined && ch !== AUGMENTATION_DOT) {
       const intervalSize = INTERVAL_MAP[ch];
       elements.push({
         type: 'interval',
@@ -698,38 +697,85 @@ export interface QuickRefEntry {
   displayChar?: string;
   dots: string;
   description: string;
-  category?: string;
+  category: string;
 }
 
+/**
+ * Generate quick reference with categories compatible with BrailleEditor
+ */
 export function getQuickReference(): QuickRefEntry[] {
   const ref: QuickRefEntry[] = [];
   
-  // Notes
+  // Notes - categorized by duration group
   Object.entries(NOTE_MAP).forEach(([char, info]) => {
+    let category: string;
+    let desc: string;
+    
+    if (info.duration === 'w') {
+      category = 'note-whole-half';
+      desc = `${info.pitch} semibreve`;
+    } else if (info.duration === 'h') {
+      category = 'note-whole-half';
+      desc = `${info.pitch} mínima`;
+    } else if (info.duration === 'q') {
+      category = 'note-quarter';
+      desc = `${info.pitch} semínima`;
+    } else if (info.duration === '8') {
+      category = 'note-eighth';
+      desc = `${info.pitch} colcheia`;
+    } else {
+      category = 'note-half-32nd';
+      desc = `${info.pitch} ${info.duration}`;
+    }
+    
     ref.push({
       char,
       dots: unicodeToDots(char).join(','),
-      description: `${info.pitch} ${info.duration === 'w' ? 'semibreve' : info.duration === 'h' ? 'mínima' : info.duration === 'q' ? 'semínima' : info.duration === '8' ? 'colcheia' : info.duration}`,
-      category: 'note',
+      description: desc,
+      category,
+    });
+  });
+  
+  // Forced whole notes (note-whole-forced category for tests)
+  const forcedWholeChars = ['\u283D', '\u282F', '\u283F', '\u283E', '\u2837', '\u282E', '\u2827'];
+  forcedWholeChars.forEach((char, idx) => {
+    const pitch = ['C', 'D', 'E', 'F', 'G', 'A', 'B'][idx];
+    ref.push({
+      char: '\u2810' + char, // ⠐ + note = forced whole in 4th octave
+      dots: '4 ' + unicodeToDots(char).join(','),
+      description: `${pitch} semibreve forçada`,
+      category: 'note-whole-forced',
     });
   });
   
   // Rests
   Object.entries(REST_MAP).forEach(([char, info]) => {
+    const desc = info.duration === 'w' ? 'Pausa semibreve' : 
+                 info.duration === 'h' ? 'Pausa mínima' :
+                 info.duration === 'q' ? 'Pausa semínima' : 'Pausa colcheia';
     ref.push({
       char,
       dots: unicodeToDots(char).join(','),
-      description: `Pausa ${info.duration === 'w' ? 'semibreve' : info.duration === 'h' ? 'mínima' : info.duration === 'q' ? 'semínima' : 'colcheia'}`,
+      description: desc,
       category: 'rest',
     });
   });
   
+  // Whole rest (⠼) - special case
+  ref.push({
+    char: '\u283C',
+    dots: '3,4,5,6',
+    description: 'Pausa semibreve / Sinal de número',
+    category: 'rest',
+  });
+  
   // Accidentals
   Object.entries(ACCIDENTAL_MAP).forEach(([char, acc]) => {
+    const desc = acc === 'sharp' ? 'Sustenido' : acc === 'flat' ? 'Bemol' : 'Bequadro';
     ref.push({
       char,
       dots: unicodeToDots(char).join(','),
-      description: acc === 'sharp' ? 'Sustenido' : acc === 'flat' ? 'Bemol' : 'Bequadro',
+      description: desc,
       category: 'accidental',
     });
   });
@@ -758,25 +804,35 @@ export function getQuickReference(): QuickRefEntry[] {
   
   // Barlines
   Object.entries(BARLINE_MAP).forEach(([char, type]) => {
+    const desc = type === 'single' ? 'Barra simples' : 
+                 type === 'end' ? 'Barra final' : 
+                 type === 'repeat-begin' ? 'Ritornelo início' : 
+                 type === 'repeat-end' ? 'Ritornelo fim' : 'Ritornelo ambos';
     ref.push({
       char,
       dots: unicodeToDots(char[0]).join(',') + ' ' + unicodeToDots(char[1]).join(','),
-      description: type === 'single' ? 'Barra simples' : type === 'end' ? 'Barra final' : type === 'repeat-begin' ? 'Ritornelo início' : type === 'repeat-end' ? 'Ritornelo fim' : 'Ritornelo ambos',
+      description: desc,
       category: 'barline',
     });
   });
   
   // Intervals (NEW)
   Object.entries(INTERVAL_MAP).forEach(([char, size]) => {
+    const desc = size === 2 ? 'Segunda' : 
+                 size === 3 ? 'Terça' : 
+                 size === 4 ? 'Quarta' : 
+                 size === 5 ? 'Quinta' : 
+                 size === 6 ? 'Sexta' : 
+                 size === 7 ? 'Sétima' : 'Oitava';
     ref.push({
       char,
       dots: unicodeToDots(char).join(','),
-      description: `Intervalo de ${size === 2 ? 'segunda' : size === 3 ? 'terça' : size === 4 ? 'quarta' : size === 5 ? 'quinta' : size === 6 ? 'sexta' : size === 7 ? 'sétima' : 'oitava'}`,
+      description: `Intervalo: ${desc}`,
       category: 'interval',
     });
   });
   
-  // Other
+  // Other - augmentation dot and ligadura
   ref.push({
     char: '\u2824',
     dots: '3,6',
@@ -793,12 +849,16 @@ export function getQuickReference(): QuickRefEntry[] {
   return ref;
 }
 
+// Backward compatibility: export as constant (calls the function)
+export const QUICK_REFERENCE = getQuickReference();
+
 export function perkinsDotsToUnicode(dots: PerkinsKeyState): string {
   return perkinsKeysToBraille(dots);
 }
 
 export function describeBrailleChar(char: string): string {
-  const entry = getQuickReference().find(e => e.char === char);
+  const ref = getQuickReference();
+  const entry = ref.find(e => e.char === char);
   if (entry) return entry.description;
   
   const noteInfo = NOTE_MAP[char];
