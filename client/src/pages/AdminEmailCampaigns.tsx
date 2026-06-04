@@ -6,7 +6,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { RichTextEditor } from "@/components/RichTextEditor";
 import { trpc } from "@/lib/trpc";
 import { AlertCircle, CheckCircle2, Mail, Clock, Trash2, Play, Pause, Edit, X } from "lucide-react";
 import { toast } from "sonner";
@@ -14,21 +13,13 @@ import { toast } from "sonner";
 export default function AdminEmailCampaigns() {
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
-  const [isDuplicating, setIsDuplicating] = useState(false); // Track if we're duplicating a completed campaign
   const [recipients, setRecipients] = useState("");
   const [name, setName] = useState("");
   const [subject, setSubject] = useState("");
   const [htmlContent, setHtmlContent] = useState("");
   const [replyTo, setReplyTo] = useState("contato@braille5steps.com");
-  const [fromEmail, setFromEmail] = useState("contato@braille5steps.com");
   const [intervalMinutes, setIntervalMinutes] = useState(2);
   const [isPreview, setIsPreview] = useState(false);
-
-  // Available from addresses
-  const fromAddresses = [
-    "contato@braille5steps.com",
-    "rafaelvanazzi@gmail.com",
-  ];
 
   const utils = trpc.useUtils();
   const { data: campaigns = [], isLoading } = trpc.emailCampaigns.list.useQuery();
@@ -49,13 +40,11 @@ export default function AdminEmailCampaigns() {
   const resetForm = () => {
     setShowForm(false);
     setEditingId(null);
-    setIsDuplicating(false);
     setRecipients("");
     setName("");
     setSubject("");
     setHtmlContent("");
     setReplyTo("contato@braille5steps.com");
-    setFromEmail("contato@braille5steps.com");
     setIntervalMinutes(2);
     setIsPreview(false);
   };
@@ -66,20 +55,6 @@ export default function AdminEmailCampaigns() {
     setSubject(campaign.subject);
     setHtmlContent(campaign.htmlContent);
     setReplyTo(campaign.replyTo || "contato@braille5steps.com");
-    setFromEmail(campaign.fromEmail || "contato@braille5steps.com");
-    setIntervalMinutes(campaign.intervalMinutes);
-    setRecipients(campaign.recipients?.join("\n") || "");
-    setShowForm(true);
-  };
-
-  const handleDuplicate = (campaign: any) => {
-    setEditingId(null);
-    setIsDuplicating(true);
-    setName(`${campaign.name} (Cópia)`);
-    setSubject(campaign.subject);
-    setHtmlContent(campaign.htmlContent);
-    setReplyTo(campaign.replyTo || "contato@braille5steps.com");
-    setFromEmail(campaign.fromEmail || "contato@braille5steps.com");
     setIntervalMinutes(campaign.intervalMinutes);
     setRecipients(campaign.recipients?.join("\n") || "");
     setShowForm(true);
@@ -109,7 +84,6 @@ export default function AdminEmailCampaigns() {
         subject,
         htmlContent,
         replyTo: replyTo || undefined,
-        fromEmail,
         recipients: recipientList,
         intervalMinutes,
       });
@@ -182,9 +156,7 @@ export default function AdminEmailCampaigns() {
       {showForm && (
         <Card>
           <CardHeader>
-            <CardTitle>
-              {isDuplicating ? "Duplicar Campanha" : editingId ? "Editar Campanha" : "Criar Nova Campanha"}
-            </CardTitle>
+            <CardTitle>{editingId ? "Editar Campanha" : "Criar Nova Campanha"}</CardTitle>
             <CardDescription>Emails serão enviados com intervalo de N minutos entre cada um</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -242,29 +214,12 @@ export default function AdminEmailCampaigns() {
             </div>
 
             <div>
-              <label className="text-sm font-medium">Remetente (From)</label>
-              <select
-                value={fromEmail}
-                onChange={(e) => setFromEmail(e.target.value)}
-                className="w-full px-3 py-2 border border-border rounded-md bg-background text-foreground"
-              >
-                {fromAddresses.map((addr) => (
-                  <option key={addr} value={addr}>
-                    {addr}
-                  </option>
-                ))}
-              </select>
-              <p className="text-xs text-muted-foreground mt-1">
-                Escolha o endereço que será exibido como remetente do email
-              </p>
-            </div>
-
-            <div>
-              <label className="text-sm font-medium">Conteúdo do Email</label>
-              <RichTextEditor
+              <label className="text-sm font-medium">Conteúdo do Email (HTML)</label>
+              <Textarea
+                placeholder="<h1>Olá!</h1><p>Este é um email de teste.</p>"
                 value={htmlContent}
-                onChange={setHtmlContent}
-                placeholder="Escreva o conteúdo do seu email aqui..."
+                onChange={(e) => setHtmlContent(e.target.value)}
+                className="min-h-48 font-mono text-sm"
               />
             </div>
 
@@ -300,17 +255,7 @@ export default function AdminEmailCampaigns() {
                   recipientList.length === 0
                 }
               >
-                {createMutation.isPending
-                  ? isDuplicating
-                    ? "Duplicando..."
-                    : editingId
-                    ? "Atualizando..."
-                    : "Criando..."
-                  : isDuplicating
-                  ? "Duplicar Campanha"
-                  : editingId
-                  ? "Atualizar Campanha"
-                  : "Criar Campanha"}
+                {createMutation.isPending ? (editingId ? "Atualizando..." : "Criando...") : (editingId ? "Atualizar Campanha" : "Criar Campanha")}
               </Button>
               <Button variant="outline" onClick={resetForm}>
                 <X className="w-4 h-4 mr-2" />
@@ -373,17 +318,6 @@ export default function AdminEmailCampaigns() {
                           title="Editar campanha"
                         >
                           <Edit className="w-4 h-4 text-blue-600" />
-                        </Button>
-                      )}
-                      {campaign.status === "completed" && (
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          className="h-7 w-7"
-                          onClick={() => handleDuplicate(campaign)}
-                          title="Duplicar campanha"
-                        >
-                          <Edit className="w-4 h-4 text-purple-600" />
                         </Button>
                       )}
                       {campaign.status === "draft" && (

@@ -1,1 +1,0 @@
-ALTER TABLE `users` ADD `preferredBrfExportFormat` varchar(32) DEFAULT 'a4-brasil';

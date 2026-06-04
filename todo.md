@@ -255,6 +255,14 @@
 - [x] Seção "Exportação" com 5 formatos de página e compatibilidade de impressoras
 - [x] Layout responsivo com 3 colunas em desktop, 1 coluna em mobile
 
+## Modal de Seleção de Formato de Página para Exportação BRF
+- [x] Criar Dialog para seleção de formato de página
+- [x] Implementar 6 formatos predefinidos (A4 Brasil, A4 Internacional, BANA, Letter, Formulário Contínuo, Braille Fácil)
+- [x] Adicionar opções de personalização (células por linha, linhas por página)
+- [x] Adicionar checkboxes para incluir cabeçalho e numeração de páginas
+- [x] Integrar com o backend para passar os parâmetros de formato
+- [x] Corrigir updateBrailleProject para retornar o projeto atualizado
+
 ## Melhorias do Editor v2 - Feedback do Utilizador
 - [ ] Corrigir importação BRF: converter ASCII Braille → Unicode e disparar renderização da partitura
 - [ ] Redesenhar celas Braille: círculos menores com espaçamento real entre pontos

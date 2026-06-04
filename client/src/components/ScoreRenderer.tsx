@@ -4,7 +4,7 @@
  * Supports: notes, rests, barlines, time signatures, accidentals, dots, slurs, ties.
  * Click on a note to jump to the corresponding Braille cell in the editor.
  */
-import { useEffect, useLayoutEffect, useRef, useMemo } from 'react';
+import { useEffect, useRef, useMemo } from 'react';
 import { Renderer, Stave, StaveNote, Voice, Formatter, Accidental, Dot, Curve } from 'vexflow';
 import type { ParsedElement, ParsedNote, ParsedRest, ParsedKeySignature } from '../lib/brailleMusic';
 
@@ -17,8 +17,6 @@ interface ScoreRendererProps {
   onNoteClick?: (sourceIndex: number) => void;
   /** @deprecated Use onNoteClick instead */
   onMeasureClick?: (sourceIndex: number) => void;
-  /** Source index of the note to highlight (for bidirectional sync with Braille cursor) */
-  highlightedSourceIndex?: number | null;
 }
 
 // Hit area for individual notes (for click detection)
@@ -164,7 +162,7 @@ function accidentalToVex(acc: string): string {
   }
 }
 
-export default function ScoreRenderer({ elements, width = 1000, height = 300, beatsPerMeasure = 4, onNoteClick, onMeasureClick, highlightedSourceIndex }: ScoreRendererProps) {
+export default function ScoreRenderer({ elements, width = 1000, height = 300, beatsPerMeasure = 4, onNoteClick, onMeasureClick }: ScoreRendererProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   // Store note hit areas for click detection (per individual note)
   const noteHitAreas = useRef<NoteHitArea[]>([]);
@@ -173,21 +171,12 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
   const handleNoteClick = onNoteClick || onMeasureClick;
 
   // Extract time signature from parsed elements
-  // CORREÇÃO: Adicionada flag 'exists' para saber se o compasso foi digitado pelo usuário
   const timeSignature = useMemo(() => {
     const timeSigEl = elements.find(el => el.type === 'timesignature') as any;
     if (timeSigEl) {
-      return { 
-        numerator: timeSigEl.numerator, 
-        denominator: timeSigEl.denominator,
-        exists: true // Flag: time signature foi digitado pelo usuário
-      };
+      return { numerator: timeSigEl.numerator, denominator: timeSigEl.denominator };
     }
-    return { 
-      numerator: 4, 
-      denominator: 4,
-      exists: false // Flag: time signature NÃO foi digitado (usar 4/4 apenas internamente)
-    };
+    return { numerator: 4, denominator: 4 };
   }, [elements]);
 
   // Extract key signature from parsed elements
@@ -199,14 +188,8 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
   // Group elements into measures
   const measures = useMemo(() => groupIntoMeasures(elements), [elements]);
 
-  useLayoutEffect(() => {
-    if (!containerRef.current || measures.length === 0) {
-      // Ensure container is cleaned up even if no measures
-      if (containerRef.current) {
-        containerRef.current.innerHTML = '';
-      }
-      return;
-    }
+  useEffect(() => {
+    if (!containerRef.current || measures.length === 0) return;
 
     // Clear container and hit areas
     containerRef.current.innerHTML = '';
@@ -276,10 +259,8 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
         if (keySignature) {
           stave.addKeySignature(keySignature);
         }
-        // CORREÇÃO: Add time signature ONLY if explicitly typed by user
-        if (timeSignature.exists) {
-          stave.addTimeSignature(`${timeSignature.numerator}/${timeSignature.denominator}`);
-        }
+        // Add time signature on first measure (from parsed or prop)
+        stave.addTimeSignature(`${timeSignature.numerator}/${timeSignature.denominator}`);
       }
 
       // Set beginning barline type (ritornelo de início)
@@ -419,29 +400,7 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
 
       x += currentStaveWidth;
     }
-    
-    // Apply visual highlight to the selected note using hit areas
-    if (highlightedSourceIndex !== null && highlightedSourceIndex !== undefined) {
-      const svg = containerRef.current?.querySelector('svg');
-      if (svg) {
-        // Find the hit area for the highlighted note
-        const highlightedArea = noteHitAreas.current.find(area => area.sourceIndex === highlightedSourceIndex);
-        if (highlightedArea) {
-          // Create a highlight rectangle
-          const highlightRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-          highlightRect.setAttribute('x', String(highlightedArea.x - 5));
-          highlightRect.setAttribute('y', String(highlightedArea.y - 5));
-          highlightRect.setAttribute('width', String(highlightedArea.w + 10));
-          highlightRect.setAttribute('height', String(highlightedArea.h + 10));
-          highlightRect.setAttribute('fill', 'rgba(59, 130, 246, 0.2)');
-          highlightRect.setAttribute('stroke', '#3b82f6');
-          highlightRect.setAttribute('stroke-width', '2');
-          highlightRect.setAttribute('rx', '4');
-          svg.appendChild(highlightRect);
-        }
-      }
-    }
-  }, [elements, measures, width, height, timeSignature, highlightedSourceIndex]);
+  }, [elements, measures, width, height, timeSignature]);
 
   // Add click listener on the SVG canvas to detect note clicks
   useEffect(() => {

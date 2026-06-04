@@ -1,1 +1,0 @@
-ALTER TABLE `email_campaigns` ADD `fromEmail` varchar(320) DEFAULT 'contato@braille5steps.com' NOT NULL;

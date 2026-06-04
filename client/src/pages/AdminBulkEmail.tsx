@@ -4,7 +4,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { RichTextEditor } from "@/components/RichTextEditor";
 import { trpc } from "@/lib/trpc";
 import { AlertCircle, CheckCircle2, Mail } from "lucide-react";
 
@@ -137,14 +136,15 @@ export default function AdminBulkEmail() {
           {/* HTML Content */}
           <Card>
             <CardHeader>
-              <CardTitle>Conteúdo do Email</CardTitle>
-              <CardDescription>Escreva como um email normal, sem precisar de HTML</CardDescription>
+              <CardTitle>Conteúdo do Email (HTML)</CardTitle>
+              <CardDescription>Você pode usar HTML para formatar o email</CardDescription>
             </CardHeader>
             <CardContent>
-              <RichTextEditor
+              <Textarea
+                placeholder="<h1>Olá!</h1><p>Este é um email de teste.</p>"
                 value={htmlContent}
-                onChange={setHtmlContent}
-                placeholder="Escreva o conteúdo do seu email aqui..."
+                onChange={(e) => setHtmlContent(e.target.value)}
+                className="min-h-64 font-mono text-sm"
               />
             </CardContent>
           </Card>

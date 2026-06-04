@@ -258,7 +258,6 @@ export const emailCampaigns = mysqlTable("email_campaigns", {
   subject: varchar("subject", { length: 255 }).notNull(),
   htmlContent: longtext("htmlContent").notNull(),
   replyTo: varchar("replyTo", { length: 320 }),
-  fromEmail: varchar("fromEmail", { length: 320 }).default("contato@braille5steps.com").notNull(),
   recipients: longtext("recipients").notNull(), // JSON array of emails
   intervalMinutes: int("intervalMinutes").default(2).notNull(), // interval between emails
   status: mysqlEnum("status", ["draft", "scheduled", "running", "completed", "cancelled"]).default("draft").notNull(),
