@@ -8,12 +8,6 @@
  * - Music Braille Code 2015 (BANA)
  * - International Manual of Braille Music Notation
  * - MusiBraille (UFRJ) conventions
- * 
- * KEY FEATURES:
- * - Automatic disambiguation of semibreve/semicolcheia based on measure context
- * - Correct octave mapping (⠐ = 4th octave, etc.)
- * - Interval support for chords (diatonic, respecting key signature)
- * - Proper handling of ⠼ as number sign vs whole rest
  */
 
 // ─── NOTE TABLES ───────────────────────────────────────────────────────────────
@@ -27,117 +21,112 @@ interface NoteInfo {
   altDuration: Duration;
 }
 
-/**
- * Map from Unicode Braille character to note info.
- * Each character encodes pitch + one of 4 duration groups.
- */
 const NOTE_MAP: Record<string, NoteInfo> = {
-  // Eighth notes (colcheias) / 128th notes (quartifusas) — no dot 3 or 6
-  '\u2819': { pitch: 'C', duration: '8', altDuration: '128' },  // ⠙
-  '\u2811': { pitch: 'D', duration: '8', altDuration: '128' },  // ⠑
-  '\u280B': { pitch: 'E', duration: '8', altDuration: '128' },  // ⠋
-  '\u281B': { pitch: 'F', duration: '8', altDuration: '128' },  // ⠛
-  '\u2813': { pitch: 'G', duration: '8', altDuration: '128' },  // ⠓
-  '\u280A': { pitch: 'A', duration: '8', altDuration: '128' },  // ⠊
-  '\u281A': { pitch: 'B', duration: '8', altDuration: '128' },  // ⠚
+  // Eighth notes (colcheias) / 128th notes (quartifusas)
+  '\u2819': { pitch: 'C', duration: '8', altDuration: '128' },
+  '\u2811': { pitch: 'D', duration: '8', altDuration: '128' },
+  '\u280B': { pitch: 'E', duration: '8', altDuration: '128' },
+  '\u281B': { pitch: 'F', duration: '8', altDuration: '128' },
+  '\u2813': { pitch: 'G', duration: '8', altDuration: '128' },
+  '\u280A': { pitch: 'A', duration: '8', altDuration: '128' },
+  '\u281A': { pitch: 'B', duration: '8', altDuration: '128' },
 
-  // Quarter notes (semínimas) / 64th notes (semifusas) — dot 6 only
-  '\u2839': { pitch: 'C', duration: 'q', altDuration: '64' },   // ⠹
-  '\u2831': { pitch: 'D', duration: 'q', altDuration: '64' },   // ⠱
-  '\u282B': { pitch: 'E', duration: 'q', altDuration: '64' },   // ⠫
-  '\u283B': { pitch: 'F', duration: 'q', altDuration: '64' },   // ⠻
-  '\u2833': { pitch: 'G', duration: 'q', altDuration: '64' },   // ⠳
-  '\u282A': { pitch: 'A', duration: 'q', altDuration: '64' },   // ⠪
-  '\u283A': { pitch: 'B', duration: 'q', altDuration: '64' },   // ⠺
+  // Quarter notes (semínimas) / 64th notes (semifusas)
+  '\u2839': { pitch: 'C', duration: 'q', altDuration: '64' },
+  '\u2831': { pitch: 'D', duration: 'q', altDuration: '64' },
+  '\u282B': { pitch: 'E', duration: 'q', altDuration: '64' },
+  '\u283B': { pitch: 'F', duration: 'q', altDuration: '64' },
+  '\u2833': { pitch: 'G', duration: 'q', altDuration: '64' },
+  '\u282A': { pitch: 'A', duration: 'q', altDuration: '64' },
+  '\u283A': { pitch: 'B', duration: 'q', altDuration: '64' },
 
-  // Half notes (mínimas) / 32nd notes (fusas) — dot 3 only
-  '\u2815': { pitch: 'C', duration: 'h', altDuration: '32' },   // ⠕
-  '\u280D': { pitch: 'D', duration: 'h', altDuration: '32' },   // ⠍
-  '\u2807': { pitch: 'E', duration: 'h', altDuration: '32' },   // ⠇
-  '\u2817': { pitch: 'F', duration: 'h', altDuration: '32' },   // ⠗
-  '\u280F': { pitch: 'G', duration: 'h', altDuration: '32' },   // ⠏
-  '\u2806': { pitch: 'A', duration: 'h', altDuration: '32' },   // ⠆
-  '\u2816': { pitch: 'B', duration: 'h', altDuration: '32' },   // ⠖
+  // Half notes (mínimas) / 32nd notes (fusas)
+  '\u2815': { pitch: 'C', duration: 'h', altDuration: '32' },
+  '\u280D': { pitch: 'D', duration: 'h', altDuration: '32' },
+  '\u2807': { pitch: 'E', duration: 'h', altDuration: '32' },
+  '\u2817': { pitch: 'F', duration: 'h', altDuration: '32' },
+  '\u280F': { pitch: 'G', duration: 'h', altDuration: '32' },
+  '\u2806': { pitch: 'A', duration: 'h', altDuration: '32' },
+  '\u2816': { pitch: 'B', duration: 'h', altDuration: '32' },
 
-  // Whole notes (semibreves) / 16th notes (semicolcheias) — dots 3 and 6
-  '\u283D': { pitch: 'C', duration: 'w', altDuration: '16' },   // ⠽
-  '\u282F': { pitch: 'D', duration: 'w', altDuration: '16' },   // ⠯
-  '\u283F': { pitch: 'E', duration: 'w', altDuration: '16' },   // ⠿
-  '\u283E': { pitch: 'F', duration: 'w', altDuration: '16' },   // ⠾
-  '\u2837': { pitch: 'G', duration: 'w', altDuration: '16' },   // ⠷
-  '\u282E': { pitch: 'A', duration: 'w', altDuration: '16' },   // ⠮
-  '\u2827': { pitch: 'B', duration: 'w', altDuration: '16' },   // ⠧
+  // Whole notes (semibreves) / 16th notes (semicolcheias)
+  '\u283D': { pitch: 'C', duration: 'w', altDuration: '16' },
+  '\u282F': { pitch: 'D', duration: 'w', altDuration: '16' },
+  '\u283F': { pitch: 'E', duration: 'w', altDuration: '16' },
+  '\u283E': { pitch: 'F', duration: 'w', altDuration: '16' },
+  '\u2837': { pitch: 'G', duration: 'w', altDuration: '16' },
+  '\u282E': { pitch: 'A', duration: 'w', altDuration: '16' },
+  '\u2827': { pitch: 'B', duration: 'w', altDuration: '16' },
 };
 
-// Rest map
 const REST_MAP: Record<string, { duration: Duration; altDuration: Duration }> = {
-  '\u2800': { duration: '8', altDuration: '128' },   // ⠀ = rest (8th/128th)
-  '\u2830': { duration: 'q', altDuration: '64' },    // ⠰ = rest (quarter/64th)
-  '\u2804': { duration: 'h', altDuration: '32' },    // ⠄ = rest (half/32nd)
-  // ⠼ (U+283C) is handled specially - can be whole rest OR number sign
+  '\u2800': { duration: '8', altDuration: '128' },
+  '\u2830': { duration: 'q', altDuration: '64' },
+  '\u2804': { duration: 'h', altDuration: '32' },
 };
 
-// Accidental map - CORRECTED
 const ACCIDENTAL_MAP: Record<string, Accidental> = {
-  '\u2829': 'sharp',   // ⠩ = # (dots 1,2,4,6)
-  '\u2823': 'flat',    // ⠣ = b (dots 1,2,3,4)
-  '\u2821': 'natural', // ⠡ = bequadro (dots 1,6) ← CORRIGIDO
+  '\u2829': 'sharp',
+  '\u2823': 'flat',
+  '\u2821': 'natural',
 };
 
-// Octave map - CORRECTED according to MBC 2015
 const OCTAVE_MAP: Record<string, number> = {
-  '\u2808\u2808': 0,  // ⠈⠈ = below first octave
-  '\u2808': 1,        // ⠈ = first octave
-  '\u2818': 2,        // ⠘ = second octave
-  '\u2838': 3,        // ⠸ = third octave
-  '\u2810': 4,        // ⠐ = fourth octave (middle C) ← MOST IMPORTANT
-  '\u2828': 5,        // ⠨ = fifth octave
-  '\u2830': 6,        // ⠰ = sixth octave
-  '\u2820': 7,        // ⠠ = seventh octave
-  '\u2820\u2820': 8,  // ⠠⠠ = above seventh octave
+  '\u2808\u2808': 0,
+  '\u2808': 1,
+  '\u2818': 2,
+  '\u2838': 3,
+  '\u2810': 4,
+  '\u2828': 5,
+  '\u2830': 6,
+  '\u2820': 7,
+  '\u2820\u2820': 8,
 };
 
-// Barline map
 const BARLINE_MAP: Record<string, 'single' | 'end' | 'repeat-begin' | 'repeat-end' | 'repeat-both'> = {
-  '\u2823\u2805': 'single',        // ⠣⠅
-  '\u2823\u2836': 'end',           // ⠣⠶
-  '\u2823\u2806': 'repeat-begin',  // ⠣⠆
-  '\u2823\u2830': 'repeat-end',    // ⠣⠰
-  '\u2823\u2837': 'repeat-both',   // ⠣⠷
+  '\u2823\u2805': 'single',
+  '\u2823\u2836': 'end',
+  '\u2823\u2806': 'repeat-begin',
+  '\u2823\u2830': 'repeat-end',
+  '\u2823\u2837': 'repeat-both',
 };
 
-// Time signature map - 3 cells required
+// Time signature map - CORRECTED with proper Braille digits
+// Format: ⠼ (number sign) + numerator + denominator
 const TIME_SIGNATURE_MAP: Record<string, { numerator: number; denominator: number }> = {
   '\u283C\u2819\u2832': { numerator: 4, denominator: 4 },  // ⠼⠙⠲ = 4/4
   '\u283C\u2809\u2832': { numerator: 3, denominator: 4 },  // ⠼⠉⠲ = 3/4
-  '\u283C\u280B\u2832': { numerator: 2, denominator: 4 },  // ⠼⠋⠲ = 2/4
-  '\u283C\u281B\u2826': { numerator: 6, denominator: 8 },  // ⠼⠛⠦ = 6/8
-  '\u283C\u280B\u2811': { numerator: 2, denominator: 2 },  // ⠼⠋⠑ = 2/2
+  '\u283C\u2803\u2832': { numerator: 2, denominator: 4 },  // ⠼⠃⠲ = 2/4 ← CORRIGIDO!
+  '\u283C\u280B\u2826': { numerator: 6, denominator: 8 },  // ⠼⠋⠦ = 6/8
+  '\u283C\u2803\u2811': { numerator: 2, denominator: 2 },  // ⠼⠃⠑ = 2/2 ← CORRIGIDO!
   '\u283C\u2809\u2826': { numerator: 3, denominator: 8 },  // ⠼⠉⠦ = 3/8
 };
 
-// Interval map - NEW FEATURE
-// Intervals are diatonic and respect the key signature
 const INTERVAL_MAP: Record<string, number> = {
-  '\u2824': 2,  // ⠤ = segunda (dots 3,6)
-  '\u282C': 3,  // ⠬ = terça (dots 3,4,5,6)
-  '\u283C': 4,  // ⠼ = quarta (dots 3,4,5,6) - context-dependent with number sign
-  '\u2814': 5,  // ⠔ = quinta (dots 3,5)
-  '\u2834': 6,  // ⠴ = sexta (dots 3,5,6)
-  '\u2812': 7,  // ⠒ = sétima (dots 2,5)
-  '\u2838': 8,  // ⠸ = oitava (dots 4,5,6)
+  '\u2824': 2,
+  '\u282C': 3,
+  '\u283C': 4,
+  '\u2814': 5,
+  '\u2834': 6,
+  '\u2812': 7,
+  '\u2838': 8,
 };
 
-// Braille digits
+// Braille digits - CORRECTED
 const BRAILLE_DIGITS: Record<string, string> = {
-  '\u2819': '1', '\u2811': '2', '\u280B': '3', '\u281B': '4',
-  '\u2813': '5', '\u280A': '6', '\u281A': '7', '\u2803': '8',
-  '\u280F': '9', '\u280E': '0',
+  '\u2801': '1', // ⠁
+  '\u2803': '2', // ⠃ ← CORRIGIDO!
+  '\u2809': '3', // ⠉
+  '\u2819': '4', // ⠙
+  '\u2811': '5', // ⠑
+  '\u280B': '6', // ⠋ ← CORRIGIDO!
+  '\u281B': '7', // ⠛
+  '\u2813': '8', // ⠓
+  '\u280A': '9', // ⠊
+  '\u281A': '0', // ⠚
 };
 
-// Key signature mapping
 const OFFICIAL_KEY_SIGNATURE_MAP: Record<string, string> = {
-  // Sharps
   '\u2829': 'F',
   '\u2829\u2829': 'C',
   '\u2829\u2829\u2829': 'G',
@@ -145,7 +134,6 @@ const OFFICIAL_KEY_SIGNATURE_MAP: Record<string, string> = {
   '\u283C\u2811\u2829': 'A',
   '\u283C\u280B\u2829': 'E',
   '\u283C\u281B\u2829': 'B',
-  // Flats
   '\u2823': 'f',
   '\u2823\u2823': 'c',
   '\u2823\u2823\u2823': 'g',
@@ -155,13 +143,12 @@ const OFFICIAL_KEY_SIGNATURE_MAP: Record<string, string> = {
   '\u283C\u281B\u2823': 'b',
 };
 
-// Constants
-const NUMBER_SIGN = '\u283C';      // ⠼
-const AUGMENTATION_DOT = '\u2824'; // ⠤
-const NOTE_TIE = '\u2824';         // ⠤
-const WORD_SIGN = '\u2820';        // ⠠
-const FORCED_WHOLE_MARKER = '\u2831'; // ⠱
-const FORCED_32ND_MARKER = '\u2833';  // ⠳
+const NUMBER_SIGN = '\u283C';
+const AUGMENTATION_DOT = '\u2824';
+const NOTE_TIE = '\u2824';
+const WORD_SIGN = '\u2820';
+const FORCED_WHOLE_MARKER = '\u2831';
+const FORCED_32ND_MARKER = '\u2833';
 
 // ─── PARSED ELEMENT TYPES ──────────────────────────────────────────────────────
 
@@ -293,7 +280,6 @@ function parseStructuralTokens(tokens: string[]): {
   let initialOctave = 4;
   let charOffset = 0;
 
-  // A) Key signature
   if (tokenIndex < tokens.length) {
     const keySigResult = isKeySignatureToken(tokens[tokenIndex]);
     if (keySigResult) {
@@ -308,7 +294,6 @@ function parseStructuralTokens(tokens: string[]): {
     }
   }
 
-  // B) Time signature (requires 3 cells)
   if (tokenIndex < tokens.length) {
     const token = tokens[tokenIndex];
     if (token.startsWith(NUMBER_SIGN) && TIME_SIGNATURE_MAP[token]) {
@@ -324,7 +309,6 @@ function parseStructuralTokens(tokens: string[]): {
     }
   }
 
-  // C) Octave sign
   if (tokenIndex < tokens.length) {
     const token = tokens[tokenIndex];
     if (OCTAVE_MAP[token] !== undefined) {
@@ -370,7 +354,6 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
     let ch = processInput[i];
     const nextCh = i + 1 < processInput.length ? processInput[i + 1] : '';
     
-    // Barline patterns
     if (i + 1 < processInput.length) {
       const barlinePattern = processInput.substring(i, i + 2);
       if (BARLINE_MAP[barlinePattern]) {
@@ -389,7 +372,6 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
       }
     }
     
-    // Spaces (barlines)
     if (ch === ' ' || ch === '\u2800') {
       if (elements.length > 0 && elements[elements.length - 1].type !== 'barline') {
         elements.push({ type: 'barline', sourceIndex: i });
@@ -400,13 +382,11 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
       continue;
     }
     
-    // Newlines
     if (ch === '\n' || ch === '\r') {
       i++;
       continue;
     }
     
-    // Octave sign (multi-cell or single-cell)
     if (i + 1 < processInput.length && OCTAVE_MAP[processInput.substring(i, i + 2)] !== undefined) {
       pendingOctave = OCTAVE_MAP[processInput.substring(i, i + 2)];
       inNoteContext = true;
@@ -423,21 +403,18 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
       continue;
     }
     
-    // Accidental
     if (ACCIDENTAL_MAP[ch]) {
       pendingAccidental = ACCIDENTAL_MAP[ch];
       i++;
       continue;
     }
     
-    // Articulation
     if (nextCh && ACCIDENTAL_MAP[nextCh]) {
       pendingArticulation = ACCIDENTAL_MAP[nextCh];
       i += 2;
       continue;
     }
     
-    // Interval (NEW FEATURE) - only in note context
     if (inNoteContext && INTERVAL_MAP[ch] !== undefined && ch !== AUGMENTATION_DOT) {
       const intervalSize = INTERVAL_MAP[ch];
       elements.push({
@@ -449,7 +426,6 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
       continue;
     }
     
-    // Forced whole/32nd markers
     let forceWhole = false;
     let force32nd = false;
     if (ch === FORCED_WHOLE_MARKER && !inNoteContext && i + 1 < processInput.length && NOTE_MAP[processInput[i + 1]]) {
@@ -462,7 +438,6 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
       ch = processInput[i];
     }
     
-    // Note
     if (NOTE_MAP[ch]) {
       const noteInfo = NOTE_MAP[ch];
       let octave: number;
@@ -534,9 +509,7 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
       continue;
     }
     
-    // Rest - DISAMBIGUATION for ⠼ (U+283C)
     if (ch === NUMBER_SIGN) {
-      // Check if it's a time signature (⠼ + 2 digits)
       if (i + 2 < processInput.length) {
         const pattern = processInput.substring(i, i + 3);
         if (TIME_SIGNATURE_MAP[pattern]) {
@@ -552,7 +525,6 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
           continue;
         }
       }
-      // If not a time signature, treat as whole rest
       const restInfo = { duration: 'w' as Duration, altDuration: '16' as Duration };
       let dotted = false;
       if (i + 1 < processInput.length && processInput[i + 1] === AUGMENTATION_DOT) {
@@ -612,7 +584,6 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
       continue;
     }
     
-    // Word sign
     if (ch === WORD_SIGN) {
       i++;
       while (i < processInput.length && processInput[i] !== ' ' && processInput[i] !== '\u2800' && !NOTE_MAP[processInput[i]] && !REST_MAP[processInput[i]]) {
@@ -621,7 +592,6 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
       continue;
     }
     
-    // Note tie
     if (ch === NOTE_TIE) {
       elements.push({ type: 'notetie', sourceIndex: i } as ParsedNoteTie);
       i++;
@@ -633,8 +603,6 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
   
   return { elements, errors };
 }
-
-// ─── LINE-BASED PARSING ────────────────────────────────────────────────────────
 
 export function parseBrailleLine(fullText: string, cursorPosition: number, options?: ParseOptions): ParseResult {
   const lines = fullText.split('\n');
@@ -659,8 +627,6 @@ export function parseBrailleSelection(fullText: string, selStart: number, selEnd
   const selectedText = fullText.slice(selStart, selEnd);
   return parseBrailleMusic(selectedText, options);
 }
-
-// ─── PERKINS KEYBOARD ──────────────────────────────────────────────────────────
 
 export interface PerkinsKeyState {
   dot1: boolean; dot2: boolean; dot3: boolean;
@@ -690,8 +656,6 @@ export function unicodeToDots(char: string): number[] {
   return dots;
 }
 
-// ─── QUICK REFERENCE ──────────────────────────────────────────────────────────
-
 export interface QuickRefEntry {
   char: string;
   displayChar?: string;
@@ -700,13 +664,10 @@ export interface QuickRefEntry {
   category: string;
 }
 
-/**
- * Generate quick reference with categories compatible with BrailleEditor
- */
 export function getQuickReference(): QuickRefEntry[] {
   const ref: QuickRefEntry[] = [];
   
-  // Notes - categorized by duration group
+  // Notes
   Object.entries(NOTE_MAP).forEach(([char, info]) => {
     let category: string;
     let desc: string;
@@ -736,18 +697,6 @@ export function getQuickReference(): QuickRefEntry[] {
     });
   });
   
-  // Forced whole notes (note-whole-forced category for tests)
-  const forcedWholeChars = ['\u283D', '\u282F', '\u283F', '\u283E', '\u2837', '\u282E', '\u2827'];
-  forcedWholeChars.forEach((char, idx) => {
-    const pitch = ['C', 'D', 'E', 'F', 'G', 'A', 'B'][idx];
-    ref.push({
-      char: '\u2810' + char, // ⠐ + note = forced whole in 4th octave
-      dots: '4 ' + unicodeToDots(char).join(','),
-      description: `${pitch} semibreve forçada`,
-      category: 'note-whole-forced',
-    });
-  });
-  
   // Rests
   Object.entries(REST_MAP).forEach(([char, info]) => {
     const desc = info.duration === 'w' ? 'Pausa semibreve' : 
@@ -761,7 +710,7 @@ export function getQuickReference(): QuickRefEntry[] {
     });
   });
   
-  // Whole rest (⠼) - special case
+  // Whole rest
   ref.push({
     char: '\u283C',
     dots: '3,4,5,6',
@@ -782,7 +731,7 @@ export function getQuickReference(): QuickRefEntry[] {
   
   // Octaves
   Object.entries(OCTAVE_MAP).forEach(([char, oct]) => {
-    if (char.length === 1) { // Only single-cell octaves
+    if (char.length === 1) {
       ref.push({
         char,
         dots: unicodeToDots(char).join(','),
@@ -816,7 +765,7 @@ export function getQuickReference(): QuickRefEntry[] {
     });
   });
   
-  // Intervals (NEW)
+  // Intervals
   Object.entries(INTERVAL_MAP).forEach(([char, size]) => {
     const desc = size === 2 ? 'Segunda' : 
                  size === 3 ? 'Terça' : 
@@ -832,24 +781,17 @@ export function getQuickReference(): QuickRefEntry[] {
     });
   });
   
-  // Other - augmentation dot and ligadura
+  // Other
   ref.push({
     char: '\u2824',
     dots: '3,6',
     description: 'Ponto de aumento',
     category: 'other',
   });
-  ref.push({
-    char: '\u2824',
-    dots: '3,6',
-    description: 'Ligadura de nota',
-    category: 'other',
-  });
   
   return ref;
 }
 
-// Backward compatibility: export as constant (calls the function)
 export const QUICK_REFERENCE = getQuickReference();
 
 export function perkinsDotsToUnicode(dots: PerkinsKeyState): string {
