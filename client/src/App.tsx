@@ -20,6 +20,7 @@ import AboutRafael from "./pages/AboutRafael";
 import ForumCategory from "./pages/ForumCategory";
 import ForumTopic from "./pages/ForumTopic";
 import BrailleEditor from "./pages/BrailleEditor";
+import BrailleEditorV2 from "./pages/v2/BrailleEditorV2";
 import AdminBulkEmail from "./pages/AdminBulkEmail";
 
 function Router() {
@@ -39,6 +40,7 @@ function Router() {
       <Route path="/forum" component={Forum} />
       <Route path="/contato" component={Contact} />
       <Route path="/editor-musicografia-braille" component={BrailleEditor} />
+      <Route path="/editor-v2" component={BrailleEditorV2} />
       <Route path="/admin" component={Admin} />
       <Route path="/admin/emails" component={AdminBulkEmail} />
       <Route path="/404" component={NotFound} />
