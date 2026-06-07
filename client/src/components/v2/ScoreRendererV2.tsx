@@ -26,7 +26,7 @@ export default function ScoreRendererV2({ elements, width = 800, height = 250 }:
       const context = renderer.getContext();
 
       // 2. Verificar se há fórmula de compasso
-      const timeSig = elements.find((el): el is ParsedTimeSignature => el.type === 'timesignature');
+      const timeSig = elements.find((el): el is ParsedTimeSignature => el.type === 'timesig');
       const numerator = timeSig ? timeSig.numerator : 4;
       const denominator = timeSig ? timeSig.denominator : 4;
 
@@ -52,7 +52,6 @@ export default function ScoreRendererV2({ elements, width = 800, height = 250 }:
               duration: el.duration,
               clef: 'treble',
             });
-            if (el.dotted) note.addDotToAll();
             return note;
           } else {
             // Pausa
@@ -61,7 +60,6 @@ export default function ScoreRendererV2({ elements, width = 800, height = 250 }:
               duration: el.duration + 'r',
               clef: 'treble',
             });
-            if (el.dotted) rest.addDotToAll();
             return rest;
           }
         });
