@@ -1,3 +1,8 @@
+import { useState } from "react";
+import SiteLayout from "@/components/SiteLayout";
+import ScoreRenderer from "@/components/ScoreRenderer";
+import { QUICK_REFERENCE } from "@/lib/brailleMusic";
+
 function QuickReferencePanel({ onInsert }: { onInsert: (char: string) => void }) {
   const ref = QUICK_REFERENCE;
   const [filter, setFilter] = useState<string>("all");
@@ -17,7 +22,7 @@ function QuickReferencePanel({ onInsert }: { onInsert: (char: string) => void })
     { key: "other", label: "Outros" },
   ];
 
-  const filtered = filter === "all" ? ref : ref.filter((e) => e.category === filter);
+  const filtered = filter === "all" ? ref : ref.filter((e: any) => e.category === filter);
 
   return (
     <div className="space-y-2">
@@ -37,7 +42,7 @@ function QuickReferencePanel({ onInsert }: { onInsert: (char: string) => void })
         ))}
       </div>
       <div className="grid grid-cols-4 sm:grid-cols-6 gap-1 max-h-48 overflow-y-auto">
-        {filtered.map((entry, i) => (
+        {filtered.map((entry: any, i: number) => (
           <button
             key={i}
             onClick={() => onInsert(entry.char)}
@@ -52,5 +57,39 @@ function QuickReferencePanel({ onInsert }: { onInsert: (char: string) => void })
         ))}
       </div>
     </div>
+  );
+}
+
+export default function BrailleEditor() {
+  const [brailleContent, setBrailleContent] = useState("");
+  const [parsedElements, setParsedElements] = useState([]);
+
+  const handleInsert = (char: string) => {
+    setBrailleContent(prev => prev + char);
+  };
+
+  return (
+    <SiteLayout>
+      <div className="container max-w-7xl py-4 space-y-3">
+        <h1 className="text-2xl font-bold">Editor de Musicografia Braille</h1>
+        
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <h2 className="text-sm font-semibold">Texto em Braille</h2>
+            <textarea
+              value={brailleContent}
+              onChange={(e) => setBrailleContent(e.target.value)}
+              className="w-full h-64 p-3 border rounded-lg font-mono text-2xl"
+              placeholder="Digite em Braille musical..."
+            />
+            <QuickReferencePanel onInsert={handleInsert} />
+          </div>
+          <div className="space-y-2">
+            <h2 className="text-sm font-semibold">Partitura (VexFlow)</h2>
+            <ScoreRenderer elements={parsedElements} />
+          </div>
+        </div>
+      </div>
+    </SiteLayout>
   );
 }
