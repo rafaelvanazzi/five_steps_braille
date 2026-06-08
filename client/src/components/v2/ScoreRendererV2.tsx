@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { Renderer, Stave, StaveNote, Voice, Formatter } from 'vexflow';
 import type { ParsedElement, ParsedNote, ParsedRest, ParsedTimeSignature } from '@/lib/v2/brailleModelV2';
+import { durationToVexFlow } from '@/lib/v2/brailleModelV2';
 
 interface ScoreRendererV2Props {
   elements: ParsedElement[];
@@ -20,17 +21,14 @@ export default function ScoreRendererV2({ elements, width = 800, height = 250 }:
     containerRef.current.innerHTML = '';
     
     try {
-      // 1. Inicializar VexFlow
       const renderer = new Renderer(containerRef.current, Renderer.Backends.SVG);
       renderer.resize(width, height);
       const context = renderer.getContext();
 
-      // 2. Verificar se há fórmula de compasso
-      const timeSig = elements.find((el): el is ParsedTimeSignature => el.type === 'timesig');
+      const timeSig = elements.find((el): el is ParsedTimeSignature => el.type === 'timesignature');
       const numerator = timeSig ? timeSig.numerator : 4;
       const denominator = timeSig ? timeSig.denominator : 4;
 
-      // 3. Criar a Pauta (Stave)
       const stave = new Stave(10, 40, width - 20);
       stave.addClef('treble');
       if (timeSig) {
@@ -38,37 +36,34 @@ export default function ScoreRendererV2({ elements, width = 800, height = 250 }:
       }
       stave.setContext(context).draw();
 
-      // 4. Filtrar apenas notas e pausas para o VexFlow
       const musicElements = elements.filter(
         (el): el is ParsedNote | ParsedRest => el.type === 'note' || el.type === 'rest'
       );
 
       if (musicElements.length > 0) {
-        // 5. Converter para StaveNotes do VexFlow
         const vexNotes = musicElements.map((el) => {
           if (el.type === 'note') {
             const note = new StaveNote({
               keys: [`${el.pitch.toLowerCase()}/${el.octave}`],
-              duration: el.duration,
+              duration: durationToVexFlow(el.duration),
               clef: 'treble',
             });
+            if (el.dotted) note.addDotToAll();
             return note;
           } else {
-            // Pausa
             const rest = new StaveNote({
               keys: ['b/4'],
-              duration: el.duration + 'r',
+              duration: durationToVexFlow(el.duration) + 'r',
               clef: 'treble',
             });
+            if (el.dotted) rest.addDotToAll();
             return rest;
           }
         });
 
-        // 6. Formatar e Desenhar
         const voice = new Voice({ numBeats: numerator, beatValue: denominator });
-        voice.setMode(2); // Modo SOFT para evitar erros de contagem estrita durante testes
+        voice.setMode(2); // SOFT mode
         
-        // Filtrar elementos inválidos que o VexFlow possa rejeitar
         const validNotes = vexNotes.filter(n => n != null);
         voice.addTickables(validNotes);
 
@@ -84,10 +79,5 @@ export default function ScoreRendererV2({ elements, width = 800, height = 250 }:
     }
   }, [elements, width, height]);
 
-  return (
-    <div 
-      ref={containerRef} 
-      style={{ width: '100%', minHeight: height, overflowX: 'auto' }} 
-    />
-  );
+  return <div ref={containerRef} style={{ width: '100%', minHeight: height, overflowX: 'auto' }} />;
 }
