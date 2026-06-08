@@ -48,7 +48,7 @@ export default function ScoreRendererV2({ elements, width = 800, height = 250 }:
               duration: durationToVexFlow(el.duration),
               clef: 'treble',
             });
-            if (el.dotted) note.addDotToAll();
+            // TODO: Implementar suporte a notas pontuadas
             return note;
           } else {
             const rest = new StaveNote({
@@ -56,7 +56,7 @@ export default function ScoreRendererV2({ elements, width = 800, height = 250 }:
               duration: durationToVexFlow(el.duration) + 'r',
               clef: 'treble',
             });
-            if (el.dotted) rest.addDotToAll();
+            // TODO: Implementar suporte a pausas pontuadas
             return rest;
           }
         });

@@ -10,6 +10,15 @@ export type Accidental = 'sharp' | 'flat' | 'natural';
 export type DifficultyGrade = 1 | 2 | 3 | 4 | 5;
 export type BarlineType = 'single' | 'dashed' | 'end' | 'end-section' | 'repeat-begin' | 'repeat-end';
 
+export interface PerkinsKeyState {
+  dot1: boolean;
+  dot2: boolean;
+  dot3: boolean;
+  dot4: boolean;
+  dot5: boolean;
+  dot6: boolean;
+}
+
 export interface ParsedNote {
   type: 'note';
   pitch: NoteName;
