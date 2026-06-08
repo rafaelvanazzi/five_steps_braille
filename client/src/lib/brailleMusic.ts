@@ -55,13 +55,13 @@ const NOTE_MAP: Record<string, NoteInfo> = {
   '\u283A': { pitch: 'B', duration: 'q',  altDuration: '64'  }, // ⠺ (2,4,5,6)
 
   // Mínimas (h) e Fusas (32) — acrescenta ponto 3
-  '\u2815': { pitch: 'C', duration: 'h',  altDuration: '32'  }, // ⠝ (1,3,4,5)
-  '\u280D': { pitch: 'D', duration: 'h',  altDuration: '32'  }, // ⠕ (1,3,5)
-  '\u2807': { pitch: 'E', duration: 'h',  altDuration: '32'  }, // ⠏ (1,2,3,4)
-  '\u2817': { pitch: 'F', duration: 'h',  altDuration: '32'  }, // ⠟ (1,2,3,4,5)
-  '\u280F': { pitch: 'G', duration: 'h',  altDuration: '32'  }, // ⠗ (1,2,3,5)
-  '\u2806': { pitch: 'A', duration: 'h',  altDuration: '32'  }, // ⠎ (2,3,4)
-  '\u2816': { pitch: 'B', duration: 'h',  altDuration: '32'  }, // ⠞ (2,3,4,5)
+  '\u281D': { pitch: 'C', duration: 'h',  altDuration: '32'  }, // ⠝ (1,3,4,5) — Dó mínima
+  '\u2815': { pitch: 'D', duration: 'h',  altDuration: '32'  }, // ⠕ (1,3,5)   — Ré mínima
+  '\u280F': { pitch: 'E', duration: 'h',  altDuration: '32'  }, // ⠏ (1,2,3,4) — Mi mínima
+  '\u281F': { pitch: 'F', duration: 'h',  altDuration: '32'  }, // ⠟ (1,2,3,4,5) — Fá mínima
+  '\u2817': { pitch: 'G', duration: 'h',  altDuration: '32'  }, // ⠗ (1,2,3,5) — Sol mínima
+  '\u280E': { pitch: 'A', duration: 'h',  altDuration: '32'  }, // ⠎ (2,3,4)   — Lá mínima
+  '\u281E': { pitch: 'B', duration: 'h',  altDuration: '32'  }, // ⠞ (2,3,4,5) — Si mínima
 
   // Semibreves (w) e Semicolcheias (16) — acrescenta pontos 3 e 6
   '\u283D': { pitch: 'C', duration: 'w',  altDuration: '16'  }, // ⠽ (1,3,4,5,6)
@@ -76,10 +76,10 @@ const NOTE_MAP: Record<string, NoteInfo> = {
 // ─── REGISTRO DE PAUSAS ────────────────────────────────────────────────────────
 // CORRIGIDO — Fonte: TABELA_BRAILLE_corrigida.odt, seção PAUSAS
 const REST_MAP: Record<string, { duration: Duration; altDuration: Duration }> = {
-  '\u282D': { duration: '8',  altDuration: '128' }, // ⠭ (1,3,4,6) — colcheia / quartifusa
-  '\u2827': { duration: 'q',  altDuration: '64'  }, // ⠧ (1,2,3,6) — semínima / semifusa
-  '\u2825': { duration: 'h',  altDuration: '32'  }, // ⠥ (1,3,6)   — mínima / fusa
-  '\u280D': { duration: 'w',  altDuration: '16'  }, // ⠍ (1,3,5)   — semibreve / semicolcheia
+  '\u282D': { duration: '8',  altDuration: '128' }, // ⠭ (1,3,4,6) — pausa colcheia / quartifusa
+  '\u2827': { duration: 'q',  altDuration: '64'  }, // ⠧ (1,2,3,6) — pausa semínima / semifusa
+  '\u2825': { duration: 'h',  altDuration: '32'  }, // ⠥ (1,3,6)   — pausa mínima / fusa
+  '\u280D': { duration: 'w',  altDuration: '16'  }, // ⠍ (1,3,4)   — pausa semibreve / semicolcheia
 };
 // ATENÇÃO: ⠧ (\u2827) = pausa semínima (pontos 1,2,3,6). ⠾ (\u283E) = Si semibreve (pontos 2,3,4,5,6). Sem conflito.
 // Verificação: ⠧ = 0x27 = pontos 1,2,3,6. ⠾ = 0x3E = pontos 2,3,4,5,6. São células DIFERENTES.
