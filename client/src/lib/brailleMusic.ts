@@ -16,6 +16,12 @@
  *  6. Em acorde total (⠣⠜) e parcial (⠐⠂) adicionados
  *  7. Claves adicionadas (Sol e Fá)
  *  8. Metadados de grau pedagógico (dissertação) em cada elemento
+ *  9. inferOctave corrigida — regras de 6ª/7ª usam MIDI (dissertação cap.3)
+ * 10. disambiguateDuration corrigida — lookahead por compasso completo
+ * 11. Ligaduras completas: simples, dupla, prolongação, frase início/fim
+ * 12. Fermata ⠣⠇ (1,2,6)+(1,2,3) adicionada
+ * 13. Staccato ⠦ (2,3,6) adicionado
+ * 14. Ponto de aumento duplo ⠄⠄ suportado
  */
 
 // ─── TIPOS BASE ────────────────────────────────────────────────────────────────
@@ -175,9 +181,22 @@ const INTERVAL_MAP: Record<string, number> = {
 };
 
 // ─── OUTROS SÍMBOLOS ────────────────────────────────────────────────────────────
-const AUGMENTATION_DOT  = '\u2804'; // ⠄ (3)     — ponto de aumento (CORRIGIDO: era \u2824)
-const NOTE_TIE          = '\u2809'; // ⠉ (1,4)   — ligadura de expressão (slur)
-                                    // Nota: início de ligadura de fraseio = ⠰⠃, fim = ⠘⠆
+const AUGMENTATION_DOT  = '\u2804'; // ⠄ (3)     — ponto de aumento
+const AUGMENTATION_DOT2 = '\u2804\u2804'; // ⠄⠄     — ponto de aumento duplo
+
+// Ligaduras
+const SLUR_SIMPLE       = '\u2809';         // ⠉ (1,4)     — ligadura simples/expressão
+const SLUR_DOUBLE       = '\u2809\u2809';  // ⠉⠉          — ligadura dupla (>3 notas)
+const TIE               = '\u2808\u2809';  // ⠈⠉ (4)+(1,4) — ligadura de prolongação
+const PHRASE_START      = '\u2830\u2803';  // ⠰⠃ (5,6)+(1,2) — início ligadura de frase
+const PHRASE_END        = '\u2818\u2806';  // ⠘⠆ (4,5)+(2,3) — fim ligadura de frase
+
+// Articulações
+const FERMATA           = '\u2823\u2807';  // ⠣⠇ (1,2,6)+(1,2,3) — fermata (após nota)
+const STACCATO          = '\u2826';         // ⠦ (2,3,6)           — staccato (antes de nota)
+
+// Alias mantido para compatibilidade
+const NOTE_TIE = SLUR_SIMPLE;
 
 // Em acorde
 const IN_CHORD_TOTAL    = '\u2823\u281C'; // ⠣⠜ (1,2,6)+(3,4,5) — em acorde total
@@ -221,6 +240,9 @@ export interface ParsedNote {
   octave: number;
   duration: Duration;
   dotted: boolean;
+  dotted2: boolean;
+  staccato?: boolean;
+  fermata?: boolean;
   accidental?: Accidental;
   articulation?: string;
   vexKey: string;
@@ -233,6 +255,7 @@ export interface ParsedRest {
   type: 'rest';
   duration: Duration;
   dotted: boolean;
+  dotted2: boolean;
   vexDuration: string;
   sourceIndex: number;
   grade: PedagogicGrade;
@@ -282,6 +305,33 @@ export interface ParsedChordMarker {
   sourceIndex: number;
 }
 
+export interface ParsedSlur {
+  type: 'slur';
+  slurType: 'simple' | 'double';
+  sourceIndex: number;
+}
+
+export interface ParsedTie {
+  type: 'tie';
+  sourceIndex: number;
+}
+
+export interface ParsedPhrase {
+  type: 'phrase';
+  phraseType: 'start' | 'end';
+  sourceIndex: number;
+}
+
+export interface ParsedFermata {
+  type: 'fermata';
+  sourceIndex: number;
+}
+
+export interface ParsedStaccato {
+  type: 'staccato';
+  sourceIndex: number;
+}
+
 export type ParsedElement =
   | ParsedNote
   | ParsedRest
@@ -291,7 +341,12 @@ export type ParsedElement =
   | ParsedNoteTie
   | ParsedInterval
   | ParsedClef
-  | ParsedChordMarker;
+  | ParsedChordMarker
+  | ParsedSlur
+  | ParsedTie
+  | ParsedPhrase
+  | ParsedFermata
+  | ParsedStaccato;
 
 export interface ParseResult {
   elements: ParsedElement[];
@@ -319,25 +374,50 @@ function durationToBeats(duration: Duration, dotted: boolean = false): number {
 // - Intervalos de 4ª e 5ª: mudam apenas se cruzar fronteira B↔C
 // - Intervalos de 6ª, 7ª e ≥8ª: sempre requerem sinal explícito de oitava
 function inferOctave(prevPitch: NoteName, prevOctave: number, nextPitch: NoteName): number {
+  // Regras de uso das oitavas — Dissertação Vanazzi 2014, Cap. 3
   const pitchOrder: NoteName[] = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
+  const semitonos: Record<NoteName, number> = { C:0, D:2, E:4, F:5, G:7, A:9, B:11 };
   const prevIdx = pitchOrder.indexOf(prevPitch);
   const nextIdx = pitchOrder.indexOf(nextPitch);
-  const interval = Math.abs(nextIdx - prevIdx);
+  const diatonic = Math.abs(nextIdx - prevIdx);
 
-  if (interval <= 2) {
-    // 2ª e 3ª: nunca mudam oitava
-    return prevOctave;
+  // 2ª e 3ª: nunca mudam oitava
+  if (diatonic <= 2) return prevOctave;
+
+  // 4ª e 5ª: muda somente se cruzar fronteira diatônica
+  if (diatonic <= 4) {
+    if (nextIdx > prevIdx) return prevOctave; // subindo normalmente
+    return prevOctave + 1;                    // descendo: cruza oitava
   }
-  if (interval <= 4) {
-    // 4ª e 5ª: mudam se cruzar B→C (subindo) ou C→B (descendo)
-    if (nextIdx > prevIdx) return prevOctave; // subindo, mesma oitava
-    return prevOctave + 1; // descendo, próxima oitava
+
+  // 6ª e 7ª: usa a oitava mais próxima em semitons (MIDI)
+  const prevMidi = (prevOctave + 1) * 12 + semitonos[prevPitch];
+  let bestOct = prevOctave;
+  let bestDist = 999;
+  for (let oct = prevOctave - 1; oct <= prevOctave + 1; oct++) {
+    if (oct < 0 || oct > 8) continue;
+    const dist = Math.abs((oct + 1) * 12 + semitonos[nextPitch] - prevMidi);
+    if (dist < bestDist) { bestDist = dist; bestOct = oct; }
   }
-  // 6ª e 7ª: deveriam ter sinal explícito; inferimos de forma conservadora
-  if (nextIdx > prevIdx) return prevOctave;
-  return prevOctave + 1;
+  return bestOct;
 }
 
+// Desambiguação por compasso completo (lookahead)
+// Recebe todos os items ambíguos de um compasso e decide em bloco.
+// Reproduz a lógica do MusicBraille: testa todos primários juntos primeiro.
+function disambiguateMeasure(
+  items: Array<{ primary: Duration; secondary: Duration; dotted: boolean; dotted2: boolean }>,
+  beatsPerMeasure: number,
+): Duration[] {
+  if (!items.length) return [];
+  const totalPrimary = items.reduce(
+    (s, it) => s + durationToBeats(it.primary, it.dotted) * (it.dotted2 ? 1 + 0.25 : 1), 0
+  );
+  if (totalPrimary <= beatsPerMeasure + 0.001) return items.map(it => it.primary);
+  return items.map(it => it.secondary);
+}
+
+// Mantida para compatibilidade com chamadas existentes
 function disambiguateDuration(
   primary: Duration,
   secondary: Duration,
@@ -345,11 +425,10 @@ function disambiguateDuration(
   beatsPerMeasure: number,
   dotted: boolean,
 ): Duration {
-  const primaryBeats  = durationToBeats(primary, dotted);
-  const secondaryBeats = durationToBeats(secondary, dotted);
-  if (beatsUsed + primaryBeats  <= beatsPerMeasure) return primary;
-  if (beatsUsed + secondaryBeats <= beatsPerMeasure) return secondary;
-  return primary; // mantém primário mesmo estourando (parser não é rígido)
+  if (beatsUsed >= beatsPerMeasure - 0.001) return secondary;
+  if (beatsUsed + durationToBeats(primary, dotted) <= beatsPerMeasure + 0.001) return primary;
+  if (beatsUsed + durationToBeats(secondary, dotted) <= beatsPerMeasure + 0.001) return secondary;
+  return primary;
 }
 
 function durationToVex(duration: Duration, dotted: boolean, isRest: boolean): string {
@@ -407,232 +486,230 @@ function tryReadTimeSignature(
 
 export function parseBrailleMusic(input: string, options?: ParseOptions): ParseResult {
   let beatsPerMeasure = options?.beatsPerMeasure ?? 4;
-  const elements: ParsedElement[] = [];
   const errors: string[] = [];
 
-  let i = 0;
-  let currentOctave    = 4;
-  let prevPitch: NoteName | null = null;
-  let prevOctave       = 4;
-  let firstNoteInDoc   = true;   // Exige sinal de oitava na 1ª nota
-  let pendingOctave: number | undefined;
-  let pendingAccidental: Accidental | undefined;
-  let beatsUsedInMeasure = 0;
-  let inNoteContext    = false; // true = logo após uma nota, permite intervalo
+  // ── Fase 1: tokenizar em compassos ────────────────────────────────────────
+  type RawToken =
+    | { kind: 'note'; pitch: NoteName; primary: Duration; secondary: Duration; dotted: boolean; dotted2: boolean; idx: number }
+    | { kind: 'rest'; primary: Duration; secondary: Duration; dotted: boolean; dotted2: boolean; idx: number }
+    | { kind: 'oct'; val: number; idx: number }
+    | { kind: 'acc'; val: Accidental; idx: number }
+    | { kind: 'staccato'; idx: number }
+    | { kind: 'fermata'; idx: number }
+    | { kind: 'slur'; slurType: 'simple' | 'double'; idx: number }
+    | { kind: 'tie'; idx: number }
+    | { kind: 'phrase'; phraseType: 'start' | 'end'; idx: number }
+    | { kind: 'ts'; numerator: number; denominator: number; idx: number }
+    | { kind: 'ks'; fifths: number; vexKey: string; idx: number }
+    | { kind: 'clef'; clefType: 'treble' | 'bass'; idx: number }
+    | { kind: 'interval'; intervalSize: number; idx: number };
 
+  type RawMeasure = { tokens: RawToken[]; barlineType: string };
+  const measures: RawMeasure[] = [];
+  let curTokens: RawToken[] = [];
+
+  let i = 0;
   const len = input.length;
 
   while (i < len) {
-    const ch   = input[i];
-    const ch2  = i + 1 < len ? input[i + 1] : '';
-    const two  = ch + ch2;
+    const ch  = input[i];
+    const ch2 = i + 1 < len ? input[i + 1] : '';
+    const two = ch + ch2;
     const three = two + (i + 2 < len ? input[i + 2] : '');
 
-    // ── Quebras de linha (ignorar) ─────────────────────────────────────────
     if (ch === '\n' || ch === '\r') { i++; continue; }
 
-    // ── Espaço = Barra de compasso simples ────────────────────────────────
+    // Espaço = barra de compasso simples
     if (ch === ' ' || ch === '\u2800') {
-      const last = elements[elements.length - 1];
-      if (!last || last.type !== 'barline') {
-        elements.push({ type: 'barline', sourceIndex: i, barlineType: 'single' });
-      }
-      beatsUsedInMeasure = 0;
-      inNoteContext      = false;
-      i++;
-      continue;
+      measures.push({ tokens: curTokens, barlineType: 'single' });
+      curTokens = []; i++; continue;
     }
 
-    // ── Em acorde (3-cela) ─────────────────────────────────────────────────
-    if (three === IN_CHORD_TOTAL) {
-      elements.push({ type: 'chordmarker', markerType: 'total', sourceIndex: i });
-      inNoteContext = false; i += 3; continue;
-    }
-    if (three === CLEF_TREBLE) {
-      elements.push({ type: 'clef', clefType: 'treble', sourceIndex: i });
-      inNoteContext = false; i += 3; continue;
-    }
-    if (three === CLEF_BASS) {
-      elements.push({ type: 'clef', clefType: 'bass', sourceIndex: i });
-      inNoteContext = false; i += 3; continue;
+    // Barras especiais (2 células) — ANTES de testar bemol ⠣
+    if (BARLINE_TWO_CELL[two]) {
+      measures.push({ tokens: curTokens, barlineType: BARLINE_TWO_CELL[two] });
+      curTokens = []; i += 2; continue;
     }
 
-    // ── Símbolos de 2 células ─────────────────────────────────────────────
-    if (ch2) {
-      // Barras especiais
-      if (BARLINE_TWO_CELL[two]) {
-        const barType = BARLINE_TWO_CELL[two];
-        elements.push({ type: 'barline', sourceIndex: i, barlineType: barType });
-        beatsUsedInMeasure = 0; inNoteContext = false;
-        i += 2; continue;
-      }
-      // Em acorde parcial / separador
-      if (two === IN_CHORD_PARTIAL) {
-        elements.push({ type: 'chordmarker', markerType: 'partial', sourceIndex: i });
-        inNoteContext = false; i += 2; continue;
-      }
-      if (two === CHORD_SEPARATOR) {
-        elements.push({ type: 'chordmarker', markerType: 'separator', sourceIndex: i });
-        inNoteContext = false; i += 2; continue;
-      }
-      if (two === RIGHT_HAND) {
-        elements.push({ type: 'chordmarker', markerType: 'right-hand', sourceIndex: i });
-        inNoteContext = false; i += 2; continue;
-      }
-      if (two === LEFT_HAND) {
-        elements.push({ type: 'chordmarker', markerType: 'left-hand', sourceIndex: i });
-        inNoteContext = false; i += 2; continue;
-      }
-
-      // Alterações duplas
-      if (ACCIDENTAL_MAP[two]) {
-        pendingAccidental = ACCIDENTAL_MAP[two];
-        i += 2; continue;
-      }
-
-      // Oitava dupla (⠈⠈ ou ⠠⠠)
-      if (OCTAVE_MAP[two] !== undefined) {
-        pendingOctave = OCTAVE_MAP[two];
-        inNoteContext = true; i += 2; continue;
-      }
-
-      // Armadura de clave (3 células)
-      if (i + 2 < len) {
-        const ks3 = OFFICIAL_KEY_SIGNATURE_MAP[three];
-        if (ks3) {
-          elements.push({ type: 'keysignature', fifths: ks3.fifths, vexKey: ks3.vexKey, sourceIndex: i });
-          inNoteContext = false; i += 3; continue;
-        }
-        // Fórmula de compasso
-        const ts = tryReadTimeSignature(input, i);
-        if (ts) {
-          elements.push({ type: 'timesignature', numerator: ts.numerator, denominator: ts.denominator, sourceIndex: i });
-          beatsPerMeasure = ts.numerator;
-          inNoteContext = false; i += ts.advance; continue;
-        }
-      }
+    // Fermata ⠣⠇ — ANTES de testar bemol ⠣
+    if (two === FERMATA) {
+      curTokens.push({ kind: 'fermata', idx: i }); i += 2; continue;
     }
 
-    // ── Fórmula de compasso de 1 célula (C e C-cortado) ───────────────────
+    // Ligaduras de frase — ANTES de testar oitavas ⠰ e ⠘
+    if (two === PHRASE_START) { curTokens.push({ kind: 'phrase', phraseType: 'start', idx: i }); i += 2; continue; }
+    if (two === PHRASE_END)   { curTokens.push({ kind: 'phrase', phraseType: 'end',   idx: i }); i += 2; continue; }
+
+    // Ligadura de prolongação ⠈⠉ — ANTES de testar oitava ⠈
+    if (two === TIE) { curTokens.push({ kind: 'tie', idx: i }); i += 2; continue; }
+
+    // Ligadura dupla ⠉⠉ — ANTES de ligadura simples ⠉
+    if (two === SLUR_DOUBLE) { curTokens.push({ kind: 'slur', slurType: 'double', idx: i }); i += 2; continue; }
+
+    // Oitavas duplas
+    if (OCTAVE_MAP[two] !== undefined && two.length === 2 && ch2) {
+      curTokens.push({ kind: 'oct', val: OCTAVE_MAP[two], idx: i }); i += 2; continue;
+    }
+
+    // Fórmula de compasso
     if (ch === NUMBER_SIGN) {
       const ts = tryReadTimeSignature(input, i);
       if (ts) {
-        elements.push({ type: 'timesignature', numerator: ts.numerator, denominator: ts.denominator, sourceIndex: i });
+        curTokens.push({ kind: 'ts', numerator: ts.numerator, denominator: ts.denominator, idx: i });
         beatsPerMeasure = ts.numerator;
-        inNoteContext = false; i += ts.advance; continue;
+        i += ts.advance; continue;
       }
-      // NUMBER_SIGN sem fórmula reconhecida → pular
       i++; continue;
     }
 
-    // ── Armaduras de 1 ou 2 células ────────────────────────────────────────
+    // Armadura de clave (3 células)
+    if (i + 2 < len) {
+      const ks3 = OFFICIAL_KEY_SIGNATURE_MAP[three];
+      if (ks3) { curTokens.push({ kind: 'ks', fifths: ks3.fifths, vexKey: ks3.vexKey, idx: i }); i += 3; continue; }
+    }
+
+    // Claves
+    if (three === CLEF_TREBLE) { curTokens.push({ kind: 'clef', clefType: 'treble', idx: i }); i += 3; continue; }
+    if (three === CLEF_BASS)   { curTokens.push({ kind: 'clef', clefType: 'bass',   idx: i }); i += 3; continue; }
+
+    // Staccato ⠦
+    if (ch === STACCATO) { curTokens.push({ kind: 'staccato', idx: i }); i++; continue; }
+
+    // Ligadura simples ⠉
+    if (ch === SLUR_SIMPLE) { curTokens.push({ kind: 'slur', slurType: 'simple', idx: i }); i++; continue; }
+
+    // Oitava simples
+    if (OCTAVE_MAP[ch] !== undefined) {
+      curTokens.push({ kind: 'oct', val: OCTAVE_MAP[ch], idx: i }); i++; continue;
+    }
+
+    // Alterações simples
+    if (ACCIDENTAL_MAP[ch]) { curTokens.push({ kind: 'acc', val: ACCIDENTAL_MAP[ch], idx: i }); i++; continue; }
+
+    // Armadura de 1-2 células
     if (OFFICIAL_KEY_SIGNATURE_MAP[ch]) {
       const ks = OFFICIAL_KEY_SIGNATURE_MAP[ch];
-      elements.push({ type: 'keysignature', fifths: ks.fifths, vexKey: ks.vexKey, sourceIndex: i });
-      inNoteContext = false; i++; continue;
+      curTokens.push({ kind: 'ks', fifths: ks.fifths, vexKey: ks.vexKey, idx: i }); i++; continue;
     }
     if (ch2 && OFFICIAL_KEY_SIGNATURE_MAP[two]) {
       const ks = OFFICIAL_KEY_SIGNATURE_MAP[two];
-      elements.push({ type: 'keysignature', fifths: ks.fifths, vexKey: ks.vexKey, sourceIndex: i });
-      inNoteContext = false; i += 2; continue;
+      curTokens.push({ kind: 'ks', fifths: ks.fifths, vexKey: ks.vexKey, idx: i }); i += 2; continue;
     }
 
-    // ── Sinal de oitava simples ────────────────────────────────────────────
-    if (OCTAVE_MAP[ch] !== undefined) {
-      pendingOctave = OCTAVE_MAP[ch];
-      inNoteContext = true; i++; continue;
+    // Intervalo (contexto determinado na fase 2)
+    if (INTERVAL_MAP[ch] !== undefined && ch !== AUGMENTATION_DOT) {
+      curTokens.push({ kind: 'interval', intervalSize: INTERVAL_MAP[ch], idx: i }); i++; continue;
     }
 
-    // ── Alterações simples ────────────────────────────────────────────────
-    if (ACCIDENTAL_MAP[ch]) {
-      pendingAccidental = ACCIDENTAL_MAP[ch];
-      i++; continue;
-    }
-
-    // ── Ligadura de expressão ─────────────────────────────────────────────
-    if (ch === NOTE_TIE) {
-      elements.push({ type: 'notetie', sourceIndex: i });
-      i++; continue;
-    }
-
-    // ── Intervalo (somente APÓS uma nota, para evitar confusão com sinal de número) ──
-    if (inNoteContext && INTERVAL_MAP[ch] !== undefined && ch !== AUGMENTATION_DOT) {
-      // ⠼ (4ª) só é intervalo se estivermos em contexto de nota
-      // (evita confusão com NUMBER_SIGN no início de compasso)
-      elements.push({ type: 'interval', intervalSize: INTERVAL_MAP[ch], sourceIndex: i, grade: 4 });
-      i++; continue;
-    }
-
-    // ── Pausa ─────────────────────────────────────────────────────────────
+    // Pausa
     if (REST_MAP[ch]) {
-      const restInfo = REST_MAP[ch];
-      const dotted   = i + 1 < len && input[i + 1] === AUGMENTATION_DOT;
-      const dur      = disambiguateDuration(restInfo.duration, restInfo.altDuration, beatsUsedInMeasure, beatsPerMeasure, dotted);
-      beatsUsedInMeasure += durationToBeats(dur, dotted);
-      elements.push({
-        type: 'rest', duration: dur, dotted,
-        vexDuration: durationToVex(dur, dotted, true),
-        sourceIndex: i, grade: 2,
-      });
-      i++; if (dotted && i < len && input[i] === AUGMENTATION_DOT) i++;
-      inNoteContext = true;
-      continue;
+      const r = REST_MAP[ch];
+      const dotted  = i + 1 < len && input[i + 1] === AUGMENTATION_DOT;
+      const dotted2 = dotted && i + 2 < len && input[i + 2] === AUGMENTATION_DOT;
+      curTokens.push({ kind: 'rest', primary: r.duration, secondary: r.altDuration, dotted, dotted2, idx: i });
+      i++; if (dotted) { i++; if (dotted2) i++; } continue;
     }
 
-    // ── Nota ──────────────────────────────────────────────────────────────
+    // Nota
     if (NOTE_MAP[ch]) {
-      const noteInfo = NOTE_MAP[ch];
-      let octave: number;
-
-      if (pendingOctave !== undefined) {
-        octave        = pendingOctave;
-        pendingOctave = undefined;
-        currentOctave = octave;
-      } else if (firstNoteInDoc) {
-        // Primeira nota do documento sem sinal de oitava: usa padrão 4
-        octave        = 4;
-        currentOctave = 4;
-        errors.push(`Aviso: primeira nota sem sinal de oitava — assumindo oitava 4`);
-      } else if (prevPitch !== null) {
-        octave = inferOctave(prevPitch, prevOctave, noteInfo.pitch);
-        currentOctave = octave;
-      } else {
-        octave = currentOctave;
-      }
-
-      const dotted = i + 1 < len && input[i + 1] === AUGMENTATION_DOT;
-      const dur    = disambiguateDuration(noteInfo.duration, noteInfo.altDuration, beatsUsedInMeasure, beatsPerMeasure, dotted);
-      beatsUsedInMeasure += durationToBeats(dur, dotted);
-
-      elements.push({
-        type:         'note',
-        pitch:        noteInfo.pitch,
-        octave,
-        duration:     dur,
-        dotted,
-        accidental:   pendingAccidental,
-        vexKey:       `${noteInfo.pitch.toLowerCase()}/${octave}`,
-        vexDuration:  durationToVex(dur, dotted, false),
-        sourceIndex:  i,
-        grade:        gradeForNote(true, !!pendingAccidental),
-      });
-
-      prevPitch         = noteInfo.pitch;
-      prevOctave        = octave;
-      pendingAccidental = undefined;
-      firstNoteInDoc    = false;
-      inNoteContext     = true;
-
-      i++;
-      if (dotted && i < len && input[i] === AUGMENTATION_DOT) i++;
-      continue;
+      const n = NOTE_MAP[ch];
+      const dotted  = i + 1 < len && input[i + 1] === AUGMENTATION_DOT;
+      const dotted2 = dotted && i + 2 < len && input[i + 2] === AUGMENTATION_DOT;
+      curTokens.push({ kind: 'note', pitch: n.pitch, primary: n.duration, secondary: n.altDuration, dotted, dotted2, idx: i });
+      i++; if (dotted) { i++; if (dotted2) i++; } continue;
     }
 
-    // ── Ponto de aumento isolado (consumir sem erro) ───────────────────────
     if (ch === AUGMENTATION_DOT) { i++; continue; }
-
-    // ── Célula desconhecida — avisa e avança ──────────────────────────────
     i++;
+  }
+  if (curTokens.length > 0) measures.push({ tokens: curTokens, barlineType: 'single' });
+
+  // ── Fase 2: desambiguar e resolver oitavas ────────────────────────────────
+  const elements: ParsedElement[] = [];
+  let currentOctave    = 4;
+  let prevPitch: NoteName | null = null;
+  let prevOctave       = 4;
+  let firstNoteInDoc   = true;
+  let inNoteContext    = false;
+
+  // Processar cada compasso
+  for (const measure of measures) {
+    const noteRestTokens = measure.tokens.filter(t => t.kind === 'note' || t.kind === 'rest') as
+      Array<{ kind: string; primary: Duration; secondary: Duration; dotted: boolean; dotted2: boolean }>;
+
+    const resolvedDurations = disambiguateMeasure(noteRestTokens, beatsPerMeasure);
+    let nrIdx = 0;
+    let pendingOctave: number | undefined;
+    let pendingAccidental: Accidental | undefined;
+    let pendingStaccato = false;
+
+    for (const tk of measure.tokens) {
+      if (tk.kind === 'ts') {
+        elements.push({ type: 'timesignature', numerator: (tk as any).numerator, denominator: (tk as any).denominator, sourceIndex: (tk as any).idx });
+        beatsPerMeasure = (tk as any).numerator;
+        inNoteContext = false; continue;
+      }
+      if (tk.kind === 'ks') {
+        elements.push({ type: 'keysignature', fifths: (tk as any).fifths, vexKey: (tk as any).vexKey, sourceIndex: (tk as any).idx });
+        inNoteContext = false; continue;
+      }
+      if (tk.kind === 'clef') {
+        elements.push({ type: 'clef', clefType: (tk as any).clefType, sourceIndex: (tk as any).idx });
+        inNoteContext = false; continue;
+      }
+      if (tk.kind === 'oct') { pendingOctave = (tk as any).val; inNoteContext = true; continue; }
+      if (tk.kind === 'acc') { pendingAccidental = (tk as any).val; continue; }
+      if (tk.kind === 'staccato') { pendingStaccato = true; continue; }
+      if (tk.kind === 'fermata') { elements.push({ type: 'fermata', sourceIndex: (tk as any).idx }); continue; }
+      if (tk.kind === 'slur')    { elements.push({ type: 'slur', slurType: (tk as any).slurType, sourceIndex: (tk as any).idx }); continue; }
+      if (tk.kind === 'tie')     { elements.push({ type: 'tie', sourceIndex: (tk as any).idx }); continue; }
+      if (tk.kind === 'phrase')  { elements.push({ type: 'phrase', phraseType: (tk as any).phraseType, sourceIndex: (tk as any).idx }); continue; }
+      if (tk.kind === 'interval') {
+        if (inNoteContext) elements.push({ type: 'interval', intervalSize: (tk as any).intervalSize, sourceIndex: (tk as any).idx, grade: 4 });
+        continue;
+      }
+      if (tk.kind === 'rest') {
+        const r = tk as any;
+        const dur = resolvedDurations[nrIdx++];
+        elements.push({
+          type: 'rest', duration: dur, dotted: r.dotted, dotted2: r.dotted2,
+          vexDuration: durationToVex(dur, r.dotted, true),
+          sourceIndex: r.idx, grade: 2,
+        });
+        inNoteContext = true; pendingAccidental = undefined; continue;
+      }
+      if (tk.kind === 'note') {
+        const n = tk as any;
+        const dur = resolvedDurations[nrIdx++];
+        let octave: number;
+        if (pendingOctave !== undefined) { octave = pendingOctave; pendingOctave = undefined; currentOctave = octave; }
+        else if (firstNoteInDoc) { octave = 4; currentOctave = 4; errors.push('Aviso: primeira nota sem sinal de oitava — assumindo oitava 4'); }
+        else if (prevPitch !== null) { octave = inferOctave(prevPitch, prevOctave, n.pitch); currentOctave = octave; }
+        else { octave = currentOctave; }
+
+        elements.push({
+          type: 'note', pitch: n.pitch, octave, duration: dur,
+          dotted: n.dotted, dotted2: n.dotted2,
+          staccato: pendingStaccato,
+          accidental: pendingAccidental,
+          vexKey: `${n.pitch.toLowerCase()}/${octave}`,
+          vexDuration: durationToVex(dur, n.dotted, false),
+          sourceIndex: n.idx, grade: gradeForNote(pendingOctave !== undefined, !!pendingAccidental),
+        });
+        prevPitch = n.pitch; prevOctave = octave;
+        pendingAccidental = undefined; pendingStaccato = false;
+        firstNoteInDoc = false; inNoteContext = true; continue;
+      }
+    }
+
+    // Emitir barra de compasso
+    elements.push({ type: 'barline', sourceIndex: 0, barlineType: measure.barlineType as any });
+  }
+
+  // Remover barra final vazia se último elemento
+  if (elements.length > 0 && elements[elements.length - 1].type === 'barline') {
+    const prev = elements[elements.length - 2];
+    if (!prev || prev.type === 'barline') elements.pop();
   }
 
   return { elements, errors };
