@@ -344,10 +344,15 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
 
       // Format and draw (only if there are notes)
       if (vexNotes.length > 0) {
-        const formatter = new Formatter();
-        // Use the calculated stave width directly
-        formatter.joinVoices([voice]).format([voice], currentStaveWidth - 20);
-        voice.draw(context, stave);
+        try {
+          const formatter = new Formatter();
+          formatter.joinVoices([voice]).format([voice], currentStaveWidth - 20);
+          voice.draw(context, stave);
+        } catch (e) {
+          console.warn('VexFlow format/draw error (skipping measure):', e);
+          x += currentStaveWidth;
+          continue;
+        }
 
         // After drawing, extract bounding boxes for each note to create click hit areas
         for (let j = 0; j < vexNotes.length; j++) {
