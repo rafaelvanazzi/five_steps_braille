@@ -854,8 +854,19 @@ export function getQuickReference(): QuickRefEntry[] {
   });
 
   // Outros
-  ref.push({ char: AUGMENTATION_DOT, dots: unicodeToDots(AUGMENTATION_DOT).join(','), description: 'Ponto de aumento', category: 'other' });
-  ref.push({ char: NOTE_TIE, dots: unicodeToDots(NOTE_TIE).join(','), description: 'Ligadura de expressão', category: 'other' });
+  ref.push({ char: AUGMENTATION_DOT,      dots: '3',       description: 'Ponto de aumento',       category: 'other' });
+  ref.push({ char: AUGMENTATION_DOT2,     dots: '3,3',     description: 'Ponto duplo de aumento', category: 'other' });
+
+  // Ligaduras
+  ref.push({ char: SLUR_SIMPLE,           dots: '1,4',     description: 'Ligadura simples',        category: 'ligadura' });
+  ref.push({ char: SLUR_DOUBLE,           dots: '1,4 1,4', description: 'Ligadura dupla',          category: 'ligadura' });
+  ref.push({ char: TIE,                   dots: '4 1,4',   description: 'Lig. prolongação',        category: 'ligadura' });
+  ref.push({ char: PHRASE_START,          dots: '5,6 1,2', description: 'Lig. frase início',       category: 'ligadura' });
+  ref.push({ char: PHRASE_END,            dots: '4,5 2,3', description: 'Lig. frase fim',          category: 'ligadura' });
+
+  // Articulação
+  ref.push({ char: STACCATO,             dots: '2,3,6',    description: 'Staccato',                category: 'articulacao' });
+  ref.push({ char: FERMATA,              dots: '1,2,6 1,2,3', description: 'Fermata',              category: 'articulacao' });
 
   return ref;
 }
