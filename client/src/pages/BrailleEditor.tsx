@@ -156,12 +156,17 @@ function QuickReferencePanel({ onInsert }: { onInsert: (char: string) => void })
     { key: "note-half", label: "Mínimas" },
     { key: "note-32nd-forced", label: "Fusas" },
     { key: "note-quarter", label: "Semínimas" },
+    { key: "note-64th", label: "Semifusas" },
     { key: "note-eighth", label: "Colcheias" },
+    { key: "note-128th", label: "Quartifusas" },
     { key: "rest", label: "Pausas" },
     { key: "octave", label: "Oitavas" },
     { key: "accidental", label: "Alterações" },
     { key: "timesig", label: "Fórmulas" },
     { key: "barline", label: "Barras" },
+    { key: "interval", label: "Intervalos" },
+    { key: "ligadura", label: "Ligaduras" },
+    { key: "articulacao", label: "Articulação" },
     { key: "other", label: "Outros" },
   ];
 
