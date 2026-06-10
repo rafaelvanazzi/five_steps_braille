@@ -835,7 +835,7 @@ export function getQuickReference(): QuickRefEntry[] {
     { char: '\u2838\u2809',       desc: 'C cortado — 2/2' },
   ];
   commonTimeSigs.forEach(({ char, desc }) => {
-    ref.push({ char, dots: [...char].map(c => unicodeToDots(c).join(',')).join(' '), description: desc, category: 'timesig' });
+    ref.push({ char, dots: Array.from(char).map(c => unicodeToDots(c).join(',')).join(' '), description: desc, category: 'timesig' });
   });
 
   // Barras
@@ -844,7 +844,7 @@ export function getQuickReference(): QuickRefEntry[] {
     'repeat-begin': 'Ritornelo início', 'repeat-end': 'Ritornelo fim', dotted: 'Barra pontilhada',
   };
   Object.entries(BARLINE_TWO_CELL).forEach(([char, type]) => {
-    ref.push({ char, dots: [...char].map(c => unicodeToDots(c).join(',')).join(' '), description: barDescs[type] ?? type, category: 'barline' });
+    ref.push({ char, dots: Array.from(char).map(c => unicodeToDots(c).join(',')).join(' '), description: barDescs[type] ?? type, category: 'barline' });
   });
 
   // Intervalos
