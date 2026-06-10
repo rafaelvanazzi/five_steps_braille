@@ -239,6 +239,7 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
     let y = 40;
 
     // Render each measure
+    try {
     for (let i = 0; i < measures.length; i++) {
       const measure = measures[i];
       const measureNotes = measure.notes.filter(n => n.type === 'note' || n.type === 'rest');
@@ -255,9 +256,16 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
       const stave = new Stave(x, y, currentStaveWidth);
       if (isFirst) {
         stave.addClef('treble');
-        // Add key signature if present
+        // Add key signature if present (validate before passing to VexFlow)
         if (keySignature) {
-          stave.addKeySignature(keySignature);
+          const validKeys = ['C','G','D','A','E','B','F#','C#','F','Bb','Eb','Ab','Db','Gb','Cb'];
+          if (validKeys.includes(keySignature)) {
+            try {
+              stave.addKeySignature(keySignature);
+            } catch (e) {
+              console.warn('VexFlow keySignature error:', keySignature, e);
+            }
+          }
         }
         // Add time signature on first measure (from parsed or prop)
         stave.addTimeSignature(`${timeSignature.numerator}/${timeSignature.denominator}`);
@@ -399,6 +407,9 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
       }
 
       x += currentStaveWidth;
+    }
+    } catch (e) {
+      console.error('ScoreRenderer VexFlow error:', e);
     }
   }, [elements, measures, width, height, timeSignature]);
 
