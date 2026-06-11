@@ -367,7 +367,7 @@ export interface ParsedInterval {
 
 export interface ParsedClef {
   type: 'clef';
-  clefType: 'treble' | 'bass';
+  clefType: 'treble' | 'bass' | 'tenor';
   sourceIndex: number;
 }
 
@@ -648,7 +648,7 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
     | { kind: 'phrase'; phraseType: 'start' | 'end'; idx: number }
     | { kind: 'ts'; numerator: number; denominator: number; idx: number }
     | { kind: 'ks'; fifths: number; vexKey: string; idx: number }
-    | { kind: 'clef'; clefType: 'treble' | 'bass'; idx: number }
+    | { kind: 'clef'; clefType: 'treble' | 'bass' | 'tenor'; idx: number }
     | { kind: 'interval'; intervalSize: number; idx: number };
 
   type RawMeasure = { tokens: RawToken[]; barlineType: string };

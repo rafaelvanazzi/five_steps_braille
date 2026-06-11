@@ -343,7 +343,7 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
         if (skipIndices.has(elIdx)) continue; // já processado como intervalo de nota anterior
         const el = measureNotes[elIdx];
 
-        if (el.type === 'interval') continue; // será processado junto com a nota anterior
+        if ((el as any).type === 'interval') continue; // será processado junto com a nota anterior
 
         if (el.type === 'note') {
           // Coletar intervalos consecutivos após esta nota
