@@ -1,4 +1,4 @@
-name: Auto Deploy to Manus
+name: Auto Deploy to Manus (Five Steps Braille)
 
 on:
   push:
@@ -13,4 +13,14 @@ jobs:
           curl -s -X POST \
             "https://api.manus.im/webdev/github-webhook" \
             -H "Content-Type: application/json" \
-            -d '{"ref":"refs/heads/main","repository":{"full_name":"rafaelvanazzi/five_steps_braille"}}'
+            -d '{
+              "ref":"refs/heads/main",
+              "repository":{
+                "full_name":"rafaelvanazzi/five_steps_braille",
+                "clone_url":"https://github.com/rafaelvanazzi/five_steps_braille.git"
+              },
+              "pusher":{
+                "name":"GitHub Actions",
+                "email":"noreply@github.com"
+              }
+            }'
