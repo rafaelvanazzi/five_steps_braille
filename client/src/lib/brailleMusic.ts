@@ -469,6 +469,18 @@ export interface ParseResult {
 
 export interface ParseOptions {
   beatsPerMeasure?: number;
+  initialOctave?: number;        // oitava inicial (contexto da linha anterior)
+  initialPrevPitch?: string;     // nota anterior (contexto da linha anterior)
+  initialBeatsPerMeasure?: number; // compasso da linha anterior
+}
+
+// Contexto que uma linha deixa para a próxima
+export interface LineContext {
+  lastOctave: number;
+  lastPitch: string | null;
+  beatsPerMeasure: number;
+  keySignature: string | null;
+  clef: string;
 }
 
 // ─── FUNÇÕES UTILITÁRIAS ────────────────────────────────────────────────────────
@@ -809,10 +821,10 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
 
   // ── Fase 2: desambiguar e resolver oitavas ────────────────────────────────
   const elements: ParsedElement[] = [];
-  let currentOctave    = 4;
-  let prevPitch: NoteName | null = null;
-  let prevOctave       = 4;
-  let firstNoteInDoc   = true;
+  let currentOctave    = options?.initialOctave ?? 4;
+  let prevPitch: NoteName | null = (options?.initialPrevPitch as NoteName) ?? null;
+  let prevOctave       = options?.initialOctave ?? 4;
+  let firstNoteInDoc   = !options?.initialPrevPitch; // se tem contexto anterior, não é a primeira
   let inNoteContext    = false;
 
   // Processar cada compasso
@@ -909,13 +921,47 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
 export function parseBrailleLine(fullText: string, cursorPosition: number, options?: ParseOptions): ParseResult {
   const lines = fullText.split('\n');
   let charCount = 0;
-  let targetLine = '';
-  for (const line of lines) {
-    if (cursorPosition <= charCount + line.length) { targetLine = line; break; }
-    charCount += line.length + 1;
+  let targetLineIdx = 0;
+  for (let li = 0; li < lines.length; li++) {
+    if (cursorPosition <= charCount + lines[li].length) { targetLineIdx = li; break; }
+    charCount += lines[li].length + 1;
   }
-  if (!targetLine) targetLine = lines[lines.length - 1] || '';
-  return parseBrailleMusic(targetLine, options);
+  const targetLine = lines[targetLineIdx] || '';
+
+  // Construir contexto das linhas anteriores
+  // (oitava final, nota final, compasso, armadura)
+  let lineContext: ParseOptions = { ...options };
+
+  if (targetLineIdx > 0) {
+    // Parsear todas as linhas anteriores para obter o contexto final
+    const prevText = lines.slice(0, targetLineIdx).join('\n');
+    const prevResult = parseBrailleMusic(prevText, options);
+    const prevEls = prevResult.elements;
+
+    // Extrair última nota para contexto de oitava
+    let lastOctave = 4;
+    let lastPitch: string | null = null;
+    let lastBpm = options?.beatsPerMeasure ?? 4;
+
+    for (const el of prevEls) {
+      if (el.type === 'note') {
+        lastOctave = el.octave;
+        lastPitch  = el.pitch;
+      }
+      if (el.type === 'timesignature') {
+        lastBpm = el.numerator;
+      }
+    }
+
+    lineContext = {
+      ...options,
+      initialOctave: lastOctave,
+      initialPrevPitch: lastPitch ?? undefined,
+      beatsPerMeasure: lastBpm,
+    };
+  }
+
+  return parseBrailleMusic(targetLine, lineContext);
 }
 
 export function parseBrailleSelection(fullText: string, selStart: number, selEnd: number, options?: ParseOptions): ParseResult {
