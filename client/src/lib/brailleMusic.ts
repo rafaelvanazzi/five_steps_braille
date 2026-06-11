@@ -374,26 +374,53 @@ function durationToBeats(duration: Duration, dotted: boolean = false): number {
 // - Intervalos de 4ª e 5ª: mudam apenas se cruzar fronteira B↔C
 // - Intervalos de 6ª, 7ª e ≥8ª: sempre requerem sinal explícito de oitava
 function inferOctave(prevPitch: NoteName, prevOctave: number, nextPitch: NoteName): number {
-  // Regras de uso das oitavas — Dissertação Vanazzi 2014, Cap. 3
+  // Regras de uso das oitavas — Manual Internacional §1-10 / MusicBraille Aula 12
+  // Confirmado por: Manual Internacional PT-BR, versão espanhola e dissertação Vanazzi.
+  //
+  // A lógica baseia-se em pares de intervalos COMPLEMENTARES (soma = 9):
+  //   2ª ↔ 7ª  |  3ª ↔ 6ª  |  4ª ↔ 5ª
+  //
+  // Regra 1 — 2ª e 3ª (diat_steps 1 ou 2):
+  //   NUNCA leva sinal de oitava, mesmo que mude de oitava.
+  //   Parser: calcular pela nota MIDI mais próxima (2ª ou 3ª, não 7ª ou 6ª).
+  //
+  // Regra 2 — 4ª e 5ª (diat_steps 3 ou 4):
+  //   Leva sinal SOMENTE se a nota estiver em oitava DIFERENTE.
+  //   Sem sinal = SEMPRE mesma oitava da anterior.
+  //
+  // Regra 3 — 6ª, 7ª e 8ª (diat_steps 5, 6 ou 7):
+  //   SEMPRE leva sinal de oitava.
+  //   Sem sinal = situação inválida; parser usa oitava mais próxima (fallback).
+
   const pitchOrder: NoteName[] = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
   const semitonos: Record<NoteName, number> = { C:0, D:2, E:4, F:5, G:7, A:9, B:11 };
   const prevIdx = pitchOrder.indexOf(prevPitch);
   const nextIdx = pitchOrder.indexOf(nextPitch);
-  const diatonic = Math.abs(nextIdx - prevIdx);
+  const diatSteps = Math.abs(nextIdx - prevIdx); // 0=unís,1=2ª,2=3ª,3=4ª,4=5ª,5=6ª,6=7ª
 
-  // 2ª e 3ª: nunca mudam oitava
-  if (diatonic <= 2) return prevOctave;
+  // Regra 2: 4ª e 5ª → sempre mesma oitava sem sinal explícito
+  if (diatSteps === 3 || diatSteps === 4) return prevOctave;
 
-  // 4ª e 5ª: muda somente se cruzar fronteira diatônica
-  if (diatonic <= 4) {
-    if (nextIdx > prevIdx) return prevOctave; // subindo normalmente
-    return prevOctave + 1;                    // descendo: cruza oitava
+  // Regra 1: 2ª e 3ª → oitava mais próxima em MIDI
+  // (pode mudar de oitava — ex: Si4→Dó5 é 2ª ascendente, correto)
+  if (diatSteps <= 2) {
+    const prevMidi = (prevOctave + 1) * 12 + semitonos[prevPitch];
+    let bestOct = prevOctave, bestDist = 999;
+    for (let oct = prevOctave - 1; oct <= prevOctave + 1; oct++) {
+      if (oct < 0 || oct > 8) continue;
+      const dist = Math.abs((oct + 1) * 12 + semitonos[nextPitch] - prevMidi);
+      if (dist < bestDist) { bestDist = dist; bestOct = oct; }
+    }
+    return bestOct;
   }
 
-  // 6ª e 7ª: usa a oitava mais próxima em semitons (MIDI)
+  // Regra 3: 6ª, 7ª e 8ª → oitava mais próxima em MIDI (fallback)
+  // Sem sinal de oitava, o parser aproxima pelo intervalo complementar:
+  //   6ª sem sinal → usa a 3ª mais próxima
+  //   7ª sem sinal → usa a 2ª mais próxima
+  //   8ª sem sinal → usa o uníssono
   const prevMidi = (prevOctave + 1) * 12 + semitonos[prevPitch];
-  let bestOct = prevOctave;
-  let bestDist = 999;
+  let bestOct = prevOctave, bestDist = 999;
   for (let oct = prevOctave - 1; oct <= prevOctave + 1; oct++) {
     if (oct < 0 || oct > 8) continue;
     const dist = Math.abs((oct + 1) * 12 + semitonos[nextPitch] - prevMidi);
