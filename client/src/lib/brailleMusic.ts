@@ -217,7 +217,7 @@ const MUSICAL_HYPHEN = '\u2810'; // ⠐ (5) — ATENÇÃO: mesmo que oitava 4 �
 // ─── CLAVES ────────────────────────────────────────────────────────────────────
 const CLEF_SOL_2 = '\u281C\u280C\u2807'; // ⠜⠌⠇ (3,4,5)+(3,4)+(1,2,3) — Clave de Sol 2ª linha
 const CLEF_FA_4  = '\u281C\u283C\u2807'; // ⠜⠼⠇ (3,4,5)+(3,4,5,6)+(1,2,3) — Clave de Fá 4ª linha
-const CLEF_DO_3  = '\u281C\u282C\u2807'; // ⠜⠬⠇ (3,4,5)+(3,4,6)+(1,2,3) — Clave de Dó 3ª linha
+const CLEF_DO_4  = '\u281C\u282C\u2810\u2807'; // ⠜⠬⠐⠇ (3,4,5)+(3,4,6)+(5)+(1,2,3) — Clave de Dó 4ª linha (violoncelo)
 
 // ─── MÃO DIREITA / ESQUERDA ────────────────────────────────────────────────────
 const HAND_RIGHT = '\u2828\u281C'; // ⠨⠜ (4,6)+(3,4,5) — mão direita → clave de sol
@@ -652,6 +652,8 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
   let i = 0;
   const len = input.length;
 
+  let musicStarted = false; // controla se alguma nota/pausa já foi encontrada
+
   while (i < len) {
     const ch  = input[i];
     const ch2 = i + 1 < len ? input[i + 1] : '';
@@ -662,8 +664,13 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
 
     // Espaço = barra de compasso simples
     if (ch === ' ' || ch === '\u2800') {
-      measures.push({ tokens: curTokens, barlineType: 'single' });
-      curTokens = []; i++; continue;
+      if (musicStarted) {
+        // Espaço após música = barra de compasso
+        measures.push({ tokens: curTokens, barlineType: 'single' });
+        curTokens = [];
+      }
+      // Espaço antes da música (armadura, compasso): ignorar silenciosamente
+      i++; continue;
     }
 
     // Barras especiais (2 células) — ANTES de testar bemol ⠣
@@ -718,6 +725,11 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
     // Claves
     if (three === CLEF_TREBLE) { curTokens.push({ kind: 'clef', clefType: 'treble', idx: i }); i += 3; continue; }
     if (three === CLEF_BASS)   { curTokens.push({ kind: 'clef', clefType: 'bass',   idx: i }); i += 3; continue; }
+    // Clave de Dó 4ª linha (violoncelo) — 4 células — verificar four antes
+    {
+      const fourChars = input.substring(i, i + 4);
+      if (fourChars === CLEF_DO_4) { curTokens.push({ kind: 'clef', clefType: 'tenor', idx: i }); i += 4; continue; }
+    }
 
     // Staccato ⠦
     if (ch === STACCATO) { curTokens.push({ kind: 'staccato', idx: i }); i++; continue; }
@@ -773,6 +785,7 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
 
     // Pausa
     if (REST_MAP[ch]) {
+      musicStarted = true;
       const r = REST_MAP[ch];
       const dotted  = i + 1 < len && input[i + 1] === AUGMENTATION_DOT;
       const dotted2 = dotted && i + 2 < len && input[i + 2] === AUGMENTATION_DOT;
@@ -782,6 +795,7 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
 
     // Nota
     if (NOTE_MAP[ch]) {
+      musicStarted = true;
       const n = NOTE_MAP[ch];
       const dotted  = i + 1 < len && input[i + 1] === AUGMENTATION_DOT;
       const dotted2 = dotted && i + 2 < len && input[i + 2] === AUGMENTATION_DOT;
@@ -1087,7 +1101,7 @@ export function getQuickReference(): QuickRefEntry[] {
   // Claves
   ref.push({ char: CLEF_SOL_2,                        dots: '3,4,5 3,4 1,2,3',       description: 'Clave de Sol',      category: 'clave' });
   ref.push({ char: CLEF_FA_4,                         dots: '3,4,5 3,4,5,6 1,2,3',   description: 'Clave de Fá',       category: 'clave' });
-  ref.push({ char: CLEF_DO_3,                         dots: '3,4,5 3,4,6 1,2,3',     description: 'Clave de Dó',       category: 'clave' });
+  ref.push({ char: CLEF_DO_4,                         dots: '3,4,5 3,4,6 5 1,2,3',   description: 'Clave de Dó (4ª linha — violoncelo)', category: 'clave' });
   ref.push({ char: HAND_RIGHT,                        dots: '4,6 3,4,5',              description: 'Mão direita',       category: 'clave' });
   ref.push({ char: HAND_LEFT,                         dots: '4,5,6 3,4,5',            description: 'Mão esquerda',      category: 'clave' });
 
