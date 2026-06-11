@@ -30,7 +30,7 @@ interface NoteHitArea {
 
 // Measure info including barline type
 interface MeasureInfo {
-  notes: (ParsedNote | ParsedRest)[];
+  notes: ParsedElement[]; // inclui note, rest, interval, dynamic, ornament, etc.
   barlineType: 'single' | 'end' | 'repeat-begin' | 'repeat-end' | 'repeat-both';
   begBarlineType?: 'repeat-begin';
   /** sourceIndex of the first element in this measure (for cursor sync) */
@@ -40,7 +40,7 @@ interface MeasureInfo {
 // Group elements into measures (split by barlines)
 function groupIntoMeasures(elements: ParsedElement[]): MeasureInfo[] {
   const measures: MeasureInfo[] = [];
-  let current: (ParsedNote | ParsedRest)[] = [];
+  let current: ParsedElement[] = [];
   let nextBegBarline: 'repeat-begin' | undefined = undefined;
   let currentSourceIndex: number | undefined = undefined;
 
@@ -223,8 +223,9 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
     const baseNoteWidth = 50;    // Base width per note
 
     // Calculate width for a note based on its duration (longer notes get more space)
-    function getNoteWidth(el: ParsedNote | ParsedRest): number {
-      const dur = el.type === 'note' ? el.duration : el.duration;
+    function getNoteWidth(el: ParsedElement): number {
+      if (el.type !== 'note' && el.type !== 'rest') return 0;
+      const dur = (el as ParsedNote | ParsedRest).duration;
       switch (dur) {
         case 'w': return baseNoteWidth * 3;   // 150px for whole notes
         case 'h': return baseNoteWidth * 2;   // 100px for half notes
@@ -352,9 +353,10 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
 
       for (const el of measureNotes) {
         if (el.type === 'note') {
+          const noteEl = el as ParsedNote; // type assertion segura após type guard
           // Verificar se a próxima nota é um intervalo e construir acorde
           const noteIdx = measureNotes.indexOf(el);
-          const intervalKeys: string[] = [noteToVexKey(el)];
+          const intervalKeys: string[] = [noteToVexKey(noteEl)];
           let skipCount = 0;
 
           // Coletar intervalos consecutivos após esta nota
@@ -363,7 +365,7 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
             if (nextEl.type === 'interval') {
               const size = (nextEl as any).intervalSize as number;
               const pitchOrder = ['C','D','E','F','G','A','B'] as const;
-              const basePitchIdx = pitchOrder.indexOf(el.pitch as any);
+              const basePitchIdx = pitchOrder.indexOf(noteEl.pitch as any);
               if (basePitchIdx !== -1) {
                 // Direção: descendente (treble) = subtraímos; ascendente (bass) = somamos
                 const direction = intervalDirection === 'descending' ? -1 : 1;
@@ -371,13 +373,13 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
                 const newPitchIdx = ((basePitchIdx + steps) % 7 + 7) % 7;
                 const newPitch = pitchOrder[newPitchIdx];
                 // Calcular oitava
-                let newOctave = el.octave;
+                let newOctave = noteEl.octave;
                 if (direction === -1) {
                   const rawIdx = basePitchIdx + steps;
-                  if (rawIdx < 0) newOctave = el.octave - Math.ceil(Math.abs(rawIdx) / 7);
+                  if (rawIdx < 0) newOctave = noteEl.octave - Math.ceil(Math.abs(rawIdx) / 7);
                 } else {
                   const rawIdx = basePitchIdx + steps;
-                  if (rawIdx >= 7) newOctave = el.octave + Math.floor(rawIdx / 7);
+                  if (rawIdx >= 7) newOctave = noteEl.octave + Math.floor(rawIdx / 7);
                 }
                 intervalKeys.push(`${newPitch.toLowerCase()}/${newOctave}`);
                 skipCount++;
@@ -389,7 +391,7 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
 
           const vexNote = new StaveNote({
             keys: intervalKeys,
-            duration: noteToVexDuration(el),
+            duration: noteToVexDuration(noteEl),
             clef: activeClef,
           });
 
