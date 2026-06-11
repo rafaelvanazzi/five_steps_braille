@@ -225,6 +225,10 @@ export default function BrailleEditor() {
   const [currentProjectId, setCurrentProjectId] = useState<number | null>(null);
   const [projectTitle, setProjectTitle] = useState("");
   const [brailleContent, setBrailleContent] = useState("");
+  // Undo/Redo
+  const undoStack = useRef<string[]>([]);
+  const redoStack = useRef<string[]>([]);
+  const isUndoRedo = useRef(false);
   const [romanContent, setRomanContent] = useState("");
   const [activePanel, setActivePanel] = useState<"braille" | "romano">("braille");
   const [showReference, setShowReference] = useState(false);
@@ -325,30 +329,76 @@ export default function BrailleEditor() {
     }
   }, [romanContent]);
 
-  // Auto-save
+  // ── Salvamento MANUAL (não auto-save) ──────────────────────────────────────
+  // Salva quando o usuário clicar em Salvar ou ao sair da tela
+  const handleSave = useCallback(() => {
+    if (!currentProjectId) return;
+    setSaveStatus("saving");
+    updateMutation.mutate(
+      { id: currentProjectId, contentBraille: brailleContent, title: projectTitle },
+      {
+        onSuccess: () => {
+          setSaveStatus("saved");
+          utils.editor.list.invalidate();
+        },
+        onError: () => setSaveStatus("unsaved"),
+      }
+    );
+  }, [currentProjectId, brailleContent, projectTitle, updateMutation, utils]);
+
+  // Marcar como não salvo quando o conteúdo muda
   useEffect(() => {
-    if (!currentProjectId || !brailleContent) return;
-    setSaveStatus("unsaved");
+    if (currentProjectId && brailleContent) {
+      setSaveStatus("unsaved");
+    }
+  }, [brailleContent, currentProjectId]);
 
-    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
-    autoSaveTimerRef.current = setTimeout(() => {
-      setSaveStatus("saving");
-      updateMutation.mutate(
-        { id: currentProjectId, contentBraille: brailleContent, title: projectTitle },
-        {
-          onSuccess: () => {
-            setSaveStatus("saved");
-            utils.editor.list.invalidate();
-          },
-          onError: () => setSaveStatus("unsaved"),
-        }
-      );
-    }, 2000);
-
-    return () => {
-      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+  // Salvar ao sair da página (beforeunload)
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (saveStatus === "unsaved" && currentProjectId) {
+        handleSave();
+        e.preventDefault();
+        e.returnValue = '';
+      }
     };
-  }, [brailleContent, currentProjectId, projectTitle]);
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [saveStatus, currentProjectId, handleSave]);
+  // ── Undo (Ctrl+Z) e Redo (Ctrl+Y / Ctrl+Shift+Z) ─────────────────────────
+  useEffect(() => {
+    const handleKeyboard = (e: KeyboardEvent) => {
+      const isMac = navigator.platform.toUpperCase().includes('MAC');
+      const ctrl = isMac ? e.metaKey : e.ctrlKey;
+      if (!ctrl) return;
+
+      if (e.key === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        if (undoStack.current.length > 0) {
+          const prev = undoStack.current.pop()!;
+          redoStack.current.push(brailleContent);
+          isUndoRedo.current = true;
+          setBrailleContent(prev);
+        }
+      }
+      if ((e.key === 'y') || (e.key === 'z' && e.shiftKey)) {
+        e.preventDefault();
+        if (redoStack.current.length > 0) {
+          const next = redoStack.current.pop()!;
+          undoStack.current.push(brailleContent);
+          isUndoRedo.current = true;
+          setBrailleContent(next);
+        }
+      }
+      // Ctrl+S = Salvar
+      if (e.key === 's') {
+        e.preventDefault();
+        handleSave();
+      }
+    };
+    window.addEventListener('keydown', handleKeyboard);
+    return () => window.removeEventListener('keydown', handleKeyboard);
+  }, [brailleContent, handleSave]);
 
   // Measure score container width
   useEffect(() => {
@@ -378,9 +428,15 @@ export default function BrailleEditor() {
   // ─── BRAILLE INPUT HANDLERS ────────────────────────────────────────────────
 
   const handleBrailleChange = useCallback((newContent: string) => {
+    if (!isUndoRedo.current) {
+      undoStack.current.push(brailleContent);
+      if (undoStack.current.length > 100) undoStack.current.shift();
+      redoStack.current = [];
+    }
+    isUndoRedo.current = false;
     syncSourceRef.current = "braille";
     setBrailleContent(newContent);
-  }, []);
+  }, [brailleContent]);
 
   const insertCharAtCursor = useCallback((char: string) => {
     const textarea = brailleTextareaRef.current;
@@ -812,8 +868,17 @@ export default function BrailleEditor() {
                   : "bg-red-100 text-red-700"
               }`}
             >
-              {saveStatus === "saved" ? "✓ Salvo" : saveStatus === "saving" ? "Salvando..." : "Não salvo"}
+              {saveStatus === "saved" ? "✓ Salvo" : saveStatus === "saving" ? "Salvando..." : "● Não salvo"}
             </span>
+            {saveStatus === "unsaved" && (
+              <button
+                onClick={handleSave}
+                className="text-xs px-2 py-0.5 rounded-md bg-primary text-primary-foreground hover:opacity-90"
+                title="Salvar (Ctrl+S)"
+              >
+                Salvar
+              </button>
+            )}
           </div>
           <div className="flex items-center gap-1.5 flex-wrap">
             {/* Time signature selector */}
