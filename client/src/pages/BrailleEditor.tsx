@@ -256,16 +256,47 @@ export default function BrailleEditor() {
   }), [beatsPerMeasure]);
 
   // Parse braille content based on cursor position → render only current line
+  // Se for uma linha posterior à primeira, pré-fixa com os metadados da primeira linha
+  // (clave, armadura, fórmula de compasso) para manter contexto visual
   useEffect(() => {
     if (brailleContent.trim()) {
       try {
         let result;
         if (selectionRange && selectionRange[0] !== selectionRange[1]) {
-          // If there's a selection, parse only the selected text
           result = parseBrailleSelection(brailleContent, selectionRange[0], selectionRange[1], parseOptions);
         } else {
-          // Parse only the line where the cursor is
-          result = parseBrailleLine(brailleContent, cursorPos, parseOptions);
+          const lines = brailleContent.split('\n');
+          const firstLine = lines[0] || '';
+          
+          // Detectar qual linha o cursor está
+          let charCount = 0;
+          let cursorLineIdx = 0;
+          for (let li = 0; li < lines.length; li++) {
+            if (cursorPos <= charCount + lines[li].length) { cursorLineIdx = li; break; }
+            charCount += lines[li].length + 1;
+          }
+          
+          if (cursorLineIdx > 0 && firstLine.trim()) {
+            // Parsear a primeira linha para extrair metadados (clave, armadura, TS)
+            const firstResult = parseBrailleMusic(firstLine, parseOptions);
+            const metaElements = firstResult.elements.filter(el =>
+              el.type === 'keysignature' || el.type === 'timesignature' || el.type === 'clef' || el.type === 'hand'
+            );
+            // Parsear a linha atual
+            result = parseBrailleLine(brailleContent, cursorPos, parseOptions);
+            // Pré-fixar com metadados da primeira linha (se a linha atual não tiver os seus próprios)
+            const hasOwnKS = result.elements.some(el => el.type === 'keysignature');
+            const hasOwnTS = result.elements.some(el => el.type === 'timesignature');
+            const hasOwnClef = result.elements.some(el => el.type === 'clef' || el.type === 'hand');
+            const prefix = metaElements.filter(el =>
+              (!hasOwnKS || el.type !== 'keysignature') &&
+              (!hasOwnTS || el.type !== 'timesignature') &&
+              (!hasOwnClef || (el.type !== 'clef' && el.type !== 'hand'))
+            );
+            result = { ...result, elements: [...prefix, ...result.elements] };
+          } else {
+            result = parseBrailleLine(brailleContent, cursorPos, parseOptions);
+          }
         }
         setParsedElements(result.elements);
       } catch {

@@ -5,7 +5,7 @@
  * Click on a note to jump to the corresponding Braille cell in the editor.
  */
 import { useEffect, useRef, useMemo } from 'react';
-import { Renderer, Stave, StaveNote, Voice, Formatter, Accidental, Dot, Curve } from 'vexflow';
+import { Renderer, Stave, StaveNote, Voice, Formatter, Accidental, Dot, Curve, Beam } from 'vexflow';
 import type { ParsedElement, ParsedNote, ParsedRest, ParsedKeySignature } from '../lib/brailleMusic';
 
 interface ScoreRendererProps {
@@ -55,8 +55,8 @@ function groupIntoMeasures(elements: ParsedElement[]): MeasureInfo[] {
         continue; // Don't create a measure yet
       }
       
-      // For simple barlines (no type) with no notes, skip them (preserve nextBegBarline)
-      if (!(el as any).barlineType && current.length === 0) {
+      // Para barlines simples sem notas anteriores = espaço antes da melodia → ignorar
+      if (current.length === 0 && (!(el as any).barlineType || (el as any).barlineType === 'single')) {
         continue;
       }
       
@@ -87,13 +87,16 @@ function groupIntoMeasures(elements: ParsedElement[]): MeasureInfo[] {
     // Skip timesignature and notetie elements
   }
   
-  if (current.length > 0 || nextBegBarline) {
+  // Adicionar último compasso (mesmo se vazio, mas só se tiver notas)
+  if (current.length > 0) {
     measures.push({ 
       notes: current, 
       barlineType: 'single', 
       begBarlineType: nextBegBarline,
       sourceIndex: currentSourceIndex
     });
+  } else if (nextBegBarline) {
+    // Tinha ritornelo pendente sem notas — ignorar
   }
 
   // Detect repeat-both: when a measure ends with repeat-end and next has repeat-begin at start
@@ -193,6 +196,7 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
       if (el.type === 'clef') {
         const clefType = (el as any).clefType;
         if (clefType === 'bass') return 'bass';
+        if (clefType === 'tenor') return 'tenor';
         if (clefType === 'alto') return 'alto';
         return 'treble';
       }
@@ -227,7 +231,7 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
         case 'w': return baseNoteWidth * 3;   // 150px for whole notes
         case 'h': return baseNoteWidth * 2;   // 100px for half notes
         case 'q': return baseNoteWidth * 1.5; // 75px for quarter notes
-        case '8': return baseNoteWidth;       // 50px for eighth notes
+        case '8': return baseNoteWidth * 1.2; // 60px for eighth notes (extra space for beaming)
         case '16': return baseNoteWidth * 0.8; // 40px for 16th notes
         case '32': return baseNoteWidth * 0.7; // 35px for 32nd notes
         default: return baseNoteWidth;
@@ -320,12 +324,10 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
 
       stave.setContext(context).draw();
 
-      // Não renderizar compassos completamente vazios (antes da melodia)
+      // Compassos sem notas: ainda desenhar o stave (clave + armadura + TS no primeiro)
+      // mas não criar voice/formatter
       if (measureNotes.length === 0) {
-        // Ainda assim avança x só se não for o primeiro compasso ou se houver armadura/compasso
-        if (!isFirst || (!keySignature && timeSignature.numerator === 4)) {
-          x += currentStaveWidth;
-        }
+        x += currentStaveWidth;
         continue;
       }
 
@@ -336,40 +338,36 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
       // Track which parsed element corresponds to each VexFlow note
       const noteSourceIndices: (number | undefined)[] = [];
 
-      for (const el of measureNotes) {
-        if (el.type === 'note') {
-          // Verificar se a próxima nota é um intervalo e construir acorde
-          const noteIdx = measureNotes.indexOf(el);
-          const intervalKeys: string[] = [noteToVexKey(el)];
-          let skipCount = 0;
+      const skipIndices = new Set<number>();
+      for (let elIdx = 0; elIdx < measureNotes.length; elIdx++) {
+        if (skipIndices.has(elIdx)) continue; // já processado como intervalo de nota anterior
+        const el = measureNotes[elIdx];
 
+        if (el.type === 'interval') continue; // será processado junto com a nota anterior
+
+        if (el.type === 'note') {
           // Coletar intervalos consecutivos após esta nota
-          for (let intIdx = noteIdx + 1; intIdx < measureNotes.length; intIdx++) {
+          const intervalKeys: string[] = [noteToVexKey(el)];
+          const pitchOrder = ['C','D','E','F','G','A','B'] as const;
+
+          for (let intIdx = elIdx + 1; intIdx < measureNotes.length; intIdx++) {
             const nextEl = measureNotes[intIdx];
             if ((nextEl as any).type === 'interval') {
               const size = (nextEl as any).intervalSize as number;
-              const pitchOrder = ['C','D','E','F','G','A','B'] as const;
               const basePitchIdx = pitchOrder.indexOf(el.pitch as any);
               if (basePitchIdx !== -1) {
-                // Direção: descendente (treble) = subtraímos; ascendente (bass) = somamos
                 const direction = intervalDirection === 'descending' ? -1 : 1;
-                const steps = (size - 1) * direction;
-                const newPitchIdx = ((basePitchIdx + steps) % 7 + 7) % 7;
+                const rawSteps = basePitchIdx + (size - 1) * direction;
+                const newPitchIdx = ((rawSteps % 7) + 7) % 7;
                 const newPitch = pitchOrder[newPitchIdx];
-                // Calcular oitava
                 let newOctave = el.octave;
-                if (direction === -1) {
-                  const rawIdx = basePitchIdx + steps;
-                  if (rawIdx < 0) newOctave = el.octave - Math.ceil(Math.abs(rawIdx) / 7);
-                } else {
-                  const rawIdx = basePitchIdx + steps;
-                  if (rawIdx >= 7) newOctave = el.octave + Math.floor(rawIdx / 7);
-                }
+                if (rawSteps < 0) newOctave = el.octave + Math.floor(rawSteps / 7);
+                else if (rawSteps >= 7) newOctave = el.octave + Math.floor(rawSteps / 7);
                 intervalKeys.push(`${newPitch.toLowerCase()}/${newOctave}`);
-                skipCount++;
+                skipIndices.add(intIdx);
               }
             } else {
-              break; // parar ao encontrar elemento que não é intervalo
+              break;
             }
           }
 
@@ -417,6 +415,26 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
           const formatter = new Formatter();
           formatter.joinVoices([voice]).format([voice], currentStaveWidth - 20);
           voice.draw(context, stave);
+
+          // Agrupamento de colcheias e fusas (beaming)
+          // Compasso simples: grupos de 2 colcheias; composto: grupos de 3
+          const isCompound = timeSignature.denominator === 8 &&
+            (timeSignature.numerator === 6 || timeSignature.numerator === 9 || timeSignature.numerator === 12);
+          const groupSize = isCompound ? 3 : 2;
+          const beamableNotes = vexNotes.filter(n => {
+            const dur = (n as any).duration || '';
+            return dur === '8' || dur === '16' || dur === '32';
+          });
+          // Criar beams em grupos
+          for (let bi = 0; bi < beamableNotes.length; bi += groupSize) {
+            const group = beamableNotes.slice(bi, bi + groupSize);
+            if (group.length >= 2) {
+              try {
+                const beam = new Beam(group);
+                beam.setContext(context).draw();
+              } catch { /* ignora se beam falhar */ }
+            }
+          }
         } catch (e) {
           console.warn('VexFlow format/draw error (skipping measure):', e);
           x += currentStaveWidth;
