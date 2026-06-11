@@ -280,23 +280,36 @@ export default function BrailleEditor() {
             charCount += lines[li].length + 1;
           }
           
-          // parseBrailleLine já cuida do contexto entre linhas (oitava, compasso)
-          // Mas ainda precisamos pré-fixar clave e armadura da linha 1 para exibição visual
+          // parseBrailleLine cuida do contexto de oitava e compasso entre linhas
           result = parseBrailleLine(brailleContent, cursorPos, parseOptions);
 
-          if (cursorLineIdx > 0 && firstLine.trim()) {
-            const firstResult = parseBrailleMusic(firstLine, parseOptions);
-            const metaElements = firstResult.elements.filter(el =>
-              el.type === 'keysignature' || el.type === 'clef' || el.type === 'hand'
+          // Clave e armadura de clave: sempre visíveis no início de TODA renderização
+          // (regra de partitura convencional: aparecem em toda linha/sistema)
+          // Buscar da primeira linha que contenha esses elementos
+          if (firstLine.trim()) {
+            // Parsear toda a música para encontrar clave e armadura
+            // (podem estar em qualquer linha, não só na primeira)
+            const fullResult = parseBrailleMusic(
+              lines.slice(0, Math.max(1, cursorLineIdx)).join('\n'),
+              parseOptions
             );
-            const hasOwnKS  = result.elements.some(el => el.type === 'keysignature');
+            // Pegar a ÚLTIMA clave e ÚLTIMA armadura encontradas
+            // (pode ter mudado ao longo da música)
+            let lastClef = null as any;
+            let lastKS   = null as any;
+            for (const el of fullResult.elements) {
+              if (el.type === 'clef' || el.type === 'hand') lastClef = el;
+              if (el.type === 'keysignature') lastKS = el;
+            }
+            // Verificar se a linha atual já tem os seus próprios
+            const hasOwnKS   = result.elements.some(el => el.type === 'keysignature');
             const hasOwnClef = result.elements.some(el => el.type === 'clef' || el.type === 'hand');
-            const prefix = metaElements.filter(el =>
-              (!hasOwnKS   || el.type !== 'keysignature') &&
-              (!hasOwnClef || (el.type !== 'clef' && el.type !== 'hand'))
-            );
-            // NÃO pré-fixar timesignature — aparece só quando escrito explicitamente
-            result = { ...result, elements: [...prefix, ...result.elements] };
+            const prefix: any[] = [];
+            if (!hasOwnClef && lastClef) prefix.push(lastClef);
+            if (!hasOwnKS   && lastKS)   prefix.push(lastKS);
+            if (prefix.length > 0) {
+              result = { ...result, elements: [...prefix, ...result.elements] };
+            }
           }
         }
         setParsedElements(result.elements);
