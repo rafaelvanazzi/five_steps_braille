@@ -215,21 +215,32 @@ const LEFT_HAND   = '\u2838\u281C'; // ⠸⠜ (4,5,6)+(3,4,5)
 const MUSICAL_HYPHEN = '\u2810'; // ⠐ (5) — ATENÇÃO: mesmo que oitava 4 → desambiguar por contexto
 
 // Armadura de clave (chaves comuns)
+// Armaduras de 4-7 acidentes: ⠼ + dígito + ⠩/⠣
+// Detectadas pelo parser antes da fórmula de compasso (mesmo prefixo ⠼)
+// Armaduras de 1-3: detectadas por sequência de ⠩⠩ ou ⠣⠣ sem nota entre elas
 const OFFICIAL_KEY_SIGNATURE_MAP: Record<string, { vexKey: string; fifths: number }> = {
-  '\u2829':                         { vexKey: 'G',  fifths: 1  }, // 1 sustenido
-  '\u2829\u2829':                   { vexKey: 'D',  fifths: 2  }, // 2 sustenidos
-  '\u2829\u2829\u2829':             { vexKey: 'A',  fifths: 3  }, // 3 sustenidos
-  '\u283C\u2819\u2829':             { vexKey: 'E',  fifths: 4  }, // 4 sustenidos (⠼⠙⠩)
-  '\u283C\u2811\u2829':             { vexKey: 'B',  fifths: 5  }, // 5 sustenidos
-  '\u283C\u280B\u2829':             { vexKey: 'F#', fifths: 6  }, // 6 sustenidos
-  '\u283C\u281B\u2829':             { vexKey: 'C#', fifths: 7  }, // 7 sustenidos
-  '\u2823':                         { vexKey: 'F',  fifths: -1 }, // 1 bemol
-  '\u2823\u2823':                   { vexKey: 'Bb', fifths: -2 }, // 2 bemóis
-  '\u2823\u2823\u2823':             { vexKey: 'Eb', fifths: -3 }, // 3 bemóis
-  '\u283C\u2819\u2823':             { vexKey: 'Ab', fifths: -4 }, // 4 bemóis
-  '\u283C\u2811\u2823':             { vexKey: 'Db', fifths: -5 }, // 5 bemóis
-  '\u283C\u280B\u2823':             { vexKey: 'Gb', fifths: -6 }, // 6 bemóis
-  '\u283C\u281B\u2823':             { vexKey: 'Cb', fifths: -7 }, // 7 bemóis
+  // 4-7 sustenidos: ⠼ + dígito numerador + ⠩
+  '\u283C\u2819\u2829':             { vexKey: 'E',  fifths: 4  }, // 4 sustenidos ⠼⠙⠩
+  '\u283C\u2811\u2829':             { vexKey: 'B',  fifths: 5  }, // 5 sustenidos ⠼⠑⠩
+  '\u283C\u280B\u2829':             { vexKey: 'F#', fifths: 6  }, // 6 sustenidos ⠼⠋⠩
+  '\u283C\u281B\u2829':             { vexKey: 'C#', fifths: 7  }, // 7 sustenidos ⠼⠛⠩
+  // 4-7 bemóis: ⠼ + dígito numerador + ⠣
+  '\u283C\u2819\u2823':             { vexKey: 'Ab', fifths: -4 }, // 4 bemóis ⠼⠙⠣
+  '\u283C\u2811\u2823':             { vexKey: 'Db', fifths: -5 }, // 5 bemóis ⠼⠑⠣
+  '\u283C\u280B\u2823':             { vexKey: 'Gb', fifths: -6 }, // 6 bemóis ⠼⠋⠣
+  '\u283C\u281B\u2823':             { vexKey: 'Cb', fifths: -7 }, // 7 bemóis ⠼⠛⠣
+};
+
+// Armaduras de 1-3 acidentes: detectadas por contexto (repetição de ⠩ ou ⠣)
+const KEY_SIG_SHARP: Record<string, { vexKey: string; fifths: number }> = {
+  '\u2829':             { vexKey: 'G',  fifths: 1  }, // 1 sustenido  ⠩
+  '\u2829\u2829':       { vexKey: 'D',  fifths: 2  }, // 2 sustenidos ⠩⠩
+  '\u2829\u2829\u2829':{ vexKey: 'A',  fifths: 3  }, // 3 sustenidos ⠩⠩⠩
+};
+const KEY_SIG_FLAT: Record<string, { vexKey: string; fifths: number }> = {
+  '\u2823':             { vexKey: 'F',  fifths: -1 }, // 1 bemol  ⠣
+  '\u2823\u2823':       { vexKey: 'Bb', fifths: -2 }, // 2 bemóis ⠣⠣
+  '\u2823\u2823\u2823':{ vexKey: 'Eb', fifths: -3 }, // 3 bemóis ⠣⠣⠣
 };
 
 // ─── TIPOS EXPORTADOS ──────────────────────────────────────────────────────────
@@ -578,8 +589,14 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
       curTokens.push({ kind: 'oct', val: OCTAVE_MAP[two], idx: i }); i += 2; continue;
     }
 
-    // Fórmula de compasso
+    // Fórmula de compasso OU armadura de 4-7 acidentes (⠼ + dígito + ⠩/⠣)
+    // Testar armadura de 3 células PRIMEIRO (⠼⠙⠩, ⠼⠑⠣, etc.)
     if (ch === NUMBER_SIGN) {
+      if (i + 2 < len && OFFICIAL_KEY_SIGNATURE_MAP[three]) {
+        const ks = OFFICIAL_KEY_SIGNATURE_MAP[three];
+        curTokens.push({ kind: 'ks', fifths: ks.fifths, vexKey: ks.vexKey, idx: i });
+        i += 3; continue;
+      }
       const ts = tryReadTimeSignature(input, i);
       if (ts) {
         curTokens.push({ kind: 'ts', numerator: ts.numerator, denominator: ts.denominator, idx: i });
@@ -610,7 +627,30 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
       curTokens.push({ kind: 'oct', val: OCTAVE_MAP[ch], idx: i }); i++; continue;
     }
 
-    // Alterações simples
+    // ⠩ e ⠣: armadura (1-3 acidentes) OU acidente — distinguir por contexto
+    // Regra MusicBraille: sequência de ⠩⠩ ou ⠣⠣ sem nota entre elas = armadura
+    // ⠩ ou ⠣ sozinhos imediatamente antes de nota = acidente
+    if (ch === '\u2829' || ch === '\u2823') {
+      const ACC_CHAR = ch;
+      const KS_MAP = ch === '\u2829' ? KEY_SIG_SHARP : KEY_SIG_FLAT;
+      // Contar quantos chars iguais seguem consecutivos (máx 3)
+      let count = 1;
+      while (count < 3 && i + count < len && input[i + count] === ACC_CHAR) count++;
+      const seq = ACC_CHAR.repeat(count);
+      // Verificar se o char após a sequência é uma nota (acidente) ou não (armadura)
+      const afterSeq = input[i + count] || '';
+      const afterIsNote = NOTE_MAP[afterSeq] !== undefined || REST_MAP[afterSeq] !== undefined;
+      if (!afterIsNote && KS_MAP[seq]) {
+        // Armadura
+        const ks = KS_MAP[seq];
+        curTokens.push({ kind: 'ks', fifths: ks.fifths, vexKey: ks.vexKey, idx: i });
+        i += count; continue;
+      }
+      // Acidente (só o primeiro char; os outros serão processados na próxima iteração)
+      if (ACCIDENTAL_MAP[ch]) { curTokens.push({ kind: 'acc', val: ACCIDENTAL_MAP[ch], idx: i }); i++; continue; }
+    }
+
+    // Outras alterações simples (bequadro ⠡)
     if (ACCIDENTAL_MAP[ch]) { curTokens.push({ kind: 'acc', val: ACCIDENTAL_MAP[ch], idx: i }); i++; continue; }
 
     // Armadura de 1-2 células
