@@ -214,6 +214,67 @@ const LEFT_HAND   = '\u2838\u281C'; // ⠸⠜ (4,5,6)+(3,4,5)
 // Hífen musical (compasso continua na linha seguinte)
 const MUSICAL_HYPHEN = '\u2810'; // ⠐ (5) — ATENÇÃO: mesmo que oitava 4 → desambiguar por contexto
 
+// ─── CLAVES ────────────────────────────────────────────────────────────────────
+const CLEF_SOL_2 = '\u281C\u280C\u2807'; // ⠜⠌⠇ (3,4,5)+(3,4)+(1,2,3) — Clave de Sol 2ª linha
+const CLEF_FA_4  = '\u281C\u283C\u2807'; // ⠜⠼⠇ (3,4,5)+(3,4,5,6)+(1,2,3) — Clave de Fá 4ª linha
+const CLEF_DO_3  = '\u281C\u282C\u2807'; // ⠜⠬⠇ (3,4,5)+(3,4,6)+(1,2,3) — Clave de Dó 3ª linha
+
+// ─── MÃO DIREITA / ESQUERDA ────────────────────────────────────────────────────
+const HAND_RIGHT = '\u2828\u281C'; // ⠨⠜ (4,6)+(3,4,5) — mão direita → clave de sol
+const HAND_LEFT  = '\u2838\u281C'; // ⠸⠜ (4,5,6)+(3,4,5) — mão esquerda → clave de fá
+
+// ─── DINÂMICA ──────────────────────────────────────────────────────────────────
+// Prefixo ⠜ (U+281C) + símbolo
+const DYNAMIC_MAP: Record<string, string> = {
+  '\u281C\u280F':             'p',
+  '\u281C\u280F\u280F':      'pp',
+  '\u281C\u280D\u280F':      'mp',
+  '\u281C\u280D\u280B':      'mf',
+  '\u281C\u280B':             'f',
+  '\u281C\u280B\u280B':      'ff',
+  '\u281C\u2809':             'cresc',
+  '\u281C\u2812':             'cresc-fim',
+  '\u281C\u2819':             'dim',
+  '\u281C\u2832':             'dim-fim',
+};
+
+// ─── ORNAMENTOS ────────────────────────────────────────────────────────────────
+const ORNAMENT_MAP: Record<string, string> = {
+  '\u2816':             'trinado',
+  '\u2802\u2816':      'mordente-sup',
+  '\u281C\u2805':      'arpejo',
+  '\u2808\u2801':      'glissando',
+  '\u2820\u2832':      'grupeto-sup',
+  '\u2832':             'grupeto-inf',
+  '\u2822':             'apogiatura',
+};
+
+// ─── ARTICULAÇÃO EXTRA ─────────────────────────────────────────────────────────
+const ARTICULATION_EXTRA_MAP: Record<string, string> = {
+  '\u2826\u2826':      'staccato-duplo',
+  '\u2820\u2826':      'staccatissimo',
+  '\u2838\u2826':      'tenuta',
+  '\u2828\u2826':      'smorzando',
+  '\u2830\u2826':      'martelato',
+};
+
+// ─── QUIÁLTERAS ────────────────────────────────────────────────────────────────
+const QUIALTERA_MAP: Record<string, string> = {
+  '\u2806':                   'tercina',
+  '\u2838\u2806\u2804':     'quialtera-2',
+  '\u2838\u2812\u2804':     'quialtera-3',
+  '\u2838\u2832\u2804':     'quialtera-4',
+  '\u2838\u2822\u2804':     'quialtera-5',
+};
+
+// ─── REPETIÇÃO/FORMA ───────────────────────────────────────────────────────────
+const REPETITION_MAP: Record<string, string> = {
+  '\u282C\u2801':             'coda',
+  '\u283C\u2802':             '1a-vez',
+  '\u283C\u2806':             '2a-vez',
+  '\u281C\u2819\u280E\u2804': 'segno',
+};
+
 // Armadura de clave (chaves comuns)
 // Armaduras de 4-7 acidentes: ⠼ + dígito + ⠩/⠣
 // Detectadas pelo parser antes da fórmula de compasso (mesmo prefixo ⠼)
@@ -343,6 +404,42 @@ export interface ParsedStaccato {
   sourceIndex: number;
 }
 
+export interface ParsedDynamic {
+  type: 'dynamic';
+  name: string; // 'p' | 'pp' | 'mp' | 'mf' | 'f' | 'ff' | 'cresc' | 'dim' etc.
+  sourceIndex: number;
+}
+
+export interface ParsedOrnament {
+  type: 'ornament';
+  name: string; // 'trinado' | 'mordente-sup' | 'arpejo' | 'glissando' etc.
+  sourceIndex: number;
+}
+
+export interface ParsedQuialtera {
+  type: 'quialtera';
+  name: string; // 'tercina' | 'quialtera-2' etc.
+  sourceIndex: number;
+}
+
+export interface ParsedRepetition {
+  type: 'repetition';
+  name: string; // 'coda' | 'segno' | '1a-vez' | '2a-vez' etc.
+  sourceIndex: number;
+}
+
+export interface ParsedArticulation {
+  type: 'articulation';
+  name: string; // 'tenuta' | 'martelato' | 'staccato-duplo' etc.
+  sourceIndex: number;
+}
+
+export interface ParsedHand {
+  type: 'hand';
+  hand: 'right' | 'left'; // mão direita = clave de sol, mão esquerda = clave de fá
+  sourceIndex: number;
+}
+
 export type ParsedElement =
   | ParsedNote
   | ParsedRest
@@ -357,7 +454,13 @@ export type ParsedElement =
   | ParsedTie
   | ParsedPhrase
   | ParsedFermata
-  | ParsedStaccato;
+  | ParsedStaccato
+  | ParsedDynamic
+  | ParsedOrnament
+  | ParsedQuialtera
+  | ParsedRepetition
+  | ParsedArticulation
+  | ParsedHand;
 
 export interface ParseResult {
   elements: ParsedElement[];
@@ -727,8 +830,14 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
       if (tk.kind === 'oct') { pendingOctave = (tk as any).val; inNoteContext = true; continue; }
       if (tk.kind === 'acc') { pendingAccidental = (tk as any).val; continue; }
       if (tk.kind === 'staccato') { pendingStaccato = true; continue; }
-      if (tk.kind === 'fermata') { elements.push({ type: 'fermata', sourceIndex: (tk as any).idx }); continue; }
-      if (tk.kind === 'slur')    { elements.push({ type: 'slur', slurType: (tk as any).slurType, sourceIndex: (tk as any).idx }); continue; }
+      if (tk.kind === 'fermata')       { elements.push({ type: 'fermata',     sourceIndex: (tk as any).idx }); continue; }
+      if (tk.kind === 'hand')          { elements.push({ type: 'hand', hand: (tk as any).hand, sourceIndex: (tk as any).idx }); continue; }
+      if (tk.kind === 'dynamic')       { elements.push({ type: 'dynamic', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
+      if (tk.kind === 'ornament')      { elements.push({ type: 'ornament', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
+      if (tk.kind === 'articulation')  { elements.push({ type: 'articulation', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
+      if (tk.kind === 'quialtera')     { elements.push({ type: 'quialtera', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
+      if (tk.kind === 'repetition')    { elements.push({ type: 'repetition', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
+      if (tk.kind === 'slur')          { elements.push({ type: 'slur', slurType: (tk as any).slurType, sourceIndex: (tk as any).idx }); continue; }
       if (tk.kind === 'tie')     { elements.push({ type: 'tie', sourceIndex: (tk as any).idx }); continue; }
       if (tk.kind === 'phrase')  { elements.push({ type: 'phrase', phraseType: (tk as any).phraseType, sourceIndex: (tk as any).idx }); continue; }
       if (tk.kind === 'interval') {
@@ -847,12 +956,12 @@ export function getQuickReference(): QuickRefEntry[] {
 
   // Notas
   const durLabels: Record<Duration, string> = {
-    w: 'semibreve', h: 'mínima', q: 'semínima', '8': 'colcheia',
-    '16': 'semicolcheia', '32': 'fusa', '64': 'semifusa', '128': 'quartifusa',
+    w: 'semibreve/semicolcheia', h: 'mínima/fusa', q: 'semínima/semifusa', '8': 'colcheia/quartifusa',
+    '16': 'semibreve/semicolcheia', '32': 'mínima/fusa', '64': 'semínima/semifusa', '128': 'colcheia/quartifusa',
   };
   const durCat: Record<Duration, string> = {
     w: 'note-whole', h: 'note-half', q: 'note-quarter', '8': 'note-eighth',
-    '16': 'note-16th-forced', '32': 'note-32nd-forced', '64': 'note-64th', '128': 'note-128th',
+    '16': 'note-whole', '32': 'note-half', '64': 'note-quarter', '128': 'note-eighth',
   };
   Object.entries(NOTE_MAP).forEach(([char, info]) => {
     const ptLabel: Record<string, string> = { C:'Dó',D:'Ré',E:'Mi',F:'Fá',G:'Sol',A:'Lá',B:'Si' };
@@ -932,8 +1041,61 @@ export function getQuickReference(): QuickRefEntry[] {
   ref.push({ char: PHRASE_END,            dots: '4,5 2,3', description: 'Lig. frase fim',          category: 'ligadura' });
 
   // Articulação
-  ref.push({ char: STACCATO,             dots: '2,3,6',    description: 'Staccato',                category: 'articulacao' });
-  ref.push({ char: FERMATA,              dots: '1,2,6 1,2,3', description: 'Fermata',              category: 'articulacao' });
+  ref.push({ char: STACCATO,                            dots: '2,3,6',          description: 'Staccato',          category: 'articulacao' });
+  ref.push({ char: FERMATA,                             dots: '1,2,6 1,2,3',    description: 'Fermata',           category: 'articulacao' });
+  ref.push({ char: '\u2826\u2826',                   dots: '2,3,6 2,3,6',    description: 'Staccato duplo',    category: 'articulacao' });
+  ref.push({ char: '\u2838\u2826',                   dots: '4,5,6 2,3,6',    description: 'Tenuta',            category: 'articulacao' });
+  ref.push({ char: '\u2830\u2826',                   dots: '5,6 2,3,6',      description: 'Martelato',         category: 'articulacao' });
+  ref.push({ char: '\u2820\u2826',                   dots: '6 2,3,6',        description: 'Staccatissimo',     category: 'articulacao' });
+  ref.push({ char: '\u2828\u2826',                   dots: '4,6 2,3,6',      description: 'Smorzando',         category: 'articulacao' });
+
+  // Dinâmica
+  ref.push({ char: '\u281C\u280F',                   dots: '3,4,5 1,2,3,4',  description: 'Piano (p)',         category: 'dinamica' });
+  ref.push({ char: '\u281C\u280F\u280F',            dots: '3,4,5 ...',      description: 'Pianíssimo (pp)',   category: 'dinamica' });
+  ref.push({ char: '\u281C\u280D\u280F',            dots: '3,4,5 ...',      description: 'Mezzo-piano (mp)', category: 'dinamica' });
+  ref.push({ char: '\u281C\u280D\u280B',            dots: '3,4,5 ...',      description: 'Mezzo-forte (mf)', category: 'dinamica' });
+  ref.push({ char: '\u281C\u280B',                   dots: '3,4,5 1,2,4',    description: 'Forte (f)',         category: 'dinamica' });
+  ref.push({ char: '\u281C\u280B\u280B',            dots: '3,4,5 ...',      description: 'Fortíssimo (ff)',   category: 'dinamica' });
+  ref.push({ char: '\u281C\u2809',                   dots: '3,4,5 1,4',      description: 'Crescendo',         category: 'dinamica' });
+  ref.push({ char: '\u281C\u2812',                   dots: '3,4,5 2,5',      description: 'Cresc. fim',        category: 'dinamica' });
+  ref.push({ char: '\u281C\u2819',                   dots: '3,4,5 1,4,5',    description: 'Diminuendo',        category: 'dinamica' });
+  ref.push({ char: '\u281C\u2832',                   dots: '3,4,5 2,5,6',    description: 'Dimin. fim',        category: 'dinamica' });
+
+  // Ornamentos
+  ref.push({ char: '\u2816',                          dots: '2,3,5',          description: 'Trinado',           category: 'ornamento' });
+  ref.push({ char: '\u2802\u2816',                   dots: '2 2,3,5',        description: 'Mordente superior', category: 'ornamento' });
+  ref.push({ char: '\u281C\u2805',                   dots: '3,4,5 1,3',      description: 'Arpejo',            category: 'ornamento' });
+  ref.push({ char: '\u2808\u2801',                   dots: '4 1',            description: 'Glissando',         category: 'ornamento' });
+  ref.push({ char: '\u2822',                          dots: '2,6',            description: 'Apogiatura',        category: 'ornamento' });
+  ref.push({ char: '\u2820\u2832',                   dots: '6 2,5,6',        description: 'Grupeto superior',  category: 'ornamento' });
+  ref.push({ char: '\u2832',                          dots: '2,5,6',          description: 'Grupeto inferior',  category: 'ornamento' });
+
+  // Quiálteras
+  ref.push({ char: '\u2806',                          dots: '2,3',            description: 'Tercina',           category: 'quialtera' });
+  ref.push({ char: '\u2838\u2806\u2804',            dots: '4,5,6 2,3 3',    description: 'Quiáltera 2',       category: 'quialtera' });
+  ref.push({ char: '\u2838\u2812\u2804',            dots: '4,5,6 2,5 3',    description: 'Quiáltera 3',       category: 'quialtera' });
+  ref.push({ char: '\u2838\u2832\u2804',            dots: '4,5,6 2,5,6 3',  description: 'Quiáltera 4',       category: 'quialtera' });
+  ref.push({ char: '\u2838\u2822\u2804',            dots: '4,5,6 2,6 3',    description: 'Quiáltera 5',       category: 'quialtera' });
+
+  // Repetição / Forma
+  ref.push({ char: '\u282C\u2801',                   dots: '3,4,6 1',        description: 'Coda',              category: 'repeticao' });
+  ref.push({ char: '\u283C\u2802',                   dots: '3,4,5,6 2',      description: '1ª vez',            category: 'repeticao' });
+  ref.push({ char: '\u283C\u2806',                   dots: '3,4,5,6 2,3',    description: '2ª vez',            category: 'repeticao' });
+  ref.push({ char: '\u2823\u2836',                   dots: '1,2,6 2,3,5,6',  description: 'Ritornelo início',  category: 'repeticao' });
+  ref.push({ char: '\u2823\u2826',                   dots: '1,2,6 2,3,6',    description: 'Ritornelo fim',     category: 'repeticao' });
+
+  // Claves
+  ref.push({ char: CLEF_SOL_2,                        dots: '3,4,5 3,4 1,2,3',       description: 'Clave de Sol',      category: 'clave' });
+  ref.push({ char: CLEF_FA_4,                         dots: '3,4,5 3,4,5,6 1,2,3',   description: 'Clave de Fá',       category: 'clave' });
+  ref.push({ char: CLEF_DO_3,                         dots: '3,4,5 3,4,6 1,2,3',     description: 'Clave de Dó',       category: 'clave' });
+  ref.push({ char: HAND_RIGHT,                        dots: '4,6 3,4,5',              description: 'Mão direita',       category: 'clave' });
+  ref.push({ char: HAND_LEFT,                         dots: '4,5,6 3,4,5',            description: 'Mão esquerda',      category: 'clave' });
+
+  // Fórmulas de compasso extras
+  ref.push({ char: '\u2828\u2809', dots: '4,6 1,4',          description: 'C — 4/4 abreviado',  category: 'timesig' });
+  ref.push({ char: '\u2838\u2809', dots: '4,5,6 1,4',        description: 'C cortado — 2/2',    category: 'timesig' });
+  ref.push({ char: '\u283C\u2809\u2826', dots: '3,4,5,6 ...', description: '3/8',              category: 'timesig' });
+  ref.push({ char: '\u283C\u280A\u2826', dots: '3,4,5,6 ...', description: '9/8',              category: 'timesig' });
 
   return ref;
 }
