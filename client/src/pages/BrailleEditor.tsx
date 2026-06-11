@@ -280,26 +280,23 @@ export default function BrailleEditor() {
             charCount += lines[li].length + 1;
           }
           
+          // parseBrailleLine já cuida do contexto entre linhas (oitava, compasso)
+          // Mas ainda precisamos pré-fixar clave e armadura da linha 1 para exibição visual
+          result = parseBrailleLine(brailleContent, cursorPos, parseOptions);
+
           if (cursorLineIdx > 0 && firstLine.trim()) {
-            // Parsear a primeira linha para extrair metadados (clave, armadura, TS)
             const firstResult = parseBrailleMusic(firstLine, parseOptions);
             const metaElements = firstResult.elements.filter(el =>
-              el.type === 'keysignature' || el.type === 'timesignature' || el.type === 'clef' || el.type === 'hand'
+              el.type === 'keysignature' || el.type === 'clef' || el.type === 'hand'
             );
-            // Parsear a linha atual
-            result = parseBrailleLine(brailleContent, cursorPos, parseOptions);
-            // Pré-fixar com metadados da primeira linha (se a linha atual não tiver os seus próprios)
-            const hasOwnKS = result.elements.some(el => el.type === 'keysignature');
-            const hasOwnTS = result.elements.some(el => el.type === 'timesignature');
+            const hasOwnKS  = result.elements.some(el => el.type === 'keysignature');
             const hasOwnClef = result.elements.some(el => el.type === 'clef' || el.type === 'hand');
             const prefix = metaElements.filter(el =>
-              (!hasOwnKS || el.type !== 'keysignature') &&
-              (!hasOwnTS || el.type !== 'timesignature') &&
+              (!hasOwnKS   || el.type !== 'keysignature') &&
               (!hasOwnClef || (el.type !== 'clef' && el.type !== 'hand'))
             );
+            // NÃO pré-fixar timesignature — aparece só quando escrito explicitamente
             result = { ...result, elements: [...prefix, ...result.elements] };
-          } else {
-            result = parseBrailleLine(brailleContent, cursorPos, parseOptions);
           }
         }
         setParsedElements(result.elements);
@@ -847,7 +844,12 @@ export default function BrailleEditor() {
         <div className="flex items-center justify-between flex-wrap gap-2">
           <div className="flex items-center gap-3">
             <button
-              onClick={() => setShowProjects(true)}
+              onClick={() => {
+                if (saveStatus === 'unsaved' && currentProjectId) {
+                  handleSave();
+                }
+                setShowProjects(true);
+              }}
               className="text-muted-foreground hover:text-foreground transition-colors"
               aria-label="Voltar aos projetos"
             >
