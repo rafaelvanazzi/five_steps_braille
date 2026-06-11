@@ -286,26 +286,24 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
       // All measures in one line - no wrapping
       // Create stave
       const stave = new Stave(x, y, currentStaveWidth);
-      // Clave e armadura: SEMPRE em todos os compassos (regra de partitura convencional)
+      // Clave e armadura: apenas no PRIMEIRO compasso de cada renderização
+      // (regra de partitura: clave e armadura aparecem no início de cada linha/sistema)
       const validKeys = ['C','G','D','A','E','B','F#','C#','F','Bb','Eb','Ab','Db','Gb','Cb'];
-      stave.addClef(activeClef);
-      if (keySignature && validKeys.includes(keySignature)) {
-        try { stave.addKeySignature(keySignature); }
-        catch (e) { console.warn('VexFlow keySignature error:', keySignature, e); }
-      }
-      // Compasso: só renderiza se foi escrito explicitamente nos elementos (isFirst E há TS)
-      if (isFirst && timeSignatureEl) {
-        const tsNum = timeSignatureEl.numerator;
-        const tsDen = timeSignatureEl.denominator;
-        // Verificar se é C ou C-cortado (abreviados)
-        // C = 4/4 abreviado: numerator=4, denominator=4, mas veio de ⠨⠉
-        // C-cortado = 2/2: numerator=2, denominator=2, mas veio de ⠸⠉
-        if ((timeSignatureEl as any)._abbreviated === 'C') {
-          stave.addTimeSignature('C');
-        } else if ((timeSignatureEl as any)._abbreviated === 'C|') {
-          stave.addTimeSignature('C|');
-        } else {
-          stave.addTimeSignature(`${tsNum}/${tsDen}`);
+      if (isFirst) {
+        stave.addClef(activeClef);
+        if (keySignature && validKeys.includes(keySignature)) {
+          try { stave.addKeySignature(keySignature); }
+          catch (e) { console.warn('VexFlow keySignature error:', keySignature, e); }
+        }
+        // Compasso: só renderiza se foi escrito explicitamente
+        if (timeSignatureEl) {
+          if ((timeSignatureEl as any)._abbreviated === 'C') {
+            stave.addTimeSignature('C');
+          } else if ((timeSignatureEl as any)._abbreviated === 'C|') {
+            stave.addTimeSignature('C|');
+          } else {
+            stave.addTimeSignature(`${timeSignatureEl.numerator}/${timeSignatureEl.denominator}`);
+          }
         }
       }
 
@@ -426,17 +424,28 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
           formatter.joinVoices([voice]).format([voice], currentStaveWidth - 20);
           voice.draw(context, stave);
 
-          // Beaming: agrupar colcheias/fusas (remove flags individuais, desenha barras unidas)
-          // Compasso composto (6/8, 9/8, 12/8): grupos de 3; simples: grupos de 2
+          // Beaming: agrupar colcheias/fusas sem flags individuais
+          // VexFlow: criar Beam explicitamente em grupos de notas beamáveis
           const isCompound = timeSignature.denominator === 8 &&
             [6, 9, 12].includes(timeSignature.numerator);
-          const beamGroups = Beam.generateBeams(vexNotes, {
-            groups: isCompound
-              ? [new (window as any).Vex.Flow.Fraction(3, 8)]
-              : undefined, // padrão: grupos por beat
-            stem_direction: 1,
+          const beamSize = isCompound ? 3 : 2;
+
+          // Separar notas beamáveis (colcheias, semicolcheias, fusas)
+          const beamable = vexNotes.filter(n => {
+            const dur = (n as any).duration;
+            return ['8','16','32'].includes(dur);
           });
-          beamGroups.forEach(b => b.setContext(context).draw());
+
+          // Criar grupos de beam
+          for (let bi = 0; bi < beamable.length; bi += beamSize) {
+            const group = beamable.slice(bi, bi + beamSize);
+            if (group.length >= 2) {
+              try {
+                const beam = new Beam(group, true); // true = auto_stem
+                beam.setContext(context).draw();
+              } catch { /* ignora */ }
+            }
+          }
         } catch (e) {
           console.warn('VexFlow format/draw error (skipping measure):', e);
           x += currentStaveWidth;
