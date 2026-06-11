@@ -245,7 +245,7 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
       // intervalos são consumidos junto com a nota anterior (acorde)
       // dinâmica, ornamentos, etc. são ignorados na renderização VexFlow por enquanto
       const measureNotes = measure.notes.filter(n =>
-        n.type === 'note' || n.type === 'rest'
+        n.type === 'note' || n.type === 'rest' || n.type === 'interval'
       );
       const extraW = i === 0 ? (80 + (keySignature ? 40 : 0)) : 0; // Extra space for clef + key sig + time signature
       const notesWidth = measureNotes.reduce((sum, n) => sum + getNoteWidth(n), 0);
@@ -273,7 +273,7 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
       // intervalos são consumidos junto com a nota anterior (acorde)
       // dinâmica, ornamentos, etc. são ignorados na renderização VexFlow por enquanto
       const measureNotes = measure.notes.filter(n =>
-        n.type === 'note' || n.type === 'rest'
+        n.type === 'note' || n.type === 'rest' || n.type === 'interval'
       );
       const isFirst = i === 0;
 
@@ -286,26 +286,32 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
       // All measures in one line - no wrapping
       // Create stave
       const stave = new Stave(x, y, currentStaveWidth);
-      // Clave e armadura: SEMPRE em todos os compassos (regra de partitura convencional)
+      // Clave e armadura: apenas no PRIMEIRO compasso de cada renderização
+      // (regra de partitura: clave e armadura aparecem no início de cada linha/sistema)
       const validKeys = ['C','G','D','A','E','B','F#','C#','F','Bb','Eb','Ab','Db','Gb','Cb'];
-      stave.addClef(activeClef);
-      if (keySignature && validKeys.includes(keySignature)) {
-        try { stave.addKeySignature(keySignature); }
-        catch (e) { console.warn('VexFlow keySignature error:', keySignature, e); }
-      }
-      // Compasso: só renderiza se foi escrito explicitamente nos elementos (isFirst E há TS)
-      if (isFirst && timeSignatureEl) {
-        const tsNum = timeSignatureEl.numerator;
-        const tsDen = timeSignatureEl.denominator;
-        // Verificar se é C ou C-cortado (abreviados)
-        // C = 4/4 abreviado: numerator=4, denominator=4, mas veio de ⠨⠉
-        // C-cortado = 2/2: numerator=2, denominator=2, mas veio de ⠸⠉
-        if ((timeSignatureEl as any)._abbreviated === 'C') {
-          stave.addTimeSignature('C');
-        } else if ((timeSignatureEl as any)._abbreviated === 'C|') {
-          stave.addTimeSignature('C|');
-        } else {
-          stave.addTimeSignature(`${tsNum}/${tsDen}`);
+      if (isFirst) {
+        stave.addClef(activeClef);
+        if (keySignature && validKeys.includes(keySignature)) {
+          try { stave.addKeySignature(keySignature); }
+          catch (e) { console.warn('VexFlow keySignature error:', keySignature, e); }
+        }
+        // Compasso: só renderiza se foi escrito explicitamente
+        if (timeSignatureEl) {
+          // Verificar se é C ou C-cortado pelo _abbreviated OU pelas dimensões
+          const abbr = (timeSignatureEl as any)._abbreviated;
+          const num = (timeSignatureEl as any).numerator ?? (timeSignatureEl as any).num;
+          const den = (timeSignatureEl as any).denominator ?? (timeSignatureEl as any).den;
+          try {
+            if (abbr === 'C') {
+              stave.addTimeSignature('C');
+            } else if (abbr === 'C|') {
+              stave.addTimeSignature('C|');
+            } else if (num && den) {
+              stave.addTimeSignature(`${num}/${den}`);
+            }
+          } catch (e) {
+            console.warn('addTimeSignature error:', e);
+          }
         }
       }
 
@@ -354,7 +360,7 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
           // Coletar intervalos consecutivos após esta nota
           for (let intIdx = noteIdx + 1; intIdx < measureNotes.length; intIdx++) {
             const nextEl = measureNotes[intIdx];
-            if ((nextEl as any).type === 'interval') {
+            if (nextEl.type === 'interval') {
               const size = (nextEl as any).intervalSize as number;
               const pitchOrder = ['C','D','E','F','G','A','B'] as const;
               const basePitchIdx = pitchOrder.indexOf(el.pitch as any);
@@ -426,17 +432,45 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
           formatter.joinVoices([voice]).format([voice], currentStaveWidth - 20);
           voice.draw(context, stave);
 
-          // Beaming: agrupar colcheias/fusas (remove flags individuais, desenha barras unidas)
-          // Compasso composto (6/8, 9/8, 12/8): grupos de 3; simples: grupos de 2
+          // Beaming: agrupar colcheias/fusas
+          // Estratégia: esconder a flag individual via setFlagStyle transparent,
+          // depois desenhar o Beam (barra unida) por cima
           const isCompound = timeSignature.denominator === 8 &&
             [6, 9, 12].includes(timeSignature.numerator);
-          const beamGroups = Beam.generateBeams(vexNotes, {
-            groups: isCompound
-              ? [new (window as any).Vex.Flow.Fraction(3, 8)]
-              : undefined, // padrão: grupos por beat
-            stemDirection: 1,
+          const beamSize = isCompound ? 3 : 2;
+
+          // Coletar notas beamáveis
+          const beamable = vexNotes.filter(n => {
+            const dur = (n as any).duration;
+            return ['8','16','32','64'].includes(dur);
           });
-          beamGroups.forEach(b => b.setContext(context).draw());
+
+          // Esconder flags individuais das notas que serão agrupadas
+          // (só esconde se houver ao menos 2 notas para formar beam)
+          if (beamable.length >= 2) {
+            beamable.forEach(note => {
+              try {
+                // Esconder a flag individual — o Beam desenha a barra unida
+                (note as any).setFlagStyle({ fillStyle: 'none', strokeStyle: 'none' });
+              } catch { /* versão do VexFlow pode não suportar */ }
+            });
+          }
+
+          // Criar e desenhar os beams em grupos
+          for (let bi = 0; bi < beamable.length; bi += beamSize) {
+            const group = beamable.slice(bi, bi + beamSize);
+            if (group.length >= 2) {
+              try {
+                const beam = new Beam(group);
+                beam.setContext(context).draw();
+              } catch { /* ignora */ }
+            } else if (group.length === 1) {
+              // Nota isolada: restaurar a flag
+              try {
+                (group[0] as any).setFlagStyle({ fillStyle: '', strokeStyle: '' });
+              } catch { /* ignora */ }
+            }
+          }
         } catch (e) {
           console.warn('VexFlow format/draw error (skipping measure):', e);
           x += currentStaveWidth;
