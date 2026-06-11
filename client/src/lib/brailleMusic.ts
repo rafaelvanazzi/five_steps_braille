@@ -460,7 +460,13 @@ export type ParsedElement =
   | ParsedQuialtera
   | ParsedRepetition
   | ParsedArticulation
-  | ParsedHand;
+  | ParsedHand
+  | { type: 'hand'; hand: 'right' | 'left'; sourceIndex: number }
+  | { type: 'dynamic'; name: string; sourceIndex: number }
+  | { type: 'ornament'; name: string; sourceIndex: number }
+  | { type: 'articulation'; name: string; sourceIndex: number }
+  | { type: 'quialtera'; name: string; sourceIndex: number }
+  | { type: 'repetition'; name: string; sourceIndex: number };
 
 export interface ParseResult {
   elements: ParsedElement[];
@@ -831,12 +837,12 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
       if (tk.kind === 'acc') { pendingAccidental = (tk as any).val; continue; }
       if (tk.kind === 'staccato') { pendingStaccato = true; continue; }
       if (tk.kind === 'fermata')       { elements.push({ type: 'fermata',     sourceIndex: (tk as any).idx }); continue; }
-      if (tk.kind === 'hand')          { elements.push({ type: 'hand', hand: (tk as any).hand, sourceIndex: (tk as any).idx }); continue; }
-      if (tk.kind === 'dynamic')       { elements.push({ type: 'dynamic', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
-      if (tk.kind === 'ornament')      { elements.push({ type: 'ornament', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
-      if (tk.kind === 'articulation')  { elements.push({ type: 'articulation', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
-      if (tk.kind === 'quialtera')     { elements.push({ type: 'quialtera', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
-      if (tk.kind === 'repetition')    { elements.push({ type: 'repetition', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
+      if ((tk as any).kind === 'hand')          { elements.push({ type: 'hand', hand: (tk as any).hand, sourceIndex: (tk as any).idx }); continue; }
+      if ((tk as any).kind === 'dynamic')       { elements.push({ type: 'dynamic', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
+      if ((tk as any).kind === 'ornament')      { elements.push({ type: 'ornament', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
+      if ((tk as any).kind === 'articulation')  { elements.push({ type: 'articulation', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
+      if ((tk as any).kind === 'quialtera')     { elements.push({ type: 'quialtera', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
+      if ((tk as any).kind === 'repetition')    { elements.push({ type: 'repetition', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
       if (tk.kind === 'slur')          { elements.push({ type: 'slur', slurType: (tk as any).slurType, sourceIndex: (tk as any).idx }); continue; }
       if (tk.kind === 'tie')     { elements.push({ type: 'tie', sourceIndex: (tk as any).idx }); continue; }
       if (tk.kind === 'phrase')  { elements.push({ type: 'phrase', phraseType: (tk as any).phraseType, sourceIndex: (tk as any).idx }); continue; }

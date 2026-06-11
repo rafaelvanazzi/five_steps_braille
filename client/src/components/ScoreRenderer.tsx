@@ -243,7 +243,7 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
       // intervalos são consumidos junto com a nota anterior (acorde)
       // dinâmica, ornamentos, etc. são ignorados na renderização VexFlow por enquanto
       const measureNotes = measure.notes.filter(n =>
-        n.type === 'note' || n.type === 'rest' || n.type === 'interval'
+        n.type === 'note' || n.type === 'rest'
       );
       const extraW = i === 0 ? (80 + (keySignature ? 40 : 0)) : 0; // Extra space for clef + key sig + time signature
       const notesWidth = measureNotes.reduce((sum, n) => sum + getNoteWidth(n), 0);
@@ -271,7 +271,7 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
       // intervalos são consumidos junto com a nota anterior (acorde)
       // dinâmica, ornamentos, etc. são ignorados na renderização VexFlow por enquanto
       const measureNotes = measure.notes.filter(n =>
-        n.type === 'note' || n.type === 'rest' || n.type === 'interval'
+        n.type === 'note' || n.type === 'rest'
       );
       const isFirst = i === 0;
 
@@ -346,7 +346,7 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
           // Coletar intervalos consecutivos após esta nota
           for (let intIdx = noteIdx + 1; intIdx < measureNotes.length; intIdx++) {
             const nextEl = measureNotes[intIdx];
-            if (nextEl.type === 'interval') {
+            if ((nextEl as any).type === 'interval') {
               const size = (nextEl as any).intervalSize as number;
               const pitchOrder = ['C','D','E','F','G','A','B'] as const;
               const basePitchIdx = pitchOrder.indexOf(el.pitch as any);
