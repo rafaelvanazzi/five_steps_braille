@@ -430,49 +430,38 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
       // Format and draw (only if there are notes)
       if (vexNotes.length > 0) {
         try {
-          const formatter = new Formatter();
-          formatter.joinVoices([voice]).format([voice], currentStaveWidth - 20);
-          voice.draw(context, stave);
-
-          // Beaming: agrupar colcheias/fusas
-          // Estratégia: esconder a flag individual via setFlagStyle transparent,
-          // depois desenhar o Beam (barra unida) por cima
+          // Beaming: CRIAR os beams ANTES do draw
+          // O VexFlow só omite a flag individual quando note.beam !== null
+          // portanto o Beam deve ser criado antes de voice.draw()
           const isCompound = timeSignature.denominator === 8 &&
             [6, 9, 12].includes(timeSignature.numerator);
           const beamSize = isCompound ? 3 : 2;
 
-          // Coletar notas beamáveis
           const beamable = vexNotes.filter(n => {
             const dur = (n as any).duration;
             return ['8','16','32','64'].includes(dur);
           });
 
-          // Esconder flags individuais das notas que serão agrupadas
-          // (só esconde se houver ao menos 2 notas para formar beam)
-          if (beamable.length >= 2) {
-            beamable.forEach(note => {
-              try {
-                // Esconder a flag individual — o Beam desenha a barra unida
-                (note as any).setFlagStyle({ fillStyle: 'none', strokeStyle: 'none' });
-              } catch { /* versão do VexFlow pode não suportar */ }
-            });
-          }
-
-          // Criar e desenhar os beams em grupos
+          const beams: Beam[] = [];
           for (let bi = 0; bi < beamable.length; bi += beamSize) {
             const group = beamable.slice(bi, bi + beamSize);
             if (group.length >= 2) {
               try {
-                const beam = new Beam(group);
-                beam.setContext(context).draw();
-              } catch { /* ignora */ }
-            } else if (group.length === 1) {
-              // Nota isolada: restaurar a flag
-              try {
-                (group[0] as any).setFlagStyle({ fillStyle: '', strokeStyle: '' });
+                beams.push(new Beam(group)); // associa beam às notas ANTES do draw
               } catch { /* ignora */ }
             }
           }
+
+          // Format e draw — notas dentro de Beams não terão flag individual
+          const formatter = new Formatter();
+          formatter.joinVoices([voice]).format([voice], currentStaveWidth - 20);
+          voice.draw(context, stave);
+
+          // Desenhar as barras de beam após o voice.draw()
+          beams.forEach(b => {
+            try { b.setContext(context).draw(); } catch { /* ignora */ }
+          });
+
         } catch (e) {
           console.warn('VexFlow format/draw error (skipping measure):', e);
           x += currentStaveWidth;
