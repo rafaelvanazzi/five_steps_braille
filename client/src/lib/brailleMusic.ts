@@ -217,7 +217,7 @@ const MUSICAL_HYPHEN = '\u2810'; // ⠐ (5) — ATENÇÃO: mesmo que oitava 4 �
 // ─── CLAVES ────────────────────────────────────────────────────────────────────
 const CLEF_SOL_2 = '\u281C\u280C\u2807'; // ⠜⠌⠇ (3,4,5)+(3,4)+(1,2,3) — Clave de Sol 2ª linha
 const CLEF_FA_4  = '\u281C\u283C\u2807'; // ⠜⠼⠇ (3,4,5)+(3,4,5,6)+(1,2,3) — Clave de Fá 4ª linha
-const CLEF_DO_4  = '\u281C\u282C\u2810\u2807'; // ⠜⠬⠐⠇ (3,4,5)+(3,4,6)+(5)+(1,2,3) — Clave de Dó 4ª linha (violoncelo)
+const CLEF_DO_3  = '\u281C\u282C\u2807'; // ⠜⠬⠇ (3,4,5)+(3,4,6)+(1,2,3) — Clave de Dó 3ª linha
 
 // ─── MÃO DIREITA / ESQUERDA ────────────────────────────────────────────────────
 const HAND_RIGHT = '\u2828\u281C'; // ⠨⠜ (4,6)+(3,4,5) — mão direita → clave de sol
@@ -367,7 +367,7 @@ export interface ParsedInterval {
 
 export interface ParsedClef {
   type: 'clef';
-  clefType: 'treble' | 'bass' | 'tenor';
+  clefType: 'treble' | 'bass';
   sourceIndex: number;
 }
 
@@ -460,13 +460,7 @@ export type ParsedElement =
   | ParsedQuialtera
   | ParsedRepetition
   | ParsedArticulation
-  | ParsedHand
-  | { type: 'hand'; hand: 'right' | 'left'; sourceIndex: number }
-  | { type: 'dynamic'; name: string; sourceIndex: number }
-  | { type: 'ornament'; name: string; sourceIndex: number }
-  | { type: 'articulation'; name: string; sourceIndex: number }
-  | { type: 'quialtera'; name: string; sourceIndex: number }
-  | { type: 'repetition'; name: string; sourceIndex: number };
+  | ParsedHand;
 
 export interface ParseResult {
   elements: ParsedElement[];
@@ -648,7 +642,7 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
     | { kind: 'phrase'; phraseType: 'start' | 'end'; idx: number }
     | { kind: 'ts'; numerator: number; denominator: number; idx: number }
     | { kind: 'ks'; fifths: number; vexKey: string; idx: number }
-    | { kind: 'clef'; clefType: 'treble' | 'bass' | 'tenor'; idx: number }
+    | { kind: 'clef'; clefType: 'treble' | 'bass'; idx: number }
     | { kind: 'interval'; intervalSize: number; idx: number };
 
   type RawMeasure = { tokens: RawToken[]; barlineType: string };
@@ -658,7 +652,7 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
   let i = 0;
   const len = input.length;
 
-  let musicStarted = false; // controla se alguma nota/pausa já foi encontrada
+  let musicStarted = false; // espaços antes da primeira nota são ignorados
 
   while (i < len) {
     const ch  = input[i];
@@ -671,11 +665,11 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
     // Espaço = barra de compasso simples
     if (ch === ' ' || ch === '\u2800') {
       if (musicStarted) {
-        // Espaço após música = barra de compasso
+        // Espaço após a música = barra de compasso
         measures.push({ tokens: curTokens, barlineType: 'single' });
         curTokens = [];
       }
-      // Espaço antes da música (armadura, compasso): ignorar silenciosamente
+      // Espaço antes da música (armadura, TS): ignorar silenciosamente
       i++; continue;
     }
 
@@ -728,14 +722,13 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
       if (ks3) { curTokens.push({ kind: 'ks', fifths: ks3.fifths, vexKey: ks3.vexKey, idx: i }); i += 3; continue; }
     }
 
+    // Fórmulas C (⠨⠉) e C-cortado (⠸⠉) — ANTES de claves (⠸ e ⠨ são também oitavas)
+    if (two === '⠨⠉') { curTokens.push({ kind: 'ts', num: 4, den: 4, abbreviated: 'C',  idx: i }); beatsPerMeasure = 4; i += 2; continue; }
+    if (two === '⠸⠉') { curTokens.push({ kind: 'ts', num: 2, den: 2, abbreviated: 'C|', idx: i }); beatsPerMeasure = 2; i += 2; continue; }
+
     // Claves
     if (three === CLEF_TREBLE) { curTokens.push({ kind: 'clef', clefType: 'treble', idx: i }); i += 3; continue; }
     if (three === CLEF_BASS)   { curTokens.push({ kind: 'clef', clefType: 'bass',   idx: i }); i += 3; continue; }
-    // Clave de Dó 4ª linha (violoncelo) — 4 células — verificar four antes
-    {
-      const fourChars = input.substring(i, i + 4);
-      if (fourChars === CLEF_DO_4) { curTokens.push({ kind: 'clef', clefType: 'tenor', idx: i }); i += 4; continue; }
-    }
 
     // Staccato ⠦
     if (ch === STACCATO) { curTokens.push({ kind: 'staccato', idx: i }); i++; continue; }
@@ -835,7 +828,7 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
 
     for (const tk of measure.tokens) {
       if (tk.kind === 'ts') {
-        elements.push({ type: 'timesignature', numerator: (tk as any).numerator, denominator: (tk as any).denominator, sourceIndex: (tk as any).idx });
+        elements.push({ type: 'timesignature', _abbreviated: (tk as any).abbreviated, numerator: (tk as any).num ?? (tk as any).numerator, denominator: (tk as any).den ?? (tk as any).denominator, sourceIndex: (tk as any).idx });
         beatsPerMeasure = (tk as any).numerator;
         inNoteContext = false; continue;
       }
@@ -851,12 +844,12 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
       if (tk.kind === 'acc') { pendingAccidental = (tk as any).val; continue; }
       if (tk.kind === 'staccato') { pendingStaccato = true; continue; }
       if (tk.kind === 'fermata')       { elements.push({ type: 'fermata',     sourceIndex: (tk as any).idx }); continue; }
-      if ((tk as any).kind === 'hand')          { elements.push({ type: 'hand', hand: (tk as any).hand, sourceIndex: (tk as any).idx }); continue; }
-      if ((tk as any).kind === 'dynamic')       { elements.push({ type: 'dynamic', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
-      if ((tk as any).kind === 'ornament')      { elements.push({ type: 'ornament', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
-      if ((tk as any).kind === 'articulation')  { elements.push({ type: 'articulation', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
-      if ((tk as any).kind === 'quialtera')     { elements.push({ type: 'quialtera', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
-      if ((tk as any).kind === 'repetition')    { elements.push({ type: 'repetition', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
+      if (tk.kind === 'hand')          { elements.push({ type: 'hand', hand: (tk as any).hand, sourceIndex: (tk as any).idx }); continue; }
+      if (tk.kind === 'dynamic')       { elements.push({ type: 'dynamic', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
+      if (tk.kind === 'ornament')      { elements.push({ type: 'ornament', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
+      if (tk.kind === 'articulation')  { elements.push({ type: 'articulation', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
+      if (tk.kind === 'quialtera')     { elements.push({ type: 'quialtera', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
+      if (tk.kind === 'repetition')    { elements.push({ type: 'repetition', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
       if (tk.kind === 'slur')          { elements.push({ type: 'slur', slurType: (tk as any).slurType, sourceIndex: (tk as any).idx }); continue; }
       if (tk.kind === 'tie')     { elements.push({ type: 'tie', sourceIndex: (tk as any).idx }); continue; }
       if (tk.kind === 'phrase')  { elements.push({ type: 'phrase', phraseType: (tk as any).phraseType, sourceIndex: (tk as any).idx }); continue; }
@@ -1031,7 +1024,7 @@ export function getQuickReference(): QuickRefEntry[] {
     { char: '\u2838\u2809',       desc: 'C cortado — 2/2' },
   ];
   commonTimeSigs.forEach(({ char, desc }) => {
-    ref.push({ char, dots: Array.from(char).map(c => unicodeToDots(c).join(',')).join(' '), description: desc, category: 'timesig' });
+    ref.push({ char, dots: [...char].map(c => unicodeToDots(c).join(',')).join(' '), description: desc, category: 'timesig' });
   });
 
   // Barras
@@ -1040,7 +1033,7 @@ export function getQuickReference(): QuickRefEntry[] {
     'repeat-begin': 'Ritornelo início', 'repeat-end': 'Ritornelo fim', dotted: 'Barra pontilhada',
   };
   Object.entries(BARLINE_TWO_CELL).forEach(([char, type]) => {
-    ref.push({ char, dots: Array.from(char).map(c => unicodeToDots(c).join(',')).join(' '), description: barDescs[type] ?? type, category: 'barline' });
+    ref.push({ char, dots: [...char].map(c => unicodeToDots(c).join(',')).join(' '), description: barDescs[type] ?? type, category: 'barline' });
   });
 
   // Intervalos
@@ -1107,7 +1100,7 @@ export function getQuickReference(): QuickRefEntry[] {
   // Claves
   ref.push({ char: CLEF_SOL_2,                        dots: '3,4,5 3,4 1,2,3',       description: 'Clave de Sol',      category: 'clave' });
   ref.push({ char: CLEF_FA_4,                         dots: '3,4,5 3,4,5,6 1,2,3',   description: 'Clave de Fá',       category: 'clave' });
-  ref.push({ char: CLEF_DO_4,                         dots: '3,4,5 3,4,6 5 1,2,3',   description: 'Clave de Dó (4ª linha — violoncelo)', category: 'clave' });
+  ref.push({ char: CLEF_DO_3,                         dots: '3,4,5 3,4,6 1,2,3',     description: 'Clave de Dó',       category: 'clave' });
   ref.push({ char: HAND_RIGHT,                        dots: '4,6 3,4,5',              description: 'Mão direita',       category: 'clave' });
   ref.push({ char: HAND_LEFT,                         dots: '4,5,6 3,4,5',            description: 'Mão esquerda',      category: 'clave' });
 
