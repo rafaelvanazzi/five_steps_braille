@@ -147,27 +147,28 @@ function PerkinsKeyboard({
 
 function QuickReferencePanel({ onInsert }: { onInsert: (char: string) => void }) {
   const ref = useMemo(() => getQuickReference(), []);
-  const [filter, setFilter] = useState<string>("all");
+  const [filter, setFilter] = useState<string>("note-whole");
 
   const categories = [
-    { key: "all", label: "Todos" },
-    { key: "note-whole", label: "Semibreves" },
-    { key: "note-16th-forced", label: "Semicolcheias" },
-    { key: "note-half", label: "Mínimas" },
-    { key: "note-32nd-forced", label: "Fusas" },
-    { key: "note-quarter", label: "Semínimas" },
-    { key: "note-64th", label: "Semifusas" },
-    { key: "note-eighth", label: "Colcheias" },
-    { key: "note-128th", label: "Quartifusas" },
-    { key: "rest", label: "Pausas" },
-    { key: "octave", label: "Oitavas" },
-    { key: "accidental", label: "Alterações" },
-    { key: "timesig", label: "Fórmulas" },
-    { key: "barline", label: "Barras" },
-    { key: "interval", label: "Intervalos" },
-    { key: "ligadura", label: "Ligaduras" },
-    { key: "articulacao", label: "Articulação" },
-    { key: "other", label: "Outros" },
+    { key: "note-whole",   label: "Semibreve / Semicolcheia" },
+    { key: "note-half",    label: "Mínima / Fusa" },
+    { key: "note-quarter", label: "Semínima / Semifusa" },
+    { key: "note-eighth",  label: "Colcheia / Quartifusa" },
+    { key: "rest",         label: "Pausas" },
+    { key: "octave",       label: "Oitavas" },
+    { key: "accidental",   label: "Alterações" },
+    { key: "armadura",     label: "Armaduras" },
+    { key: "timesig",      label: "Compassos" },
+    { key: "barline",      label: "Barras" },
+    { key: "interval",     label: "Intervalos" },
+    { key: "ligadura",     label: "Ligaduras" },
+    { key: "articulacao",  label: "Articulação" },
+    { key: "dinamica",     label: "Dinâmica" },
+    { key: "ornamento",    label: "Ornamentos" },
+    { key: "quialtera",    label: "Quiálteras" },
+    { key: "repeticao",    label: "Repetição" },
+    { key: "clave",        label: "Claves / Mãos" },
+    { key: "other",        label: "Outros" },
   ];
 
   const filtered = filter === "all" ? ref : ref.filter((e) => e.category === filter);

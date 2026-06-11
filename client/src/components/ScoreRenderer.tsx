@@ -185,6 +185,28 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
     return keySigEl?.vexKey || null;
   }, [elements]);
 
+  // Detectar clave ativa: mão esquerda/clave de fá → bass; caso contrário → treble
+  // Regra: mão direita = clave de sol (treble), mão esquerda = clave de fá (bass)
+  const activeClef = useMemo(() => {
+    for (const el of elements) {
+      if (el.type === 'hand') return (el as any).hand === 'left' ? 'bass' : 'treble';
+      if (el.type === 'clef') {
+        const clefType = (el as any).clefType;
+        if (clefType === 'bass') return 'bass';
+        if (clefType === 'alto') return 'alto';
+        return 'treble';
+      }
+      // Se já chegou a uma nota, parar de procurar
+      if (el.type === 'note') break;
+    }
+    return 'treble'; // padrão: clave de sol
+  }, [elements]);
+
+  // Intervalos: direção depende da clave
+  // Clave de sol (treble) → intervalos descendentes (nota principal = mais aguda)
+  // Clave de fá (bass)    → intervalos ascendentes  (nota principal = mais grave)
+  const intervalDirection = activeClef === 'bass' ? 'ascending' : 'descending';
+
   // Group elements into measures
   const measures = useMemo(() => groupIntoMeasures(elements), [elements]);
 
@@ -218,7 +240,11 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
 
     for (let i = 0; i < measures.length; i++) {
       const measure = measures[i];
-      const measureNotes = measure.notes.filter(n => n.type === 'note' || n.type === 'rest');
+      // intervalos são consumidos junto com a nota anterior (acorde)
+      // dinâmica, ornamentos, etc. são ignorados na renderização VexFlow por enquanto
+      const measureNotes = measure.notes.filter(n =>
+        n.type === 'note' || n.type === 'rest' || n.type === 'interval'
+      );
       const extraW = i === 0 ? (80 + (keySignature ? 40 : 0)) : 0; // Extra space for clef + key sig + time signature
       const notesWidth = measureNotes.reduce((sum, n) => sum + getNoteWidth(n), 0);
       const staveW = Math.max(minStaveWidth, notesWidth + extraW + 40); // +40 for padding
@@ -242,7 +268,11 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
     try {
     for (let i = 0; i < measures.length; i++) {
       const measure = measures[i];
-      const measureNotes = measure.notes.filter(n => n.type === 'note' || n.type === 'rest');
+      // intervalos são consumidos junto com a nota anterior (acorde)
+      // dinâmica, ornamentos, etc. são ignorados na renderização VexFlow por enquanto
+      const measureNotes = measure.notes.filter(n =>
+        n.type === 'note' || n.type === 'rest' || n.type === 'interval'
+      );
       const isFirst = i === 0;
 
       // Calculate stave width dynamically based on note durations
@@ -255,7 +285,7 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
       // Create stave
       const stave = new Stave(x, y, currentStaveWidth);
       if (isFirst) {
-        stave.addClef('treble');
+        stave.addClef(activeClef);
         // Add key signature if present (validate before passing to VexFlow)
         if (keySignature) {
           const validKeys = ['C','G','D','A','E','B','F#','C#','F','Bb','Eb','Ab','Db','Gb','Cb'];
@@ -290,8 +320,12 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
 
       stave.setContext(context).draw();
 
+      // Não renderizar compassos completamente vazios (antes da melodia)
       if (measureNotes.length === 0) {
-        x += currentStaveWidth;
+        // Ainda assim avança x só se não for o primeiro compasso ou se houver armadura/compasso
+        if (!isFirst || (!keySignature && timeSignature.numerator === 4)) {
+          x += currentStaveWidth;
+        }
         continue;
       }
 
@@ -304,10 +338,45 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
 
       for (const el of measureNotes) {
         if (el.type === 'note') {
+          // Verificar se a próxima nota é um intervalo e construir acorde
+          const noteIdx = measureNotes.indexOf(el);
+          const intervalKeys: string[] = [noteToVexKey(el)];
+          let skipCount = 0;
+
+          // Coletar intervalos consecutivos após esta nota
+          for (let intIdx = noteIdx + 1; intIdx < measureNotes.length; intIdx++) {
+            const nextEl = measureNotes[intIdx];
+            if (nextEl.type === 'interval') {
+              const size = (nextEl as any).intervalSize as number;
+              const pitchOrder = ['C','D','E','F','G','A','B'] as const;
+              const basePitchIdx = pitchOrder.indexOf(el.pitch as any);
+              if (basePitchIdx !== -1) {
+                // Direção: descendente (treble) = subtraímos; ascendente (bass) = somamos
+                const direction = intervalDirection === 'descending' ? -1 : 1;
+                const steps = (size - 1) * direction;
+                const newPitchIdx = ((basePitchIdx + steps) % 7 + 7) % 7;
+                const newPitch = pitchOrder[newPitchIdx];
+                // Calcular oitava
+                let newOctave = el.octave;
+                if (direction === -1) {
+                  const rawIdx = basePitchIdx + steps;
+                  if (rawIdx < 0) newOctave = el.octave - Math.ceil(Math.abs(rawIdx) / 7);
+                } else {
+                  const rawIdx = basePitchIdx + steps;
+                  if (rawIdx >= 7) newOctave = el.octave + Math.floor(rawIdx / 7);
+                }
+                intervalKeys.push(`${newPitch.toLowerCase()}/${newOctave}`);
+                skipCount++;
+              }
+            } else {
+              break; // parar ao encontrar elemento que não é intervalo
+            }
+          }
+
           const vexNote = new StaveNote({
-            keys: [noteToVexKey(el)],
+            keys: intervalKeys,
             duration: noteToVexDuration(el),
-            clef: 'treble',
+            clef: activeClef,
           });
 
           // Add accidental if present (convert from parser format to VexFlow format)
@@ -325,9 +394,9 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
         } else if (el.type === 'rest') {
           const restDur = noteToVexDuration(el) + 'r';
           const vexRest = new StaveNote({
-            keys: ['b/4'],
+            keys: [activeClef === 'bass' ? 'd/3' : 'b/4'],
             duration: restDur,
-            clef: 'treble',
+            clef: activeClef,
           });
 
           // Add dot to rest if present
