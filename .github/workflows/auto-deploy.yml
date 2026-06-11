@@ -1,0 +1,16 @@
+name: Auto Deploy to Manus
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Manus Deploy
+        run: |
+          curl -s -X POST \
+            "https://api.manus.im/webdev/github-webhook" \
+            -H "Content-Type: application/json" \
+            -d '{"ref":"refs/heads/main","repository":{"full_name":"rafaelvanazzi/five_steps_braille"}}'
