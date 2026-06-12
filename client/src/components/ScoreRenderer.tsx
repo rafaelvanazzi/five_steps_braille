@@ -248,7 +248,18 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
       const measureNotes = measure.notes.filter(n =>
         n.type === 'note' || n.type === 'rest' || n.type === 'interval'
       );
-      const extraW = i === 0 ? (80 + (keySignature ? 40 : 0)) : 0; // Extra space for clef + key sig + time signature
+      // Calcular espaço real ocupado no primeiro compasso:
+      // Clave (~30px) + armadura (12px por acidente) + compasso (~20px) + margem
+      const ksAccidentals = keySignature ? Math.abs(
+        ['C','G','D','A','E','B','F#','C#'].indexOf(keySignature) !== -1
+          ? ['C','G','D','A','E','B','F#','C#'].indexOf(keySignature)
+          : (['F','Bb','Eb','Ab','Db','Gb','Cb'].indexOf(keySignature) + 1)
+      ) : 0;
+      // Espaço real do VexFlow no 1º compasso:
+      // Clave (~36px) + por acidente (~18px) + padding (~10px) + TS (~26px) + margem (~16px)
+      const extraW = i === 0
+        ? (36 + ksAccidentals * 18 + 10 + (timeSignatureEl ? 26 : 0) + 16)
+        : 0;
       const notesWidth = measureNotes.reduce((sum, n) => sum + getNoteWidth(n), 0);
       const staveW = Math.max(minStaveWidth, notesWidth + extraW + 40); // +40 for padding
 
@@ -280,9 +291,19 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
 
       // Calculate stave width dynamically based on note durations
       // Add extra space for first measure (clef + time signature take ~80px)
-      const extraWidth = isFirst ? (80 + (keySignature ? 40 : 0)) : 0;
+      // Espaço real do primeiro compasso: clave + armadura (por acidente) + compasso + margem
+      const ksCount = keySignature ? Math.abs(
+        ['C','G','D','A','E','B','F#','C#'].indexOf(keySignature) !== -1
+          ? ['C','G','D','A','E','B','F#','C#'].indexOf(keySignature)
+          : (['F','Bb','Eb','Ab','Db','Gb','Cb'].indexOf(keySignature) + 1)
+      ) : 0;
+      // Espaço real do VexFlow no 1º compasso:
+      // Clave (~36px) + por acidente (~18px) + padding (~10px) + TS (~26px) + margem (~16px)
+      const extraWidth = isFirst
+        ? (36 + ksCount * 18 + 10 + (timeSignatureEl ? 26 : 0) + 16)
+        : 0;
       const notesWidth = measureNotes.reduce((sum, n) => sum + getNoteWidth(n), 0);
-      const currentStaveWidth = Math.max(minStaveWidth, notesWidth + extraWidth + 40); // +40 for padding
+      const currentStaveWidth = Math.max(minStaveWidth, notesWidth + extraWidth + 40);
 
       // All measures in one line - no wrapping
       // Create stave
@@ -454,7 +475,9 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
 
           // Format e draw — notas dentro de Beams não terão flag individual
           const formatter = new Formatter();
-          formatter.joinVoices([voice]).format([voice], currentStaveWidth - 20);
+          // Espaço disponível para as notas = largura total menos o espaço do cabeçalho
+          const notesArea = currentStaveWidth - extraWidth - 10;
+          formatter.joinVoices([voice]).format([voice], Math.max(notesArea, 60));
           voice.draw(context, stave);
 
           // Desenhar as barras de beam após o voice.draw()
