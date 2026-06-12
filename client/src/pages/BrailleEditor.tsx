@@ -4,6 +4,7 @@ import { trpc } from "@/lib/trpc";
 import { getLoginUrl } from "@/const";
 import SiteLayout from "@/components/SiteLayout";
 import ScoreRenderer from "@/components/ScoreRenderer";
+import { playScore, stopScore, setBpm } from "@/lib/scoreAudioPlayer";
 import {
   parseBrailleMusic,
   parseBrailleLine,
@@ -236,6 +237,9 @@ export default function BrailleEditor() {
   const [showProjects, setShowProjects] = useState(true);
   const [parsedElements, setParsedElements] = useState<ParsedElement[]>([]);
   const [saveStatus, setSaveStatus] = useState<"saved" | "saving" | "unsaved">("saved");
+  // Player
+  const [playbackEnabled, setPlaybackEnabled] = useState(false); // opção: habilitar tocar
+  const [isPlaying, setIsPlaying] = useState(false);
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [scoreWidth, setScoreWidth] = useState(800);
   const scoreContainerRef = useRef<HTMLDivElement>(null);
@@ -341,6 +345,28 @@ export default function BrailleEditor() {
 
   // ── Salvamento MANUAL (não auto-save) ──────────────────────────────────────
   // Salva quando o usuário clicar em Salvar ou ao sair da tela
+  // ── Player ────────────────────────────────────────────────────────────────
+  const handleStop = useCallback(() => {
+    stopScore();
+    setIsPlaying(false);
+  }, []);
+
+  const handlePlay = useCallback(() => {
+    if (!playbackEnabled || parsedElements.length === 0) return;
+    if (isPlaying) { handleStop(); return; }
+    setBpm(120);
+    playScore(parsedElements, 120, () => {
+      setIsPlaying(false);
+    });
+    setIsPlaying(true);
+  }, [playbackEnabled, parsedElements, isPlaying, handleStop]);
+
+  // Parar ao desabilitar o player
+  const togglePlayback = useCallback(() => {
+    if (playbackEnabled) handleStop();
+    setPlaybackEnabled(prev => !prev);
+  }, [playbackEnabled, handleStop]);
+
   const handleSave = useCallback(() => {
     if (!currentProjectId) return;
     setSaveStatus("saving");
@@ -894,6 +920,34 @@ export default function BrailleEditor() {
                 Salvar
               </button>
             )}
+            {/* Controles do player */}
+            <div className="flex items-center gap-1 ml-2 border-l pl-2">
+              <button
+                onClick={togglePlayback}
+                className={`text-xs px-2 py-0.5 rounded-md border transition-colors ${
+                  playbackEnabled
+                    ? "bg-green-600 text-white border-green-600"
+                    : "border-border text-muted-foreground hover:text-foreground"
+                }`}
+                title={playbackEnabled ? "Desabilitar player" : "Habilitar player"}
+              >
+                {playbackEnabled ? "🔊 Player ON" : "🔇 Player OFF"}
+              </button>
+              {playbackEnabled && (
+                <button
+                  onClick={handlePlay}
+                  disabled={parsedElements.length === 0}
+                  className={`text-xs px-2 py-0.5 rounded-md transition-colors ${
+                    isPlaying
+                      ? "bg-red-500 text-white hover:bg-red-600"
+                      : "bg-primary text-primary-foreground hover:opacity-90"
+                  } disabled:opacity-40`}
+                  title={isPlaying ? "Parar" : "Tocar partitura (1x)"}
+                >
+                  {isPlaying ? "⏹ Parar" : "▶ Tocar"}
+                </button>
+              )}
+            </div>
           </div>
           <div className="flex items-center gap-1.5 flex-wrap">
             {/* Time signature selector */}
