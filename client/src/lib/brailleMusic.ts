@@ -736,8 +736,8 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
     }
 
     // Fórmulas C (⠨⠉) e C-cortado (⠸⠉) — ANTES de claves (⠸ e ⠨ são também oitavas)
-    if (two === '⠨⠉') { curTokens.push({ kind: 'ts', num: 4, den: 4, abbreviated: 'C',  idx: i }); beatsPerMeasure = 4; i += 2; continue; }
-    if (two === '⠸⠉') { curTokens.push({ kind: 'ts', num: 2, den: 2, abbreviated: 'C|', idx: i }); beatsPerMeasure = 2; i += 2; continue; }
+    if (two === '⠨⠉') { curTokens.push({ kind: 'ts', numerator: 4, denominator: 4, idx: i }); beatsPerMeasure = 4; i += 2; continue; }
+    if (two === '⠸⠉') { curTokens.push({ kind: 'ts', numerator: 2, denominator: 2, idx: i }); beatsPerMeasure = 2; i += 2; continue; }
 
     // Claves
     if (three === CLEF_TREBLE) { curTokens.push({ kind: 'clef', clefType: 'treble', idx: i }); i += 3; continue; }
@@ -857,12 +857,12 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
       if (tk.kind === 'acc') { pendingAccidental = (tk as any).val; continue; }
       if (tk.kind === 'staccato') { pendingStaccato = true; continue; }
       if (tk.kind === 'fermata')       { elements.push({ type: 'fermata',     sourceIndex: (tk as any).idx }); continue; }
-      if (tk.kind === 'hand')          { elements.push({ type: 'hand', hand: (tk as any).hand, sourceIndex: (tk as any).idx }); continue; }
-      if (tk.kind === 'dynamic')       { elements.push({ type: 'dynamic', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
-      if (tk.kind === 'ornament')      { elements.push({ type: 'ornament', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
-      if (tk.kind === 'articulation')  { elements.push({ type: 'articulation', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
-      if (tk.kind === 'quialtera')     { elements.push({ type: 'quialtera', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
-      if (tk.kind === 'repetition')    { elements.push({ type: 'repetition', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
+      if ((tk as any).kind === 'hand')          { elements.push({ type: 'hand', hand: (tk as any).hand, sourceIndex: (tk as any).idx }); continue; }
+      if ((tk as any).kind === 'dynamic')       { elements.push({ type: 'dynamic', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
+      if ((tk as any).kind === 'ornament')      { elements.push({ type: 'ornament', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
+      if ((tk as any).kind === 'articulation')  { elements.push({ type: 'articulation', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
+      if ((tk as any).kind === 'quialtera')     { elements.push({ type: 'quialtera', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
+      if ((tk as any).kind === 'repetition')    { elements.push({ type: 'repetition', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
       if (tk.kind === 'slur')          { elements.push({ type: 'slur', slurType: (tk as any).slurType, sourceIndex: (tk as any).idx }); continue; }
       if (tk.kind === 'tie')     { elements.push({ type: 'tie', sourceIndex: (tk as any).idx }); continue; }
       if (tk.kind === 'phrase')  { elements.push({ type: 'phrase', phraseType: (tk as any).phraseType, sourceIndex: (tk as any).idx }); continue; }
@@ -1071,7 +1071,7 @@ export function getQuickReference(): QuickRefEntry[] {
     { char: '\u2838\u2809',       desc: 'C cortado — 2/2' },
   ];
   commonTimeSigs.forEach(({ char, desc }) => {
-    ref.push({ char, dots: [...char].map(c => unicodeToDots(c).join(',')).join(' '), description: desc, category: 'timesig' });
+    ref.push({ char, dots: Array.from(char).map(c => unicodeToDots(c).join(',')).join(' '), description: desc, category: 'timesig' });
   });
 
   // Barras
@@ -1080,7 +1080,7 @@ export function getQuickReference(): QuickRefEntry[] {
     'repeat-begin': 'Ritornelo início', 'repeat-end': 'Ritornelo fim', dotted: 'Barra pontilhada',
   };
   Object.entries(BARLINE_TWO_CELL).forEach(([char, type]) => {
-    ref.push({ char, dots: [...char].map(c => unicodeToDots(c).join(',')).join(' '), description: barDescs[type] ?? type, category: 'barline' });
+    ref.push({ char, dots: Array.from(char).map(c => unicodeToDots(c).join(',')).join(' '), description: barDescs[type] ?? type, category: 'barline' });
   });
 
   // Intervalos

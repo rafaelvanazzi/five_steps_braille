@@ -4,7 +4,7 @@ import { trpc } from "@/lib/trpc";
 import { getLoginUrl } from "@/const";
 import SiteLayout from "@/components/SiteLayout";
 import ScoreRenderer from "@/components/ScoreRenderer";
-import { playScore, stopScore, setBpm } from "@/lib/scoreAudioPlayer";
+import { playScore, stopScore, setBpm } from "@/pages/scoreAudioPlayer";
 import {
   parseBrailleMusic,
   parseBrailleLine,
