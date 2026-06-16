@@ -248,6 +248,9 @@ export default function BrailleEditor() {
   // ── Player state ──────────────────────────────────────────────────────────
   const [isPlaying, setIsPlaying] = useState(false);
   const [playerBpm, setPlayerBpm] = useState(120);
+  // Estado local do input BPM — permite digitação fluida sem despachar setBpm() a cada tecla.
+  // O valor global (playerBpm) e o player só são atualizados ao sair do campo (onBlur/Enter).
+  const [bpmInputValue, setBpmInputValue] = useState("120");
   const [soundOnType, setSoundOnType] = useState(false); // feedback sonoro ao digitar
 
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -362,10 +365,26 @@ export default function BrailleEditor() {
   }, [parsedElements, isPlaying, playerBpm, handleStop]);
 
   // Atualiza BPM em tempo real se o player estiver tocando
-  const handleBpmChange = useCallback((newBpm: number) => {
-    const clamped = Math.max(20, Math.min(400, newBpm));
+  /** Chamado a cada tecla — atualiza apenas o valor visual do input. */
+  const handleBpmInputChange = useCallback((raw: string) => {
+    setBpmInputValue(raw);
+  }, []);
+
+  /** Chamado no onBlur e no Enter — valida, clipa e despacha para o player. */
+  const handleBpmCommit = useCallback((raw: string) => {
+    const parsed = parseInt(raw, 10);
+    const clamped = Number.isNaN(parsed) ? 120 : Math.max(20, Math.min(400, parsed));
+    setBpmInputValue(String(clamped)); // normaliza o display
     setPlayerBpm(clamped);
     setBpm(clamped); // aplica imediatamente nas próximas notas agendadas
+  }, []);
+
+  /** Mantida para compatibilidade com handlePlay (usa playerBpm). */
+  const handleBpmChange = useCallback((newBpm: number) => {
+    const clamped = Math.max(20, Math.min(400, newBpm));
+    setBpmInputValue(String(clamped));
+    setPlayerBpm(clamped);
+    setBpm(clamped);
   }, []);
 
   // Para ao desmontar
@@ -504,17 +523,29 @@ export default function BrailleEditor() {
   const insertCharAtCursor = useCallback((char: string) => {
     const textarea = brailleTextareaRef.current;
     if (textarea) {
+      // Capturar posição do cursor ANTES de qualquer atualização de estado
+      // (o React pode re-renderizar antes do requestAnimationFrame executar)
       const start = textarea.selectionStart;
-      const end = textarea.selectionEnd;
+      const end   = textarea.selectionEnd;
+      const newPos = start + char.length;
+
+      // Forçar foco imediatamente, antes do re-render, para não perder o elemento ativo
+      textarea.focus();
+
       const newContent = brailleContent.slice(0, start) + char + brailleContent.slice(end);
       syncSourceRef.current = "braille";
       setBrailleContent(newContent);
-      const newPos = start + char.length;
       setCursorPos(newPos);
       setSelectionRange(null);
+
+      // RAF apenas para reposicionar o cursor após o React confirmar o novo value
       requestAnimationFrame(() => {
-        textarea.selectionStart = textarea.selectionEnd = newPos;
-        textarea.focus();
+        if (brailleTextareaRef.current) {
+          brailleTextareaRef.current.selectionStart = newPos;
+          brailleTextareaRef.current.selectionEnd   = newPos;
+          // Segundo foco garante que nenhum re-render intermediário roubou o foco
+          brailleTextareaRef.current.focus();
+        }
       });
     } else {
       syncSourceRef.current = "braille";
@@ -965,10 +996,17 @@ export default function BrailleEditor() {
                   type="number"
                   min={20}
                   max={400}
-                  value={playerBpm}
-                  onChange={(e) => handleBpmChange(Number(e.target.value))}
+                  value={bpmInputValue}
+                  onChange={(e) => handleBpmInputChange(e.target.value)}
+                  onBlur={(e) => handleBpmCommit(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      handleBpmCommit((e.target as HTMLInputElement).value);
+                      (e.target as HTMLInputElement).blur();
+                    }
+                  }}
                   className="w-14 h-6 text-xs text-center border rounded-md bg-card focus:outline-none focus:ring-1 focus:ring-primary/50"
-                  aria-label="Andamento em BPM"
+                  aria-label="Andamento em BPM (confirme com Enter ou saindo do campo)"
                 />
               </div>
 

@@ -610,11 +610,13 @@ function tryReadTimeSignature(
 ): { numerator: number; denominator: number; advance: number } | null {
   if (input[i] !== NUMBER_SIGN) return null;
 
-  // Verificar atalhos C e C-cortado primeiro
+  // Verificar atalhos C (⠨⠉ = \u2828\u2809) e C-cortado (⠸⠉ = \u2838\u2809) primeiro
   const twoCell = input.substring(i, i + 2);
-  if (TIME_SIG_SHORTHAND[twoCell]) {
-    const ts = TIME_SIG_SHORTHAND[twoCell];
-    return { numerator: ts.numerator, denominator: ts.denominator, advance: 2 };
+  if (twoCell === '\u2828\u2809') {
+    return { numerator: 4, denominator: 4, advance: 2 };
+  }
+  if (twoCell === '\u2838\u2809') {
+    return { numerator: 2, denominator: 2, advance: 2 };
   }
 
   // Ler numerador (1 ou 2 dígitos)
@@ -653,7 +655,7 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
     | { kind: 'slur'; slurType: 'simple' | 'double'; idx: number }
     | { kind: 'tie'; idx: number }
     | { kind: 'phrase'; phraseType: 'start' | 'end'; idx: number }
-    | { kind: 'ts'; numerator: number; denominator: number; idx: number }
+    | { kind: 'ts'; numerator: number; denominator: number; abbreviated?: 'C' | 'C|'; idx: number }
     | { kind: 'ks'; fifths: number; vexKey: string; idx: number }
     | { kind: 'clef'; clefType: 'treble' | 'bass'; idx: number }
     | { kind: 'interval'; intervalSize: number; idx: number };
@@ -735,9 +737,16 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
       if (ks3) { curTokens.push({ kind: 'ks', fifths: ks3.fifths, vexKey: ks3.vexKey, idx: i }); i += 3; continue; }
     }
 
-    // Fórmulas C (⠨⠉) e C-cortado (⠸⠉) — ANTES de claves (⠸ e ⠨ são também oitavas)
-    if (two === '⠨⠉') { curTokens.push({ kind: 'ts', numerator: 4, denominator: 4, idx: i }); beatsPerMeasure = 4; i += 2; continue; }
-    if (two === '⠸⠉') { curTokens.push({ kind: 'ts', numerator: 2, denominator: 2, idx: i }); beatsPerMeasure = 2; i += 2; continue; }
+    // Fórmulas C (⠨⠉ = \u2828\u2809) e C-cortado (⠸⠉ = \u2838\u2809)
+    // ANTES de claves — ⠸ e ⠨ são também oitavas 3 e 5
+    if (two === '\u2828\u2809') {
+      curTokens.push({ kind: 'ts', numerator: 4, denominator: 4, abbreviated: 'C',  idx: i });
+      beatsPerMeasure = 4; i += 2; continue;
+    }
+    if (two === '\u2838\u2809') {
+      curTokens.push({ kind: 'ts', numerator: 2, denominator: 2, abbreviated: 'C|', idx: i });
+      beatsPerMeasure = 2; i += 2; continue;
+    }
 
     // Claves
     if (three === CLEF_TREBLE) { curTokens.push({ kind: 'clef', clefType: 'treble', idx: i }); i += 3; continue; }
@@ -841,8 +850,9 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
 
     for (const tk of measure.tokens) {
       if (tk.kind === 'ts') {
-        elements.push({ type: 'timesignature', _abbreviated: (tk as any).abbreviated, numerator: (tk as any).num ?? (tk as any).numerator, denominator: (tk as any).den ?? (tk as any).denominator, sourceIndex: (tk as any).idx });
-        beatsPerMeasure = (tk as any).num ?? (tk as any).numerator;
+        const tsTk = tk as { kind: 'ts'; numerator: number; denominator: number; abbreviated?: 'C' | 'C|'; idx: number };
+        elements.push({ type: 'timesignature', numerator: tsTk.numerator, denominator: tsTk.denominator, _abbreviated: tsTk.abbreviated, sourceIndex: tsTk.idx } as ParsedTimeSignature);
+        beatsPerMeasure = tsTk.numerator;
         inNoteContext = false; continue;
       }
       if (tk.kind === 'ks') {
