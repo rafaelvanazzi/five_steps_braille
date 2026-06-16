@@ -167,27 +167,61 @@ function figureDurationSeconds(
 
 // ─── SÍNTESE SONORA ───────────────────────────────────────────────────────────
 
-/**
- * Parâmetros do envelope ADSR do piano sintético.
- * Valores calibrados para imitar o ataque percussivo e o decaimento natural do piano.
- */
-const PIANO_ENV = {
-  attack:       0.004,  // s — tempo de ataque
-  decay:        0.09,   // s — tempo de decaimento
-  sustainLevel: 0.50,   // 0–1 — nível de sustain
-  releaseRatio: 0.20,   // fração da duração total reservada ao release
-  releaseMin:   0.06,   // s — release mínimo
-  releaseMax:   0.45,   // s — release máximo
-};
+// ─── SÍNTESE FM DE PIANO ─────────────────────────────────────────────────────
+//
+// Arquitetura de síntese aditiva com modulação FM leve:
+//
+//  MODULADOR FM
+//   └─ OscFM (sine, freq × ratioFM)
+//       └─ GainFM (profundidade de modulação)
+//           └─ frequency input do OscFundamental
+//
+//  CADEIA PRINCIPAL (por harmônico)
+//   ├─ OscFundamental (sine, freq)          — frequência fundamental
+//   ├─ Osc2 (sine, freq × 2)               — 2° harmônico (oitava)
+//   ├─ Osc3 (sine, freq × 3)               — 3° harmônico (quinta)
+//   └─ Osc4 (sine, freq × 4)               — 4° harmônico (oitava + quinta)
+//       └─ GainMaster
+//           └─ destination
+//
+// Envelope: ataque imediato (gain.setValueAtTime 0.3) →
+//           decaimento exponencial (exponentialRampToValueAtTime 0.001)
+//           ao longo da duração da nota, imitando o martelo + ressonância da corda.
 
 /**
- * Agenda a síntese de um acorde (1 ou mais frequências) no AudioContext.
- * Usa dois osciladores por frequência:
- *   - Onda triangular: corpo do som (piano médio)
- *   - Onda senoidal oitava acima: brilho harmônico (decai rápido)
+ * Tabela de amplitudes relativas de cada harmônico.
+ * Baseada na análise espectral aproximada de um piano Steinway (notas médias).
+ * Índice 0 = fundamental, 1 = 2°, 2 = 3°, 3 = 4° harmônico.
+ */
+const HARMONIC_GAINS = [1.0, 0.50, 0.25, 0.12] as const;
+
+/**
+ * Parâmetros do modulador FM.
+ * ratioFM:  frequência do modulador = fundamental × ratioFM
+ * depthFM:  desvio máximo de frequência em Hz (profundidade de modulação)
+ * decayFM:  o FM decai rapidamente após o ataque (simula o transiente do martelo)
+ */
+const FM_PARAMS = {
+  ratioFM:  2.756,  // rácio não-inteiro → aliasing interessante no ataque
+  depthFM:  14,     // Hz — inarm. leve no transiente
+  decayFM:  0.04,   // s — FM some rapidamente
+} as const;
+
+/**
+ * Agenda a síntese de um acorde de piano usando FM + síntese aditiva.
  *
- * Não bloqueia a thread principal — todos os eventos são agendados
- * com precisão via Web Audio API scheduler.
+ * Envelope de sulco (conforme especificado):
+ *   1. gain.setValueAtTime(0.3, startTime)              — ataque imediato
+ *   2. gain.exponentialRampToValueAtTime(0.001, noteOff) — decaimento ao longo da duração
+ *
+ * O decaimento exponencial imita fisicamente: a energia mecânica do martelo
+ * transmitida à corda decai de forma logarítmica com o tempo.
+ *
+ * @param ctx             — AudioContext ativo
+ * @param frequencies     — Array de frequências Hz (nota + intervalos harmônicos do acorde)
+ * @param startTime       — Timestamp Web Audio de início
+ * @param durationSeconds — Duração total da nota em segundos
+ * @param velocity        — Intensidade 0.0–1.0 (mapeia para amplitude inicial)
  */
 function scheduleChord(
   ctx: AudioContext,
@@ -196,51 +230,70 @@ function scheduleChord(
   durationSeconds: number,
   velocity = 0.72,
 ): void {
-  const env = PIANO_ENV;
-  const noteOff = startTime + durationSeconds;
-  const release = Math.min(
-    env.releaseMax,
-    Math.max(env.releaseMin, durationSeconds * env.releaseRatio),
-  );
-  const sustainEnd = noteOff - release;
+  // A duração mínima garante que o envelope exponencial não chegue a zero
+  // antes do tempo, evitando cliques e erros de valor zero no Web Audio API.
+  const safeDuration = Math.max(durationSeconds, 0.08);
+  const noteOff = startTime + safeDuration;
 
   frequencies.forEach(freq => {
     if (!Number.isFinite(freq) || freq <= 0) return;
 
-    // — Oscilador principal (corpo)
-    const osc1  = ctx.createOscillator();
-    const gain1 = ctx.createGain();
-    osc1.type = 'triangle';
-    osc1.frequency.value = freq;
+    // ── Modulador FM (martelo → transiente percussivo) ─────────────────────
+    // O FM adiciona inarmonia no instante do ataque e desaparece rapidamente,
+    // imitando a distorção de frequência quando o martelo bate na corda.
+    const oscFM  = ctx.createOscillator();
+    const gainFM = ctx.createGain();
+    oscFM.type = 'sine';
+    oscFM.frequency.value = freq * FM_PARAMS.ratioFM;
 
-    gain1.gain.setValueAtTime(0, startTime);
-    gain1.gain.linearRampToValueAtTime(velocity, startTime + env.attack);
-    gain1.gain.linearRampToValueAtTime(
-      velocity * env.sustainLevel,
-      startTime + env.attack + env.decay,
+    // Profundidade de modulação: máxima no ataque, zero em 40ms
+    gainFM.gain.setValueAtTime(FM_PARAMS.depthFM * velocity, startTime);
+    gainFM.gain.exponentialRampToValueAtTime(
+      0.001,
+      startTime + FM_PARAMS.decayFM,
     );
-    gain1.gain.setValueAtTime(velocity * env.sustainLevel, sustainEnd);
-    gain1.gain.linearRampToValueAtTime(0, noteOff);
 
-    osc1.connect(gain1);
-    gain1.connect(ctx.destination);
-    osc1.start(startTime);
-    osc1.stop(noteOff + 0.02);
+    oscFM.connect(gainFM);
+    oscFM.start(startTime);
+    oscFM.stop(startTime + FM_PARAMS.decayFM + 0.01);
 
-    // — Oscilador harmônico (brilho, decai rápido)
-    const osc2  = ctx.createOscillator();
-    const gain2 = ctx.createGain();
-    osc2.type = 'sine';
-    osc2.frequency.value = freq * 2;
+    // ── Osciladores harmônicos (corpo da nota) ─────────────────────────────
+    // Cada harmônico compartilha o mesmo GainMaster — um único envelope
+    // controla toda a cadeia, simplificando e melhorando a coerência tímbrica.
+    const gainMaster = ctx.createGain();
 
-    gain2.gain.setValueAtTime(0, startTime);
-    gain2.gain.linearRampToValueAtTime(velocity * 0.11, startTime + env.attack);
-    gain2.gain.linearRampToValueAtTime(0, startTime + env.attack + env.decay);
+    // Envelope de sulco (especificado):
+    //   Ataque imediato a 0.3 × velocity → decaimento exponencial até 0.001
+    const peakGain = 0.30 * velocity;
+    gainMaster.gain.setValueAtTime(peakGain, startTime);
+    gainMaster.gain.exponentialRampToValueAtTime(0.001, noteOff);
 
-    osc2.connect(gain2);
-    gain2.connect(ctx.destination);
-    osc2.start(startTime);
-    osc2.stop(startTime + env.attack + env.decay + 0.01);
+    gainMaster.connect(ctx.destination);
+
+    HARMONIC_GAINS.forEach((relGain, harmonicIdx) => {
+      const harmFreq = freq * (harmonicIdx + 1);
+      if (!Number.isFinite(harmFreq) || harmFreq > 20000) return; // acima de 20 kHz → inaudível
+
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.value = harmFreq;
+
+      // Conectar modulador FM apenas na fundamental (harmônico 0)
+      // — nos harmônicos superiores o FM causaria distorção excessiva
+      if (harmonicIdx === 0) {
+        gainFM.connect(osc.frequency);
+      }
+
+      // GainHarm escala cada harmônico pela sua amplitude relativa
+      const gainHarm = ctx.createGain();
+      gainHarm.gain.value = relGain;
+
+      osc.connect(gainHarm);
+      gainHarm.connect(gainMaster);
+
+      osc.start(startTime);
+      osc.stop(noteOff + 0.05); // pequena cauda para evitar clique no corte
+    });
   });
 }
 
@@ -461,5 +514,3 @@ export function playSingleNote(note: ParsedNote, durationMs = 300): void {
   }, durationMs + 200);
 }
 
-// Testes unitários movidos para scoreAudioPlayer.test.ts
-// Compatível com Vitest (configuração padrão do projeto).
