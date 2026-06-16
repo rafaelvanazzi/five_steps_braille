@@ -1,734 +1,659 @@
 /**
- * ScoreRenderer - Renders a visual music score from parsed Braille music elements.
- * Uses VexFlow to draw notes on a staff in real-time.
- * Supports: notes, rests, barlines, time signatures, accidentals, dots, slurs, ties.
- * Click on a note to jump to the corresponding Braille cell in the editor.
+ * ScoreRenderer.tsx
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Renderiza partitura visual a partir de ParsedElement[] usando VexFlow 5.
+ *
+ * Correções do Bloco 3:
+ *  1. Direção de intervalos estrita por contexto de clave:
+ *       Treble / Mão Direita → DESCENDENTE (nota base = mais aguda)
+ *       Bass   / Mão Esquerda → ASCENDENTE  (nota base = mais grave)
+ *  2. Acordes: nota base + intervalos em um ÚNICO StaveNote (array 'keys').
+ *     Acidentes de intervalo aplicados no índice exato da nota do acorde.
+ *  3. Grand staff sincronizado: Mão Direita → pauta treble, Mão Esquerda →
+ *     pauta bass, alinhadas verticalmente por StaveConnector BRACE.
  */
+
 import { useEffect, useRef, useMemo } from 'react';
-import { Renderer, Stave, StaveNote, Voice, Formatter, Accidental, Dot, Curve, Beam } from 'vexflow';
-import type { ParsedElement, ParsedNote, ParsedRest, ParsedKeySignature } from '../lib/brailleMusic';
+import {
+  Renderer,
+  Stave,
+  StaveNote,
+  StaveConnector,
+  Voice,
+  Formatter,
+  Accidental,
+  Dot,
+  Beam,
+} from 'vexflow';
+import type {
+  ParsedElement,
+  ParsedNote,
+  ParsedRest,
+  ParsedKeySignature,
+} from '../lib/brailleMusic';
+
+// ─── INTERFACES LOCAIS ────────────────────────────────────────────────────────
 
 interface ScoreRendererProps {
   elements: ParsedElement[];
   width?: number;
   height?: number;
   beatsPerMeasure?: number;
-  /** Called when user clicks a note; receives the sourceIndex of that note in the Braille text */
+  /** Chamado quando o usuário clica em uma nota — recebe sourceIndex */
   onNoteClick?: (sourceIndex: number) => void;
-  /** @deprecated Use onNoteClick instead */
+  /** @deprecated Use onNoteClick */
   onMeasureClick?: (sourceIndex: number) => void;
 }
 
-// Hit area for individual notes (for click detection)
 interface NoteHitArea {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
+  x: number; y: number; w: number; h: number;
   sourceIndex: number;
 }
 
-// Measure info including barline type
 interface MeasureInfo {
-  notes: ParsedElement[]; // inclui note, rest, interval, dynamic, ornament, etc.
+  notes: ParsedElement[];
   barlineType: 'single' | 'end' | 'repeat-begin' | 'repeat-end' | 'repeat-both';
   begBarlineType?: 'repeat-begin';
-  /** sourceIndex of the first element in this measure (for cursor sync) */
   sourceIndex?: number;
 }
 
-// Group elements into measures (split by barlines)
+// ─── CONSTANTES ───────────────────────────────────────────────────────────────
+
+const DIATONIC = ['C', 'D', 'E', 'F', 'G', 'A', 'B'] as const;
+type DiatonicPitch = typeof DIATONIC[number];
+
+const VALID_KEYS = ['C','G','D','A','E','B','F#','C#','F','Bb','Eb','Ab','Db','Gb','Cb'] as const;
+
+/** Espaço do cabeçalho (clave + armadura + TS) no primeiro compasso. */
+function firstMeasureExtra(ksCount: number, hasTS: boolean): number {
+  return 36 + ksCount * 18 + 10 + (hasTS ? 26 : 0) + 16;
+}
+
+/** Quantidade de acidentes de uma armadura de clave. */
+function ksAccidentalCount(vexKey: string | null): number {
+  if (!vexKey) return 0;
+  const sharps = ['G','D','A','E','B','F#','C#'];
+  const flats  = ['F','Bb','Eb','Ab','Db','Gb','Cb'];
+  const si = sharps.indexOf(vexKey);
+  if (si !== -1) return si + 1;
+  const fi = flats.indexOf(vexKey);
+  if (fi !== -1) return fi + 1;
+  return 0;
+}
+
+// ─── FUNÇÕES PURAS ─────────────────────────────────────────────────────────────
+
 function groupIntoMeasures(elements: ParsedElement[]): MeasureInfo[] {
   const measures: MeasureInfo[] = [];
   let current: ParsedElement[] = [];
-  let nextBegBarline: 'repeat-begin' | undefined = undefined;
-  let currentSourceIndex: number | undefined = undefined;
+  let nextBeg: 'repeat-begin' | undefined;
+  let currentSrc: number | undefined;
 
-  for (let i = 0; i < elements.length; i++) {
-    const el = elements[i];
-    
+  for (const el of elements) {
     if (el.type === 'barline') {
-      // Check if this is a repeat-begin at the start of a measure (no notes yet)
-      if ((el as any).barlineType === 'repeat-begin' && current.length === 0) {
-        // Mark for the next measure
-        nextBegBarline = 'repeat-begin';
-        continue; // Don't create a measure yet
-      }
-      
-      // For simple barlines (no type) with no notes, skip them (preserve nextBegBarline)
-      if (!(el as any).barlineType && current.length === 0) {
-        continue;
-      }
-      
-      // For other barlines, always create a measure (even if empty)
-      let barType: 'single' | 'end' | 'repeat-begin' | 'repeat-end' | 'repeat-both' = 'single';
-      if ((el as any).barlineType === 'end') {
-        barType = 'end';
-      } else if ((el as any).barlineType === 'repeat-end') {
-        barType = 'repeat-end';
-      }
-      
-      measures.push({ 
-        notes: current, 
-        barlineType: barType, 
-        begBarlineType: nextBegBarline,
-        sourceIndex: currentSourceIndex
-      });
-      current = [];
-      nextBegBarline = undefined;
-      currentSourceIndex = undefined;
-    } else if (el.type === 'note' || el.type === 'rest') {
-      // Track the sourceIndex of the first note/rest in this measure
-      if (currentSourceIndex === undefined && el.sourceIndex !== undefined) {
-        currentSourceIndex = el.sourceIndex;
+      const bt = (el as any).barlineType as string | undefined;
+      if (bt === 'repeat-begin' && current.length === 0) { nextBeg = 'repeat-begin'; continue; }
+      if (!bt && current.length === 0) continue;
+
+      let barType: MeasureInfo['barlineType'] = 'single';
+      if      (bt === 'end')          barType = 'end';
+      else if (bt === 'repeat-end')   barType = 'repeat-end';
+      else if (bt === 'repeat-begin') barType = 'repeat-begin';
+
+      measures.push({ notes: current, barlineType: barType, begBarlineType: nextBeg, sourceIndex: currentSrc });
+      current = []; nextBeg = undefined; currentSrc = undefined;
+    } else {
+      if ((el.type === 'note' || el.type === 'rest') && currentSrc === undefined) {
+        currentSrc = (el as any).sourceIndex;
       }
       current.push(el);
     }
-    // Skip timesignature and notetie elements
-  }
-  
-  if (current.length > 0 || nextBegBarline) {
-    measures.push({ 
-      notes: current, 
-      barlineType: 'single', 
-      begBarlineType: nextBegBarline,
-      sourceIndex: currentSourceIndex
-    });
   }
 
-  // Detect repeat-both: when a measure ends with repeat-end and next has repeat-begin at start
+  if (current.length > 0 || nextBeg) {
+    measures.push({ notes: current, barlineType: 'single', begBarlineType: nextBeg, sourceIndex: currentSrc });
+  }
+
+  // Detect repeat-both
   for (let i = 0; i < measures.length - 1; i++) {
     if (measures[i].barlineType === 'repeat-end' && measures[i + 1].begBarlineType === 'repeat-begin') {
       measures[i].barlineType = 'repeat-both';
-      measures[i + 1].begBarlineType = undefined; // Remove repeat-begin from next measure
+      measures[i + 1].begBarlineType = undefined;
     }
   }
-
   return measures;
 }
 
-// Convert duration to VexFlow beat value for voice
-function durationToBeats(dur: string): number {
-  const base = dur.replace('r', '').replace('d', '');
-  let beats = 0;
-  switch (base) {
-    case 'w': beats = 4; break;
-    case 'h': beats = 2; break;
-    case 'q': beats = 1; break;
-    case '8': beats = 0.5; break;
-    case '16': beats = 0.25; break;
-    case '32': beats = 0.125; break;
-    case '64': beats = 0.0625; break;
-    default: beats = 1;
-  }
-  if (dur.includes('d')) beats *= 1.5;
-  return beats;
-}
-
-/**
- * Extract a clean VexFlow key from a ParsedNote.
- * VexFlow expects keys like "c/4", "b/4" etc.
- * Accidentals are added separately via Accidental modifier.
- */
 function noteToVexKey(note: ParsedNote): string {
   return `${note.pitch.toLowerCase()}/${note.octave}`;
 }
 
-/**
- * Extract clean VexFlow duration string.
- * Removes 'd' suffix (dotted is handled by Dot.buildAndAttach).
- * Also removes 'r' suffix for rests (added separately in StaveNote creation).
- */
 function noteToVexDuration(el: ParsedNote | ParsedRest): string {
-  let dur = el.vexDuration;
-  // Remove 'd' (dotted handled by Dot.buildAndAttach)
-  dur = dur.replace('d', '');
-  // Remove 'r' suffix for rests (we add it separately when creating StaveNote)
-  dur = dur.replace('r', '');
-  return dur;
+  return el.vexDuration.replace('d', '').replace('r', '');
 }
 
-/**
- * Convert accidental type from parser format to VexFlow format.
- * Parser uses: 'sharp', 'flat', 'natural'
- * VexFlow expects: '#', 'b', 'n'
- */
 function accidentalToVex(acc: string): string {
   switch (acc) {
-    case 'sharp': return '#';
-    case 'flat': return 'b';
-    case 'natural': return 'n';
-    default: return acc;
+    case 'sharp':        return '#';
+    case 'flat':         return 'b';
+    case 'natural':      return 'n';
+    case 'double-sharp': return '##';
+    case 'double-flat':  return 'bb';
+    default:             return acc;
   }
 }
 
-export default function ScoreRenderer({ elements, width = 1000, height = 300, beatsPerMeasure = 4, onNoteClick, onMeasureClick }: ScoreRendererProps) {
+function calcNoteWidth(el: ParsedElement, base: number): number {
+  if (el.type !== 'note' && el.type !== 'rest') return 0;
+  switch ((el as ParsedNote | ParsedRest).duration) {
+    case 'w':  return base * 3;
+    case 'h':  return base * 2;
+    case 'q':  return base * 1.5;
+    case '8':  return base * 1.2;
+    case '16': return base * 0.8;
+    case '32': return base * 0.7;
+    default:   return base;
+  }
+}
+
+/**
+ * Constrói as keys VexFlow de um acorde (nota base + intervalos).
+ *
+ * REGRA MUSICAL (Manual Internacional de Musicografia Braille §1-10):
+ *   Treble / Mão Direita → DESCENDENTE: a nota base é a mais aguda;
+ *     os intervalos são contados para baixo.
+ *     Ex.: base = G4, 3ª → E4 (terça abaixo)
+ *   Bass / Mão Esquerda → ASCENDENTE: a nota base é a mais grave;
+ *     os intervalos são contados para cima.
+ *     Ex.: base = C3, 3ª → E3 (terça acima)
+ *
+ * O VexFlow exige que as keys estejam ordenadas de BAIXO para CIMA
+ * (nota mais grave primeiro). Por isso, ao final, ordenamos por MIDI.
+ *
+ * @returns keys    — array 'pitch/octave' ordenado grave→agudo
+ * @returns accMods — mapa índice-na-key → string acidente VexFlow
+ */
+function buildChordKeys(
+  baseNote: ParsedNote,
+  intervalEls: Array<{ intervalSize: number; accidental?: string; explicitOctave?: number }>,
+  direction: 'ascending' | 'descending',
+): { keys: string[]; accMods: Map<number, string> } {
+
+  const SEMITONES: Record<DiatonicPitch, number> = { C:0, D:2, E:4, F:5, G:7, A:9, B:11 };
+  const midiOf = (pitch: DiatonicPitch, octave: number) => (octave + 1) * 12 + SEMITONES[pitch];
+
+  type Entry = { pitch: DiatonicPitch; octave: number; acc?: string };
+
+  // Nota base
+  const entries: Entry[] = [{
+    pitch:  baseNote.pitch as DiatonicPitch,
+    octave: baseNote.octave,
+    acc:    baseNote.accidental ? accidentalToVex(String(baseNote.accidental)) : undefined,
+  }];
+
+  // Intervalos
+  for (const intEl of intervalEls) {
+    const size    = intEl.intervalSize; // 2..8
+    const steps   = size - 1;           // passos diatônicos
+    const baseIdx = DIATONIC.indexOf(baseNote.pitch as DiatonicPitch);
+    if (baseIdx === -1) continue;
+
+    let newPitch:  DiatonicPitch;
+    let newOctave: number;
+
+    if (intEl.explicitOctave !== undefined) {
+      // Oitava fornecida explicitamente pelo parser
+      newPitch  = DIATONIC[((baseIdx + steps) % 7 + 7) % 7];
+      newOctave = intEl.explicitOctave;
+    } else if (direction === 'descending') {
+      // Treble: contar para BAIXO
+      const rawIdx = baseIdx - steps;
+      newPitch  = DIATONIC[((rawIdx % 7) + 7) % 7];
+      newOctave = rawIdx < 0
+        ? baseNote.octave - Math.ceil(Math.abs(rawIdx) / 7)
+        : baseNote.octave;
+    } else {
+      // Bass: contar para CIMA
+      const rawIdx = baseIdx + steps;
+      newPitch  = DIATONIC[rawIdx % 7];
+      newOctave = rawIdx >= 7
+        ? baseNote.octave + Math.floor(rawIdx / 7)
+        : baseNote.octave;
+    }
+
+    entries.push({
+      pitch:  newPitch,
+      octave: newOctave,
+      acc:    intEl.accidental ?? undefined,
+    });
+  }
+
+  // Ordenar grave→agudo (VexFlow exige essa ordem)
+  entries.sort((a, b) => midiOf(a.pitch, a.octave) - midiOf(b.pitch, b.octave));
+
+  const keys:    string[]            = [];
+  const accMods: Map<number, string> = new Map();
+
+  entries.forEach((e, idx) => {
+    keys.push(`${e.pitch.toLowerCase()}/${e.octave}`);
+    if (e.acc) accMods.set(idx, e.acc);
+  });
+
+  return { keys, accMods };
+}
+
+// ─── SEPARAÇÃO POR MÃO ────────────────────────────────────────────────────────
+
+interface HandSplit {
+  trebleEls:    ParsedElement[];
+  bassEls:      ParsedElement[];
+  hasBothHands: boolean;
+}
+
+function splitByHand(elements: ParsedElement[]): HandSplit {
+  const treble: ParsedElement[] = [];
+  const bass:   ParsedElement[] = [];
+  let currentHand: 'right' | 'left' | null = null;
+  let sawRight = false;
+  let sawLeft  = false;
+
+  for (const el of elements) {
+    // Sinal de mão: redirecionar fluxo
+    if (el.type === 'hand') {
+      currentHand = (el as any).hand as 'right' | 'left';
+      if (currentHand === 'right') sawRight = true;
+      if (currentHand === 'left')  sawLeft  = true;
+      // Propagar sinal para ambas as pautas (contexto de clave)
+      treble.push(el);
+      bass.push(el);
+      continue;
+    }
+    // Elementos globais → ambas as pautas
+    if (el.type === 'keysignature' || el.type === 'timesignature' || el.type === 'clef') {
+      treble.push(el);
+      bass.push(el);
+      continue;
+    }
+    // Barlines → ambas (para sincronizar compassos)
+    if (el.type === 'barline') {
+      treble.push(el);
+      bass.push(el);
+      continue;
+    }
+    // Notas/pausas/intervalos → mão correspondente
+    if (currentHand === 'left') {
+      bass.push(el);
+    } else {
+      treble.push(el); // null ou 'right'
+    }
+  }
+
+  return {
+    trebleEls:    sawRight && sawLeft ? treble   : elements,
+    bassEls:      sawRight && sawLeft ? bass     : [],
+    hasBothHands: sawRight && sawLeft,
+  };
+}
+
+// ─── ENGINE DE RENDERIZAÇÃO DE UMA PAUTA ─────────────────────────────────────
+
+/**
+ * Renderiza uma sequência de compassos em um contexto VexFlow.
+ * Retorna o array de Stave criados (para StaveConnector do grand staff).
+ */
+function renderStaveSystem(
+  ctx:            ReturnType<Renderer['getContext']>,
+  measures:       MeasureInfo[],
+  startX:         number,
+  startY:         number,
+  staveWidths:    number[],
+  clef:           string,
+  intervalDir:    'ascending' | 'descending',
+  keySignature:   string | null,
+  timeSignatureEl: any,
+  timeSignature:  { numerator: number; denominator: number },
+  hitAreas:       NoteHitArea[],
+): Stave[] {
+  const staves: Stave[] = [];
+  let x = startX;
+
+  for (let i = 0; i < measures.length; i++) {
+    const measure = measures[i];
+    const staveW  = staveWidths[i] ?? 200;
+    const isFirst = i === 0;
+    const ksN     = ksAccidentalCount(keySignature);
+    const extraW  = isFirst ? firstMeasureExtra(ksN, !!timeSignatureEl) : 0;
+
+    // Elementos a renderizar (note, rest; interval é consumido com a nota-base)
+    const mNotes = measure.notes.filter(n =>
+      n.type === 'note' || n.type === 'rest' || n.type === 'interval'
+    );
+
+    // ── Stave ─────────────────────────────────────────────────────────────
+    const stave = new Stave(x, startY, staveW);
+    stave.setContext(ctx);
+
+    if (isFirst) {
+      stave.addClef(clef);
+      if (keySignature && (VALID_KEYS as readonly string[]).includes(keySignature)) {
+        try { stave.addKeySignature(keySignature); } catch { /* ignora */ }
+      }
+      if (timeSignatureEl) {
+        const abbr = timeSignatureEl._abbreviated;
+        const num  = timeSignatureEl.numerator as number;
+        const den  = timeSignatureEl.denominator as number;
+        try {
+          if      (abbr === 'C')  stave.addTimeSignature('C');
+          else if (abbr === 'C|') stave.addTimeSignature('C|');
+          else if (num && den)    stave.addTimeSignature(`${num}/${den}`);
+        } catch { /* ignora */ }
+      }
+    }
+
+    if (measure.begBarlineType === 'repeat-begin') stave.setBegBarType(4);
+    if      (measure.barlineType === 'end')          stave.setEndBarType(3);
+    else if (measure.barlineType === 'repeat-end')   stave.setEndBarType(5);
+    else if (measure.barlineType === 'repeat-begin') stave.setEndBarType(4);
+    else if (measure.barlineType === 'repeat-both')  stave.setEndBarType(6);
+
+    stave.draw();
+    staves.push(stave);
+
+    if (mNotes.length === 0) { x += staveW; continue; }
+
+    // ── Construir StaveNotes ─────────────────────────────────────────────
+    const vexNotes:  StaveNote[]             = [];
+    const srcIdxs:   (number | undefined)[]  = [];
+    const skipSet = new Set<number>();
+
+    for (let ni = 0; ni < mNotes.length; ni++) {
+      if (skipSet.has(ni)) continue;
+      const el = mNotes[ni];
+
+      // Pausas
+      if (el.type === 'rest') {
+        const restEl  = el as ParsedRest;
+        const restDur = noteToVexDuration(restEl) + 'r';
+        const vr = new StaveNote({ keys: [clef === 'bass' ? 'd/3' : 'b/4'], duration: restDur, clef });
+        if (restEl.dotted) Dot.buildAndAttach([vr], { all: true });
+        vexNotes.push(vr);
+        srcIdxs.push((restEl as any).sourceIndex);
+        continue;
+      }
+
+      // Notas (com possíveis intervalos)
+      if (el.type === 'note') {
+        const noteEl = el as ParsedNote;
+
+        // Coletar intervalos consecutivos imediatos após esta nota
+        const intervalEls: Array<{ intervalSize: number; accidental?: string; explicitOctave?: number }> = [];
+        for (let ji = ni + 1; ji < mNotes.length; ji++) {
+          const nxt = mNotes[ji];
+          if (nxt.type !== 'interval') break;
+          const intAny = nxt as any;
+          intervalEls.push({
+            intervalSize:   intAny.intervalSize as number,
+            accidental:     intAny.accidental ? accidentalToVex(String(intAny.accidental)) : undefined,
+            explicitOctave: intAny.explicitOctave as number | undefined,
+          });
+          skipSet.add(ji);
+        }
+
+        // Construir keys ordenadas grave→agudo + mapa de acidentes por índice
+        const { keys, accMods } = buildChordKeys(noteEl, intervalEls, intervalDir);
+
+        // ÚNICO StaveNote para toda a nota + seus intervalos (acorde)
+        const vn = new StaveNote({ keys, duration: noteToVexDuration(noteEl), clef });
+
+        // Acidente da nota base: encontrar seu índice após a ordenação
+        if (noteEl.accidental) {
+          const baseKey = noteToVexKey(noteEl);
+          const baseIdx = keys.indexOf(baseKey);
+          if (baseIdx !== -1) {
+            try { vn.addModifier(new Accidental(accidentalToVex(String(noteEl.accidental))), baseIdx); }
+            catch { /* ignora */ }
+          }
+        }
+
+        // Acidentes dos intervalos no índice exato após ordenação
+        accMods.forEach((vexAcc, keyIdx) => {
+          try { vn.addModifier(new Accidental(vexAcc), keyIdx); }
+          catch { /* ignora */ }
+        });
+
+        if (noteEl.dotted) Dot.buildAndAttach([vn], { all: true });
+
+        vexNotes.push(vn);
+        srcIdxs.push((noteEl as any).sourceIndex);
+      }
+    }
+
+    if (vexNotes.length === 0) { x += staveW; continue; }
+
+    // ── Voice ────────────────────────────────────────────────────────────
+    const voice = new Voice({ numBeats: timeSignature.numerator, beatValue: timeSignature.denominator });
+    voice.setMode(2); // SOFT
+
+    // ── Beaming: criar ANTES do draw para suprimir flags individuais ─────
+    const isCompound = timeSignature.denominator === 8 && [6, 9, 12].includes(timeSignature.numerator);
+    const beamSz     = isCompound ? 3 : 2;
+    const beamable   = vexNotes.filter(n => ['8','16','32','64'].includes((n as any).duration));
+    const beams: Beam[] = [];
+    for (let bi = 0; bi < beamable.length; bi += beamSz) {
+      const grp = beamable.slice(bi, bi + beamSz);
+      if (grp.length >= 2) { try { beams.push(new Beam(grp)); } catch { /* ignora */ } }
+    }
+
+    voice.addTickables(vexNotes);
+
+    try {
+      const notesArea = Math.max(staveW - extraW - 20, 60);
+      new Formatter().joinVoices([voice]).format([voice], notesArea);
+      voice.draw(ctx, stave);
+      beams.forEach(b => { try { b.setContext(ctx).draw(); } catch { /* ignora */ } });
+    } catch (e) {
+      console.warn(`[ScoreRenderer] format/draw error (measure ${i}):`, e);
+      x += staveW; continue;
+    }
+
+    // ── Hit areas para click ─────────────────────────────────────────────
+    for (let j = 0; j < vexNotes.length; j++) {
+      const srcIdx = srcIdxs[j];
+      if (srcIdx === undefined) continue;
+      try {
+        const bb = vexNotes[j].getBoundingBox();
+        if (bb) hitAreas.push({ x: bb.getX(), y: bb.getY(), w: bb.getW(), h: bb.getH(), sourceIndex: srcIdx });
+      } catch {
+        try {
+          const nx = vexNotes[j].getAbsoluteX();
+          hitAreas.push({ x: nx - 10, y: startY - 10, w: 30, h: 90, sourceIndex: srcIdx });
+        } catch { /* ignora */ }
+      }
+    }
+
+    x += staveW;
+  }
+
+  return staves;
+}
+
+// ─── COMPONENTE PRINCIPAL ─────────────────────────────────────────────────────
+
+export default function ScoreRenderer({
+  elements,
+  width = 1000,
+  height = 300,
+  beatsPerMeasure = 4,
+  onNoteClick,
+  onMeasureClick,
+}: ScoreRendererProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  // Store note hit areas for click detection (per individual note)
   const noteHitAreas = useRef<NoteHitArea[]>([]);
+  const handleClick  = onNoteClick || onMeasureClick;
 
-  // Unified click handler: prefer onNoteClick, fallback to onMeasureClick
-  const handleNoteClick = onNoteClick || onMeasureClick;
+  // ── Derivações estáticas ───────────────────────────────────────────────────
 
-  // Extract time signature from parsed elements (null = não escrita, não renderizar)
-  const timeSignatureEl = useMemo(() => {
-    return elements.find(el => el.type === 'timesignature') as any || null;
-  }, [elements]);
+  const timeSignatureEl = useMemo(() =>
+    (elements.find(el => el.type === 'timesignature') as any) ?? null,
+  [elements]);
 
-  // timeSignature para uso no Voice (fallback 4/4 só para contagem interna)
   const timeSignature = useMemo(() => {
-    if (timeSignatureEl) return { numerator: timeSignatureEl.numerator, denominator: timeSignatureEl.denominator };
-    return { numerator: 4, denominator: 4 }; // fallback interno, NÃO renderizado
-  }, [timeSignatureEl]);
+    if (timeSignatureEl) return { numerator: timeSignatureEl.numerator as number, denominator: timeSignatureEl.denominator as number };
+    return { numerator: beatsPerMeasure, denominator: 4 };
+  }, [timeSignatureEl, beatsPerMeasure]);
 
-  // Extract key signature from parsed elements
   const keySignature = useMemo(() => {
-    const keySigEl = elements.find(el => el.type === 'keysignature') as ParsedKeySignature | undefined;
-    return keySigEl?.vexKey || null;
+    const el = elements.find(e => e.type === 'keysignature') as ParsedKeySignature | undefined;
+    return el?.vexKey ?? null;
   }, [elements]);
 
-  // Detectar clave ativa e direção de intervalos — lê os campos do parser
-  // ParsedHand.impliedClef e ParsedClef.intervalDirection são emitidos explicitamente.
-  const { activeClef, intervalDirection, hasBothHands } = useMemo(() => {
-    let clef = 'treble';
-    let dir: 'ascending' | 'descending' = 'descending';
-    let rightHandSeen = false;
-    let leftHandSeen  = false;
-
+  // ── Clave e direção de intervalos ─────────────────────────────────────────
+  // Lê os campos ParsedHand.impliedClef / ParsedClef.intervalDirection
+  // emitidos pelo brailleMusic.ts.
+  // Fallback seguro: treble + descending quando nenhuma clave está presente.
+  const { activeClef, intervalDirection } = useMemo(() => {
     for (const el of elements) {
       if (el.type === 'hand') {
         const h = el as any;
-        const hClef = h.impliedClef ?? (h.hand === 'left' ? 'bass' : 'treble');
-        const hDir  = h.intervalDirection ?? (h.hand === 'left' ? 'ascending' : 'descending');
-        if (h.hand === 'right') rightHandSeen = true;
-        if (h.hand === 'left')  leftHandSeen  = true;
-        // Usar a primeira mão encontrada como clave primária
-        if (clef === 'treble' && dir === 'descending' && el === elements.find(e => e.type === 'hand')) {
-          clef = hClef;
-          dir  = hDir;
-        }
+        return {
+          activeClef:        (h.impliedClef ?? (h.hand === 'left' ? 'bass' : 'treble')) as string,
+          intervalDirection: (h.intervalDirection ?? (h.hand === 'left' ? 'ascending' : 'descending')) as 'ascending' | 'descending',
+        };
       }
       if (el.type === 'clef') {
-        const c = el as any;
-        clef = c.clefType ?? 'treble';
-        dir  = c.intervalDirection ?? (clef === 'bass' ? 'ascending' : 'descending');
+        const c  = el as any;
+        const ct = (c.clefType as string) ?? 'treble';
+        return {
+          activeClef:        ct,
+          intervalDirection: (c.intervalDirection ?? (ct === 'bass' ? 'ascending' : 'descending')) as 'ascending' | 'descending',
+        };
       }
       if (el.type === 'note') break;
     }
-
-    return {
-      activeClef: clef,
-      intervalDirection: dir,
-      hasBothHands: rightHandSeen && leftHandSeen,
-    };
+    return { activeClef: 'treble', intervalDirection: 'descending' as const };
   }, [elements]);
 
-  // Separar elementos por mão para grand staff
-  // Se hasBothHands: elementos entre 'hand right' e 'hand left' vão para pautas separadas
-  const { trebleElements, bassElements } = useMemo(() => {
-    if (!hasBothHands) return { trebleElements: elements, bassElements: [] as typeof elements };
+  // ── Grand staff ────────────────────────────────────────────────────────────
+  const { trebleEls, bassEls, hasBothHands } = useMemo(
+    () => splitByHand(elements),
+    [elements]
+  );
 
-    const treble: typeof elements = [];
-    const bass:   typeof elements = [];
-    let currentHand: 'right' | 'left' | null = null;
+  const GRAND_GAP  = 60;
+  const bassStartY = hasBothHands ? height + GRAND_GAP : 0;
 
-    for (const el of elements) {
-      if (el.type === 'hand') {
-        currentHand = (el as any).hand;
-        // Enviar o sinal de mão para ambas as pautas (para contexto de armadura/clave)
-        treble.push(el);
-        bass.push(el);
-        continue;
-      }
-      if (currentHand === 'left') {
-        bass.push(el);
-      } else {
-        // null ou 'right' → pauta de clave de sol
-        treble.push(el);
-      }
-    }
-    return { trebleElements: treble, bassElements: bass };
-  }, [elements, hasBothHands]);
+  const trebleMeasures = useMemo(() => groupIntoMeasures(trebleEls), [trebleEls]);
+  const bassMeasures   = useMemo(() => groupIntoMeasures(bassEls),   [bassEls]);
 
-  // Posição Y da pauta de baixo — calculada para o grand staff
-  const GRAND_STAFF_GAP = 50;
-  const bassStaveY = hasBothHands ? height + GRAND_STAFF_GAP : 0;
+  // Larguras de compasso — treble define; bass espelha para alinhamento vertical
+  const staveWidths = useMemo(() => {
+    const BASE = 50;
+    const MIN  = 200;
+    const ksN  = ksAccidentalCount(keySignature);
 
-  // Group elements into measures
-  const measures      = useMemo(() => groupIntoMeasures(trebleElements), [trebleElements]);
-  const bassMeasures  = useMemo(() => groupIntoMeasures(bassElements),   [bassElements]);
+    return trebleMeasures.map((measure, i) => {
+      const mNotes = measure.notes.filter(n => n.type === 'note' || n.type === 'rest' || n.type === 'interval');
+      const extra  = i === 0 ? firstMeasureExtra(ksN, !!timeSignatureEl) : 0;
+      const notesW = mNotes.reduce((s, n) => s + calcNoteWidth(n, BASE), 0);
+      return Math.max(MIN, notesW + extra + 40);
+    });
+  }, [trebleMeasures, keySignature, timeSignatureEl]);
 
+  // ── Efeito principal de renderização ──────────────────────────────────────
   useEffect(() => {
-    if (!containerRef.current || measures.length === 0) return;
-
-    // Clear container and hit areas
+    if (!containerRef.current || trebleMeasures.length === 0) return;
     containerRef.current.innerHTML = '';
     noteHitAreas.current = [];
 
-    const minStaveWidth = 200;  // Minimum width for a measure
-    const baseNoteWidth = 50;    // Base width per note
-
-    // Calculate width for a note based on its duration (longer notes get more space)
-    function getNoteWidth(el: ParsedElement): number {
-      if (el.type !== 'note' && el.type !== 'rest') return 0;
-      const dur = (el as ParsedNote | ParsedRest).duration;
-      switch (dur) {
-        case 'w': return baseNoteWidth * 3;   // 150px for whole notes
-        case 'h': return baseNoteWidth * 2;   // 100px for half notes
-        case 'q': return baseNoteWidth * 1.5; // 75px for quarter notes
-        case '8': return baseNoteWidth;       // 50px for eighth notes
-        case '16': return baseNoteWidth * 0.8; // 40px for 16th notes
-        case '32': return baseNoteWidth * 0.7; // 35px for 32nd notes
-        default: return baseNoteWidth;
-      }
-    }
-
-    // First pass: calculate total width needed (all measures in one line)
-    let totalWidth = 10; // Start with left padding
-    let currentLineX = 10;
-
-    for (let i = 0; i < measures.length; i++) {
-      const measure = measures[i];
-      // intervalos são consumidos junto com a nota anterior (acorde)
-      // dinâmica, ornamentos, etc. são ignorados na renderização VexFlow por enquanto
-      const measureNotes = measure.notes.filter(n =>
-        n.type === 'note' || n.type === 'rest' || n.type === 'interval'
-      );
-      // Calcular espaço real ocupado no primeiro compasso:
-      // Clave (~30px) + armadura (12px por acidente) + compasso (~20px) + margem
-      const ksAccidentals = keySignature ? Math.abs(
-        ['C','G','D','A','E','B','F#','C#'].indexOf(keySignature) !== -1
-          ? ['C','G','D','A','E','B','F#','C#'].indexOf(keySignature)
-          : (['F','Bb','Eb','Ab','Db','Gb','Cb'].indexOf(keySignature) + 1)
-      ) : 0;
-      // Espaço real do VexFlow no 1º compasso:
-      // Clave (~36px) + por acidente (~18px) + padding (~10px) + TS (~26px) + margem (~16px)
-      const extraW = i === 0
-        ? (36 + ksAccidentals * 18 + 10 + (timeSignatureEl ? 26 : 0) + 16)
-        : 0;
-      const notesWidth = measureNotes.reduce((sum, n) => sum + getNoteWidth(n), 0);
-      const staveW = Math.max(minStaveWidth, notesWidth + extraW + 40); // +40 for padding
-
-      currentLineX += staveW;
-      totalWidth = Math.max(totalWidth, currentLineX + 10); // Add right padding
-    }
-
-    // Use the calculated dimensions - all measures in one line, scroll if needed
-    const canvasWidth  = Math.max(width, totalWidth);
-    // Grand staff: altura dupla com espaço entre as duas pautas
-    const canvasHeight = hasBothHands ? height * 2 + GRAND_STAFF_GAP : height;
+    const totalWidth  = Math.max(width, staveWidths.reduce((s, w) => s + w, 20) + 20);
+    const totalHeight = hasBothHands ? height * 2 + GRAND_GAP : height;
 
     const renderer = new Renderer(containerRef.current, Renderer.Backends.SVG);
-    renderer.resize(canvasWidth, canvasHeight);
-    const context = renderer.getContext();
+    renderer.resize(totalWidth, totalHeight);
+    const ctx = renderer.getContext();
 
-    let x = 10;
-    let y = 40;
+    // ── Pauta treble ──────────────────────────────────────────────────────
+    const trebleStaves = renderStaveSystem(
+      ctx, trebleMeasures, 10, 40, staveWidths,
+      hasBothHands ? 'treble' : activeClef,
+      hasBothHands ? 'descending' : intervalDirection,
+      keySignature, timeSignatureEl, timeSignature,
+      noteHitAreas.current,
+    );
 
-    // Render each measure
-    try {
-    for (let i = 0; i < measures.length; i++) {
-      const measure = measures[i];
-      // intervalos são consumidos junto com a nota anterior (acorde)
-      // dinâmica, ornamentos, etc. são ignorados na renderização VexFlow por enquanto
-      const measureNotes = measure.notes.filter(n =>
-        n.type === 'note' || n.type === 'rest' || n.type === 'interval'
-      );
-      const isFirst = i === 0;
-
-      // Calculate stave width dynamically based on note durations
-      // Add extra space for first measure (clef + time signature take ~80px)
-      // Espaço real do primeiro compasso: clave + armadura (por acidente) + compasso + margem
-      const ksCount = keySignature ? Math.abs(
-        ['C','G','D','A','E','B','F#','C#'].indexOf(keySignature) !== -1
-          ? ['C','G','D','A','E','B','F#','C#'].indexOf(keySignature)
-          : (['F','Bb','Eb','Ab','Db','Gb','Cb'].indexOf(keySignature) + 1)
-      ) : 0;
-      // Espaço real do VexFlow no 1º compasso:
-      // Clave (~36px) + por acidente (~18px) + padding (~10px) + TS (~26px) + margem (~16px)
-      const extraWidth = isFirst
-        ? (36 + ksCount * 18 + 10 + (timeSignatureEl ? 26 : 0) + 16)
-        : 0;
-      const notesWidth = measureNotes.reduce((sum, n) => sum + getNoteWidth(n), 0);
-      const currentStaveWidth = Math.max(minStaveWidth, notesWidth + extraWidth + 40);
-
-      // All measures in one line - no wrapping
-      // Create stave
-      const stave = new Stave(x, y, currentStaveWidth);
-      // Clave e armadura: apenas no PRIMEIRO compasso de cada renderização
-      // (regra de partitura: clave e armadura aparecem no início de cada linha/sistema)
-      const validKeys = ['C','G','D','A','E','B','F#','C#','F','Bb','Eb','Ab','Db','Gb','Cb'];
-      if (isFirst) {
-        stave.addClef(activeClef);
-        if (keySignature && validKeys.includes(keySignature)) {
-          try { stave.addKeySignature(keySignature); }
-          catch (e) { console.warn('VexFlow keySignature error:', keySignature, e); }
-        }
-        // Compasso: só renderiza se foi escrito explicitamente
-        if (timeSignatureEl) {
-          // Verificar se é C ou C-cortado pelo _abbreviated OU pelas dimensões
-          const abbr = (timeSignatureEl as any)._abbreviated;
-          const num = (timeSignatureEl as any).numerator ?? (timeSignatureEl as any).num;
-          const den = (timeSignatureEl as any).denominator ?? (timeSignatureEl as any).den;
-          try {
-            if (abbr === 'C') {
-              stave.addTimeSignature('C');
-            } else if (abbr === 'C|') {
-              stave.addTimeSignature('C|');
-            } else if (num && den) {
-              stave.addTimeSignature(`${num}/${den}`);
-            }
-          } catch (e) {
-            console.warn('addTimeSignature error:', e);
-          }
-        }
-      }
-
-      // Set beginning barline type (ritornelo de início)
-      if (measure.begBarlineType === 'repeat-begin') {
-        stave.setBegBarType(4); // REPEAT_BEGIN = =|:
-      }
-
-      // Set ending barline type
-      if (measure.barlineType === 'end') {
-        stave.setEndBarType(3); // END = =|=
-      } else if (measure.barlineType === 'repeat-begin') {
-        stave.setEndBarType(4); // REPEAT_BEGIN = =|:
-      } else if (measure.barlineType === 'repeat-end') {
-        stave.setEndBarType(5); // REPEAT_END = =:|
-      } else if (measure.barlineType === 'repeat-both') {
-        stave.setEndBarType(6); // REPEAT_BOTH = =::
-      }
-      // 'single' uses default barline (no setEndBarType call)
-
-      stave.setContext(context).draw();
-
-      // Não renderizar compassos completamente vazios (antes da melodia)
-      if (measureNotes.length === 0) {
-        // Ainda assim avança x só se não for o primeiro compasso ou se houver armadura/compasso
-        if (!isFirst || (!keySignature && timeSignature.numerator === 4)) {
-          x += currentStaveWidth;
-        }
-        continue;
-      }
-
-      // Create voice and add notes (SOFT mode avoids strict beat-count validation errors)
-      const voice = new Voice({ numBeats: timeSignature.numerator, beatValue: timeSignature.denominator });
-      voice.setMode(2); // Voice.Mode.SOFT = 2 — allows partial or overflowing measures
-      const vexNotes: StaveNote[] = [];
-      // Track which parsed element corresponds to each VexFlow note
-      const noteSourceIndices: (number | undefined)[] = [];
-
-      for (const el of measureNotes) {
-        if (el.type === 'note') {
-          const noteEl = el as ParsedNote; // type assertion segura após type guard
-          // Verificar se a próxima nota é um intervalo e construir acorde
-          const noteIdx = measureNotes.indexOf(el);
-          const intervalKeys: string[] = [noteToVexKey(noteEl)];
-          /** Mapa: índice-no-loop → { posição-na-chave, tipo-de-acidente } para notas de intervalo */
-          const intervalAccidentals = new Map<number, { noteIdx: number; accidental: string }>();
-          let skipCount = 0;
-
-          // Coletar intervalos consecutivos após esta nota
-          for (let intIdx = noteIdx + 1; intIdx < measureNotes.length; intIdx++) {
-            const nextEl = measureNotes[intIdx];
-            if (nextEl.type === 'interval') {
-              const size = (nextEl as any).intervalSize as number;
-              const pitchOrder = ['C','D','E','F','G','A','B'] as const;
-              const basePitchIdx = pitchOrder.indexOf(noteEl.pitch as any);
-              if (basePitchIdx !== -1) {
-                // Direção: descendente (treble) = subtraímos; ascendente (bass) = somamos
-                const direction = intervalDirection === 'descending' ? -1 : 1;
-                const steps = (size - 1) * direction;
-                const newPitchIdx = ((basePitchIdx + steps) % 7 + 7) % 7;
-                const newPitch = pitchOrder[newPitchIdx];
-                // Calcular oitava
-                let newOctave = noteEl.octave;
-                if (direction === -1) {
-                  const rawIdx = basePitchIdx + steps;
-                  if (rawIdx < 0) newOctave = noteEl.octave - Math.ceil(Math.abs(rawIdx) / 7);
-                } else {
-                  const rawIdx = basePitchIdx + steps;
-                  if (rawIdx >= 7) newOctave = noteEl.octave + Math.floor(rawIdx / 7);
-                }
-                intervalKeys.push(`${newPitch.toLowerCase()}/${newOctave}`);
-                skipCount++;
-              }
-            } else {
-              break; // parar ao encontrar elemento que não é intervalo
-            }
-          }
-
-          const vexNote = new StaveNote({
-            keys: intervalKeys,
-            duration: noteToVexDuration(noteEl),
-            clef: activeClef,
-          });
-          // Aplicar acidentes nas notas de intervalo (não afetam armadura global)
-          intervalAccidentals.forEach(({ noteIdx, accidental }) => {
-            try {
-              const vexAcc = accidental === 'sharp' ? '#'
-                : accidental === 'flat' ? 'b'
-                : accidental === 'natural' ? 'n'
-                : accidental === 'double-sharp' ? '##'
-                : accidental === 'double-flat' ? 'bb'
-                : null;
-              if (vexAcc) vexNote.addModifier(new Accidental(vexAcc), noteIdx);
-            } catch { /* ignora se VexFlow não suportar */ }
-          });
-
-          // Add accidental if present (convert from parser format to VexFlow format)
-          if (el.accidental) {
-            vexNote.addModifier(new Accidental(accidentalToVex(el.accidental)), 0);
-          }
-
-          // Add dot if present
-          if (el.dotted) {
-            Dot.buildAndAttach([vexNote], { all: true });
-          }
-
-          vexNotes.push(vexNote);
-          noteSourceIndices.push(el.sourceIndex);
-        } else if (el.type === 'rest') {
-          const restDur = noteToVexDuration(el) + 'r';
-          const vexRest = new StaveNote({
-            keys: [activeClef === 'bass' ? 'd/3' : 'b/4'],
-            duration: restDur,
-            clef: activeClef,
-          });
-
-          // Add dot to rest if present
-          if (el.dotted) {
-            Dot.buildAndAttach([vexRest], { all: true });
-          }
-
-          vexNotes.push(vexRest);
-          noteSourceIndices.push(el.sourceIndex);
-        }
-      }
-
-      voice.addTickables(vexNotes);
-
-      // Format and draw (only if there are notes)
-      if (vexNotes.length > 0) {
-        try {
-          // Beaming: CRIAR os beams ANTES do draw
-          // O VexFlow só omite a flag individual quando note.beam !== null
-          // portanto o Beam deve ser criado antes de voice.draw()
-          const isCompound = timeSignature.denominator === 8 &&
-            [6, 9, 12].includes(timeSignature.numerator);
-          const beamSize = isCompound ? 3 : 2;
-
-          const beamable = vexNotes.filter(n => {
-            const dur = (n as any).duration;
-            return ['8','16','32','64'].includes(dur);
-          });
-
-          const beams: Beam[] = [];
-          for (let bi = 0; bi < beamable.length; bi += beamSize) {
-            const group = beamable.slice(bi, bi + beamSize);
-            if (group.length >= 2) {
-              try {
-                beams.push(new Beam(group)); // associa beam às notas ANTES do draw
-              } catch { /* ignora */ }
-            }
-          }
-
-          // Format e draw — notas dentro de Beams não terão flag individual
-          const formatter = new Formatter();
-          // Espaço disponível para as notas = largura total menos o espaço do cabeçalho
-          const notesArea = currentStaveWidth - extraWidth - 10;
-          formatter.joinVoices([voice]).format([voice], Math.max(notesArea, 60));
-          voice.draw(context, stave);
-
-          // Desenhar as barras de beam após o voice.draw()
-          beams.forEach(b => {
-            try { b.setContext(context).draw(); } catch { /* ignora */ }
-          });
-
-        } catch (e) {
-          console.warn('VexFlow format/draw error (skipping measure):', e);
-          x += currentStaveWidth;
-          continue;
-        }
-
-        // After drawing, extract bounding boxes for each note to create click hit areas
-        for (let j = 0; j < vexNotes.length; j++) {
-          const vexNote = vexNotes[j];
-          const srcIdx = noteSourceIndices[j];
-          if (srcIdx === undefined) continue;
-
-          try {
-            const bb = vexNote.getBoundingBox();
-            if (bb) {
-              noteHitAreas.current.push({
-                x: bb.getX(),
-                y: bb.getY(),
-                w: bb.getW(),
-                h: bb.getH(),
-                sourceIndex: srcIdx,
-              });
-            }
-          } catch {
-            // If getBoundingBox fails, use approximate position based on note's x
-            // This is a fallback for notes that don't have a bounding box
-            try {
-              const noteX = vexNote.getAbsoluteX();
-              noteHitAreas.current.push({
-                x: noteX - 10,
-                y: y - 10,
-                w: 30,
-                h: 90,
-                sourceIndex: srcIdx,
-              });
-            } catch {
-              // Skip this note if we can't get its position
-            }
-          }
-        }
-      }
-
-      // Draw ties/ligaduras between consecutive notes
-      for (let j = 0; j < measureNotes.length - 1; j++) {
-        const current = measureNotes[j];
-        const next = measureNotes[j + 1];
-
-        // Check if there's a notetie between them
-        const hasTie = elements.some((el, idx) => {
-          if (el.type === 'notetie') {
-            const currentIdx = elements.indexOf(current as any);
-            const nextIdx = elements.indexOf(next as any);
-            return currentIdx >= 0 && nextIdx >= 0 && currentIdx < idx && idx < nextIdx;
-          }
-          return false;
-        });
-
-        if (hasTie && j < vexNotes.length - 1) {
-          const curve = new Curve(vexNotes[j], vexNotes[j + 1], { cps: [{ x: 0, y: 20 }, { x: 0, y: 20 }] });
-          curve.setContext(context).draw();
-        }
-      }
-
-      x += currentStaveWidth;
-    }
-
-    // ── PAUTA DE BAIXO (grand staff quando hasBothHands) ──────────────────────
+    // ── Pauta bass (grand staff) ──────────────────────────────────────────
+    let bassStaves: Stave[] = [];
     if (hasBothHands && bassMeasures.length > 0) {
-      let bx = 10;
-      for (let bi = 0; bi < bassMeasures.length; bi++) {
-        const bm = bassMeasures[bi];
-        const bmNotes = bm.notes.filter((n: any) => n.type === 'note' || n.type === 'rest');
-        if (bmNotes.length === 0) continue;
+      bassStaves = renderStaveSystem(
+        ctx, bassMeasures, 10, bassStartY, staveWidths,
+        'bass', 'ascending',
+        keySignature, timeSignatureEl, timeSignature,
+        noteHitAreas.current,
+      );
+    }
 
-        const ksAcc2 = keySignature ? Math.abs(
-          ['C','G','D','A','E','B','F#','C#'].indexOf(keySignature) !== -1
-            ? ['C','G','D','A','E','B','F#','C#'].indexOf(keySignature)
-            : (['F','Bb','Eb','Ab','Db','Gb','Cb'].indexOf(keySignature) + 1)
-        ) : 0;
-        const extraW2 = bi === 0 ? (36 + ksAcc2 * 18 + 10 + (timeSignatureEl ? 26 : 0) + 16) : 0;
-        const notesW2 = bmNotes.reduce((s: number, n: any) => s + getNoteWidth(n), 0);
-        const bStaveW = Math.max(200, notesW2 + extraW2 + 40);
+    // ── StaveConnector: BRACE (chave de piano) + linha dupla esquerda ─────
+    if (hasBothHands && trebleStaves[0] && bassStaves[0]) {
+      try {
+        const brace = new StaveConnector(trebleStaves[0], bassStaves[0]);
+        brace.setType(StaveConnector.type.BRACE);
+        brace.setContext(ctx).draw();
 
-        try {
-          const stave2 = new Stave(bx, bassStaveY, bStaveW);
-          stave2.setContext(context);
-          if (bi === 0) {
-            stave2.addClef('bass');
-            if (keySignature) {
-              const vk2 = ['C','G','D','A','E','B','F#','C#','F','Bb','Eb','Ab','Db','Gb','Cb'];
-              if (vk2.includes(keySignature)) {
-                try { stave2.addKeySignature(keySignature); } catch { /* ignora */ }
-              }
-            }
-          }
-          stave2.draw();
-
-          const vn2 = bmNotes.map((el: any) => {
-            if (el.type === 'rest') {
-              return new StaveNote({ keys: ['d/3'], duration: noteToVexDuration(el), clef: 'bass' });
-            }
-            return new StaveNote({ keys: [`${el.pitch.toLowerCase()}/${el.octave}`], duration: noteToVexDuration(el), clef: 'bass' });
-          });
-
-          const voice2 = new Voice({ numBeats: timeSignature.numerator, beatValue: timeSignature.denominator });
-          voice2.setStrict(false);
-          voice2.addTickables(vn2);
-
-          const isComp2 = timeSignature.denominator === 8 && [6,9,12].includes(timeSignature.numerator);
-          const bSz2 = isComp2 ? 3 : 2;
-          const beams2: any[] = [];
-          const beable2 = vn2.filter((n: any) => ['8','16','32','64'].includes((n as any).duration));
-          for (let bb = 0; bb < beable2.length; bb += bSz2) {
-            const g = beable2.slice(bb, bb + bSz2);
-            if (g.length >= 2) { try { beams2.push(new Beam(g)); } catch { /* ignora */ } }
-          }
-
-          try {
-            new Formatter().joinVoices([voice2]).format([voice2], bStaveW - extraW2 - 20);
-            voice2.draw(context as any, stave2);
-            beams2.forEach((b: any) => { try { b.setContext(context as any).draw(); } catch { /* ignora */ } });
-          } catch (e) { console.warn('Bass staff format error:', e); }
-        } catch (e) { console.warn('Bass staff render error:', e); }
-
-        bx += bStaveW;
+        const lineL = new StaveConnector(trebleStaves[0], bassStaves[0]);
+        lineL.setType(StaveConnector.type.DOUBLE);
+        lineL.setContext(ctx).draw();
+      } catch (e) {
+        console.warn('[ScoreRenderer] StaveConnector error:', e);
       }
     }
 
-    } catch (e) {
-      console.error('ScoreRenderer VexFlow error:', e);
-    }
-  }, [elements, measures, width, height, timeSignature]);
+  }, [
+    elements, trebleMeasures, bassMeasures, staveWidths,
+    width, height, activeClef, intervalDirection, hasBothHands,
+    keySignature, timeSignatureEl, timeSignature, bassStartY,
+  ]);
 
-  // Add click listener on the SVG canvas to detect note clicks
+  // ── Click listener ────────────────────────────────────────────────────────
   useEffect(() => {
-    if (!containerRef.current || !handleNoteClick) return;
+    if (!containerRef.current || !handleClick) return;
 
     const onClick = (e: MouseEvent) => {
       const svg = containerRef.current?.querySelector('svg');
       if (!svg) return;
       const rect = svg.getBoundingClientRect();
-      const clickX = e.clientX - rect.left;
-      const clickY = e.clientY - rect.top;
+      const cx   = e.clientX - rect.left;
+      const cy   = e.clientY - rect.top;
 
-      // Find the closest note to the click position
-      let closestNote: NoteHitArea | null = null;
-      let closestDist = Infinity;
+      let best: NoteHitArea | null = null;
+      let bestD = Infinity;
 
       for (const area of noteHitAreas.current) {
-        // Check if click is within the hit area (with some vertical tolerance)
-        const centerX = area.x + area.w / 2;
-        const centerY = area.y + area.h / 2;
-        const dist = Math.sqrt((clickX - centerX) ** 2 + (clickY - centerY) ** 2);
-
-        // Only consider notes within reasonable distance (within the stave area)
-        if (dist < closestDist && clickY >= area.y - 20 && clickY <= area.y + area.h + 20) {
-          closestDist = dist;
-          closestNote = area;
+        const dx = cx - (area.x + area.w / 2);
+        const dy = cy - (area.y + area.h / 2);
+        const d  = Math.sqrt(dx * dx + dy * dy);
+        if (d < bestD && cy >= area.y - 20 && cy <= area.y + area.h + 20) {
+          bestD = d; best = area;
         }
       }
 
-      // If we found a note within 60px, trigger the callback
-      if (closestNote && closestDist < 60) {
-        handleNoteClick(closestNote.sourceIndex);
-      }
+      if (best && bestD < 60) handleClick(best.sourceIndex);
     };
 
     const svg = containerRef.current.querySelector('svg');
-    if (svg) {
-      svg.addEventListener('click', onClick as EventListener);
-      return () => svg.removeEventListener('click', onClick as EventListener);
-    }
-  }, [handleNoteClick, measures, bassMeasures, hasBothHands, bassStaveY]);
+    if (!svg) return;
+    svg.addEventListener('click', onClick as EventListener);
+    return () => svg.removeEventListener('click', onClick as EventListener);
+  }, [handleClick, trebleMeasures]);
 
   return (
     <div
       ref={containerRef}
       style={{
-        cursor: handleNoteClick ? 'pointer' : 'default',
+        cursor:    handleClick ? 'pointer' : 'default',
         overflowX: 'auto',
         overflowY: 'hidden',
-        width: '100%',
-        maxHeight: height + 50,
+        width:     '100%',
+        maxHeight: (hasBothHands ? height * 2 + GRAND_GAP : height) + 60,
       }}
     />
   );
