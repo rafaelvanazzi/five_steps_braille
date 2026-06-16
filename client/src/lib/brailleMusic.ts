@@ -362,13 +362,21 @@ export interface ParsedNoteTie {
 export interface ParsedInterval {
   type: 'interval';
   intervalSize: number;
+  /** Acidente explícito desta nota do intervalo (não afeta armadura global) */
+  accidental?: Accidental;
+  /** Sinal de oitava explícito desta nota do intervalo */
+  explicitOctave?: number;
+  /** Duração herdada da nota-base do acorde */
+  duration?: Duration;
   sourceIndex: number;
   grade: PedagogicGrade;
 }
 
 export interface ParsedClef {
   type: 'clef';
-  clefType: 'treble' | 'bass';
+  clefType: 'treble' | 'bass' | 'tenor' | 'alto';
+  /** Direção dos intervalos nesta clave: treble/tenor=descending, bass=ascending */
+  intervalDirection: 'ascending' | 'descending';
   sourceIndex: number;
 }
 
@@ -438,6 +446,10 @@ export interface ParsedArticulation {
 export interface ParsedHand {
   type: 'hand';
   hand: 'right' | 'left'; // mão direita = clave de sol, mão esquerda = clave de fá
+  /** Clave implícita: right=treble (descendente), left=bass (ascendente) */
+  impliedClef: 'treble' | 'bass';
+  /** Direção dos intervalos: right=descending, left=ascending */
+  intervalDirection: 'ascending' | 'descending';
   sourceIndex: number;
 }
 
@@ -657,8 +669,9 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
     | { kind: 'phrase'; phraseType: 'start' | 'end'; idx: number }
     | { kind: 'ts'; numerator: number; denominator: number; abbreviated?: 'C' | 'C|'; idx: number }
     | { kind: 'ks'; fifths: number; vexKey: string; idx: number }
-    | { kind: 'clef'; clefType: 'treble' | 'bass'; idx: number }
-    | { kind: 'interval'; intervalSize: number; idx: number };
+    | { kind: 'clef'; clefType: 'treble' | 'bass' | 'tenor' | 'alto'; intervalDirection: 'ascending' | 'descending'; idx: number }
+    | { kind: 'hand'; hand: 'right' | 'left'; impliedClef: 'treble' | 'bass'; intervalDirection: 'ascending' | 'descending'; idx: number }
+    | { kind: 'interval'; intervalSize: number; pendingAccidental?: Accidental; pendingOctave?: number; idx: number };
 
   type RawMeasure = { tokens: RawToken[]; barlineType: string };
   const measures: RawMeasure[] = [];
@@ -748,9 +761,19 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
       beatsPerMeasure = 2; i += 2; continue;
     }
 
-    // Claves
-    if (three === CLEF_TREBLE) { curTokens.push({ kind: 'clef', clefType: 'treble', idx: i }); i += 3; continue; }
-    if (three === CLEF_BASS)   { curTokens.push({ kind: 'clef', clefType: 'bass',   idx: i }); i += 3; continue; }
+    // Claves — cada uma define a direção dos intervalos automaticamente
+    // Clave de Sol (treble) → intervalos descendentes
+    // Clave de Fá (bass)   → intervalos ascendentes
+    // Clave de Dó (tenor)  → intervalos descendentes (mesmo comportamento de treble)
+    if (three === CLEF_TREBLE) {
+      curTokens.push({ kind: 'clef', clefType: 'treble', intervalDirection: 'descending', idx: i });
+      i += 3; continue;
+    }
+    if (three === CLEF_BASS) {
+      curTokens.push({ kind: 'clef', clefType: 'bass', intervalDirection: 'ascending', idx: i });
+      i += 3; continue;
+    }
+    // Clave de Dó 4ª linha (violoncelo) — não implementada ainda
 
     // Staccato ⠦
     if (ch === STACCATO) { curTokens.push({ kind: 'staccato', idx: i }); i++; continue; }
@@ -799,9 +822,38 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
       curTokens.push({ kind: 'ks', fifths: ks.fifths, vexKey: ks.vexKey, idx: i }); i += 2; continue;
     }
 
-    // Intervalo (contexto determinado na fase 2)
+    // Intervalo — captura acidentes e oitavas pendentes como modificadores do intervalo
+    // (não afetam a nota principal nem a armadura de clave global)
     if (INTERVAL_MAP[ch] !== undefined && ch !== AUGMENTATION_DOT) {
-      curTokens.push({ kind: 'interval', intervalSize: INTERVAL_MAP[ch], idx: i }); i++; continue;
+      // Verificar se o token anterior imediato é um acidente ou oitava
+      // (foram empilhados como 'acc' ou 'oct' pelo tokenizer)
+      // Precisamos "roubar" o último token se for acc ou oct
+      let pendingAccForInterval: Accidental | undefined;
+      let pendingOctForInterval: number | undefined;
+
+      if (curTokens.length > 0) {
+        const lastTk = curTokens[curTokens.length - 1];
+        if (lastTk.kind === 'acc') {
+          pendingAccForInterval = (lastTk as { kind: 'acc'; val: Accidental; idx: number }).val;
+          curTokens.pop(); // remove da fila principal — pertence ao intervalo
+        }
+      }
+      if (curTokens.length > 0) {
+        const lastTk2 = curTokens[curTokens.length - 1];
+        if (lastTk2.kind === 'oct') {
+          pendingOctForInterval = (lastTk2 as { kind: 'oct'; val: number; idx: number }).val;
+          curTokens.pop(); // remove da fila principal — pertence ao intervalo
+        }
+      }
+
+      curTokens.push({
+        kind: 'interval',
+        intervalSize: INTERVAL_MAP[ch],
+        pendingAccidental: pendingAccForInterval,
+        pendingOctave: pendingOctForInterval,
+        idx: i,
+      });
+      i++; continue;
     }
 
     // Pausa
@@ -847,6 +899,8 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
     let pendingOctave: number | undefined;
     let pendingAccidental: Accidental | undefined;
     let pendingStaccato = false;
+    /** Duração da última nota emitida neste compasso — herdada pelos intervalos do acorde. */
+    let lastNoteDuration: Duration | null = null;
 
     for (const tk of measure.tokens) {
       if (tk.kind === 'ts') {
@@ -860,14 +914,30 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
         inNoteContext = false; continue;
       }
       if (tk.kind === 'clef') {
-        elements.push({ type: 'clef', clefType: (tk as any).clefType, sourceIndex: (tk as any).idx });
+        const clefTk = tk as { kind: 'clef'; clefType: 'treble' | 'bass' | 'tenor' | 'alto'; intervalDirection: 'ascending' | 'descending'; idx: number };
+        elements.push({
+          type: 'clef',
+          clefType: clefTk.clefType,
+          intervalDirection: clefTk.intervalDirection,
+          sourceIndex: clefTk.idx,
+        });
         inNoteContext = false; continue;
       }
       if (tk.kind === 'oct') { pendingOctave = (tk as any).val; inNoteContext = true; continue; }
       if (tk.kind === 'acc') { pendingAccidental = (tk as any).val; continue; }
       if (tk.kind === 'staccato') { pendingStaccato = true; continue; }
       if (tk.kind === 'fermata')       { elements.push({ type: 'fermata',     sourceIndex: (tk as any).idx }); continue; }
-      if ((tk as any).kind === 'hand')          { elements.push({ type: 'hand', hand: (tk as any).hand, sourceIndex: (tk as any).idx }); continue; }
+      if (tk.kind === 'hand') {
+        const handTk = tk as { kind: 'hand'; hand: 'right' | 'left'; impliedClef: 'treble' | 'bass'; intervalDirection: 'ascending' | 'descending'; idx: number };
+        elements.push({
+          type: 'hand',
+          hand: handTk.hand,
+          impliedClef: handTk.impliedClef,
+          intervalDirection: handTk.intervalDirection,
+          sourceIndex: handTk.idx,
+        });
+        continue;
+      }
       if ((tk as any).kind === 'dynamic')       { elements.push({ type: 'dynamic', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
       if ((tk as any).kind === 'ornament')      { elements.push({ type: 'ornament', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
       if ((tk as any).kind === 'articulation')  { elements.push({ type: 'articulation', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
@@ -877,7 +947,19 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
       if (tk.kind === 'tie')     { elements.push({ type: 'tie', sourceIndex: (tk as any).idx }); continue; }
       if (tk.kind === 'phrase')  { elements.push({ type: 'phrase', phraseType: (tk as any).phraseType, sourceIndex: (tk as any).idx }); continue; }
       if (tk.kind === 'interval') {
-        if (inNoteContext) elements.push({ type: 'interval', intervalSize: (tk as any).intervalSize, sourceIndex: (tk as any).idx, grade: 4 });
+        if (inNoteContext) {
+          const intTk = tk as { kind: 'interval'; intervalSize: number; pendingAccidental?: Accidental; pendingOctave?: number; idx: number };
+          // Herdar duração da última nota emitida (lastNoteDuration rastreado abaixo)
+          elements.push({
+            type: 'interval',
+            intervalSize: intTk.intervalSize,
+            accidental: intTk.pendingAccidental,       // acidente específico do intervalo
+            explicitOctave: intTk.pendingOctave,       // oitava específica do intervalo
+            duration: lastNoteDuration ?? undefined,   // herda duração da nota-base
+            sourceIndex: intTk.idx,
+            grade: 4,
+          });
+        }
         continue;
       }
       if (tk.kind === 'rest') {

@@ -187,30 +187,76 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
     return keySigEl?.vexKey || null;
   }, [elements]);
 
-  // Detectar clave ativa: mão esquerda/clave de fá → bass; caso contrário → treble
-  // Regra: mão direita = clave de sol (treble), mão esquerda = clave de fá (bass)
-  const activeClef = useMemo(() => {
+  // Detectar clave ativa e direção de intervalos — lê os campos do parser
+  // ParsedHand.impliedClef e ParsedClef.intervalDirection são emitidos explicitamente.
+  const { activeClef, intervalDirection, hasBothHands } = useMemo(() => {
+    let clef = 'treble';
+    let dir: 'ascending' | 'descending' = 'descending';
+    let rightHandSeen = false;
+    let leftHandSeen  = false;
+
     for (const el of elements) {
-      if (el.type === 'hand') return (el as any).hand === 'left' ? 'bass' : 'treble';
-      if (el.type === 'clef') {
-        const clefType = (el as any).clefType;
-        if (clefType === 'bass') return 'bass';
-        if (clefType === 'alto') return 'alto';
-        return 'treble';
+      if (el.type === 'hand') {
+        const h = el as any;
+        const hClef = h.impliedClef ?? (h.hand === 'left' ? 'bass' : 'treble');
+        const hDir  = h.intervalDirection ?? (h.hand === 'left' ? 'ascending' : 'descending');
+        if (h.hand === 'right') rightHandSeen = true;
+        if (h.hand === 'left')  leftHandSeen  = true;
+        // Usar a primeira mão encontrada como clave primária
+        if (clef === 'treble' && dir === 'descending' && el === elements.find(e => e.type === 'hand')) {
+          clef = hClef;
+          dir  = hDir;
+        }
       }
-      // Se já chegou a uma nota, parar de procurar
+      if (el.type === 'clef') {
+        const c = el as any;
+        clef = c.clefType ?? 'treble';
+        dir  = c.intervalDirection ?? (clef === 'bass' ? 'ascending' : 'descending');
+      }
       if (el.type === 'note') break;
     }
-    return 'treble'; // padrão: clave de sol
+
+    return {
+      activeClef: clef,
+      intervalDirection: dir,
+      hasBothHands: rightHandSeen && leftHandSeen,
+    };
   }, [elements]);
 
-  // Intervalos: direção depende da clave
-  // Clave de sol (treble) → intervalos descendentes (nota principal = mais aguda)
-  // Clave de fá (bass)    → intervalos ascendentes  (nota principal = mais grave)
-  const intervalDirection = activeClef === 'bass' ? 'ascending' : 'descending';
+  // Separar elementos por mão para grand staff
+  // Se hasBothHands: elementos entre 'hand right' e 'hand left' vão para pautas separadas
+  const { trebleElements, bassElements } = useMemo(() => {
+    if (!hasBothHands) return { trebleElements: elements, bassElements: [] as typeof elements };
+
+    const treble: typeof elements = [];
+    const bass:   typeof elements = [];
+    let currentHand: 'right' | 'left' | null = null;
+
+    for (const el of elements) {
+      if (el.type === 'hand') {
+        currentHand = (el as any).hand;
+        // Enviar o sinal de mão para ambas as pautas (para contexto de armadura/clave)
+        treble.push(el);
+        bass.push(el);
+        continue;
+      }
+      if (currentHand === 'left') {
+        bass.push(el);
+      } else {
+        // null ou 'right' → pauta de clave de sol
+        treble.push(el);
+      }
+    }
+    return { trebleElements: treble, bassElements: bass };
+  }, [elements, hasBothHands]);
+
+  // Posição Y da pauta de baixo — calculada para o grand staff
+  const GRAND_STAFF_GAP = 50;
+  const bassStaveY = hasBothHands ? height + GRAND_STAFF_GAP : 0;
 
   // Group elements into measures
-  const measures = useMemo(() => groupIntoMeasures(elements), [elements]);
+  const measures      = useMemo(() => groupIntoMeasures(trebleElements), [trebleElements]);
+  const bassMeasures  = useMemo(() => groupIntoMeasures(bassElements),   [bassElements]);
 
   useEffect(() => {
     if (!containerRef.current || measures.length === 0) return;
@@ -268,8 +314,9 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
     }
 
     // Use the calculated dimensions - all measures in one line, scroll if needed
-    const canvasWidth = Math.max(width, totalWidth);
-    const canvasHeight = height;
+    const canvasWidth  = Math.max(width, totalWidth);
+    // Grand staff: altura dupla com espaço entre as duas pautas
+    const canvasHeight = hasBothHands ? height * 2 + GRAND_STAFF_GAP : height;
 
     const renderer = new Renderer(containerRef.current, Renderer.Backends.SVG);
     renderer.resize(canvasWidth, canvasHeight);
@@ -378,6 +425,8 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
           // Verificar se a próxima nota é um intervalo e construir acorde
           const noteIdx = measureNotes.indexOf(el);
           const intervalKeys: string[] = [noteToVexKey(noteEl)];
+          /** Mapa: índice-no-loop → { posição-na-chave, tipo-de-acidente } para notas de intervalo */
+          const intervalAccidentals = new Map<number, { noteIdx: number; accidental: string }>();
           let skipCount = 0;
 
           // Coletar intervalos consecutivos após esta nota
@@ -414,6 +463,18 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
             keys: intervalKeys,
             duration: noteToVexDuration(noteEl),
             clef: activeClef,
+          });
+          // Aplicar acidentes nas notas de intervalo (não afetam armadura global)
+          intervalAccidentals.forEach(({ noteIdx, accidental }) => {
+            try {
+              const vexAcc = accidental === 'sharp' ? '#'
+                : accidental === 'flat' ? 'b'
+                : accidental === 'natural' ? 'n'
+                : accidental === 'double-sharp' ? '##'
+                : accidental === 'double-flat' ? 'bb'
+                : null;
+              if (vexAcc) vexNote.addModifier(new Accidental(vexAcc), noteIdx);
+            } catch { /* ignora se VexFlow não suportar */ }
           });
 
           // Add accidental if present (convert from parser format to VexFlow format)
@@ -550,6 +611,69 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
 
       x += currentStaveWidth;
     }
+
+    // ── PAUTA DE BAIXO (grand staff quando hasBothHands) ──────────────────────
+    if (hasBothHands && bassMeasures.length > 0) {
+      let bx = 10;
+      for (let bi = 0; bi < bassMeasures.length; bi++) {
+        const bm = bassMeasures[bi];
+        const bmNotes = bm.notes.filter((n: any) => n.type === 'note' || n.type === 'rest');
+        if (bmNotes.length === 0) continue;
+
+        const ksAcc2 = keySignature ? Math.abs(
+          ['C','G','D','A','E','B','F#','C#'].indexOf(keySignature) !== -1
+            ? ['C','G','D','A','E','B','F#','C#'].indexOf(keySignature)
+            : (['F','Bb','Eb','Ab','Db','Gb','Cb'].indexOf(keySignature) + 1)
+        ) : 0;
+        const extraW2 = bi === 0 ? (36 + ksAcc2 * 18 + 10 + (timeSignatureEl ? 26 : 0) + 16) : 0;
+        const notesW2 = bmNotes.reduce((s: number, n: any) => s + getNoteWidth(n), 0);
+        const bStaveW = Math.max(200, notesW2 + extraW2 + 40);
+
+        try {
+          const stave2 = new Stave(bx, bassStaveY, bStaveW);
+          stave2.setContext(context);
+          if (bi === 0) {
+            stave2.addClef('bass');
+            if (keySignature) {
+              const vk2 = ['C','G','D','A','E','B','F#','C#','F','Bb','Eb','Ab','Db','Gb','Cb'];
+              if (vk2.includes(keySignature)) {
+                try { stave2.addKeySignature(keySignature); } catch { /* ignora */ }
+              }
+            }
+          }
+          stave2.draw();
+
+          const vn2 = bmNotes.map((el: any) => {
+            if (el.type === 'rest') {
+              return new StaveNote({ keys: ['d/3'], duration: noteToVexDuration(el), clef: 'bass' });
+            }
+            return new StaveNote({ keys: [`${el.pitch.toLowerCase()}/${el.octave}`], duration: noteToVexDuration(el), clef: 'bass' });
+          });
+
+          const voice2 = new Voice({ numBeats: timeSignature.numerator, beatValue: timeSignature.denominator });
+          voice2.setStrict(false);
+          voice2.addTickables(vn2);
+
+          const isComp2 = timeSignature.denominator === 8 && [6,9,12].includes(timeSignature.numerator);
+          const bSz2 = isComp2 ? 3 : 2;
+          const beams2: any[] = [];
+          const beable2 = vn2.filter((n: any) => ['8','16','32','64'].includes((n as any).duration));
+          for (let bb = 0; bb < beable2.length; bb += bSz2) {
+            const g = beable2.slice(bb, bb + bSz2);
+            if (g.length >= 2) { try { beams2.push(new Beam(g)); } catch { /* ignora */ } }
+          }
+
+          try {
+            new Formatter().joinVoices([voice2]).format([voice2], bStaveW - extraW2 - 20);
+            voice2.draw(context as any, stave2);
+            beams2.forEach((b: any) => { try { b.setContext(context as any).draw(); } catch { /* ignora */ } });
+          } catch (e) { console.warn('Bass staff format error:', e); }
+        } catch (e) { console.warn('Bass staff render error:', e); }
+
+        bx += bStaveW;
+      }
+    }
+
     } catch (e) {
       console.error('ScoreRenderer VexFlow error:', e);
     }
@@ -594,7 +718,7 @@ export default function ScoreRenderer({ elements, width = 1000, height = 300, be
       svg.addEventListener('click', onClick as EventListener);
       return () => svg.removeEventListener('click', onClick as EventListener);
     }
-  }, [handleNoteClick, measures]);
+  }, [handleNoteClick, measures, bassMeasures, hasBothHands, bassStaveY]);
 
   return (
     <div
