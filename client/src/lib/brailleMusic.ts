@@ -684,7 +684,13 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
   let i = 0;
   const len = input.length;
 
-  let musicStarted = false; // espaços antes da primeira nota são ignorados
+  // isMusicContextActive: FALSE até encontrar token de ativação musical explícito.
+  // Tokens de ativação: Clave (⠜⠌⠇ / ⠜⠼⠇), Mão (⠨⠜ / ⠸⠜), Fórmula de Compasso (⠼).
+  // Enquanto FALSE, espaços são silenciosos e texto plano é ignorado.
+  let isMusicContextActive = false;
+  // noteOctaveSeen: TRUE após o primeiro sinal de oitava de nota.
+  // Espaços só incrementam compasso DEPOIS do primeiro sinal de oitava.
+  let noteOctaveSeen = false;
 
   while (i < len) {
     const ch  = input[i];
@@ -695,13 +701,14 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
     if (ch === '\n' || ch === '\r') { i++; continue; }
 
     // Espaço = barra de compasso simples
+    // Condição dupla: (1) contexto musical ativo, (2) já viu sinal de oitava.
+    // Espaços antes do primeiro sinal de oitava (ex: entre armadura e TS) são silenciosos.
     if (ch === ' ' || ch === '\u2800') {
-      if (musicStarted) {
-        // Espaço após a música = barra de compasso
+      if (isMusicContextActive && noteOctaveSeen) {
         measures.push({ tokens: curTokens, barlineType: 'single' });
         curTokens = [];
       }
-      // Espaço antes da música (armadura, TS): ignorar silenciosamente
+      // Espaço sem contexto musical ou sem oitava: ignorar silenciosamente
       i++; continue;
     }
 
@@ -728,6 +735,7 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
 
     // Oitavas duplas
     if (OCTAVE_MAP[two] !== undefined && two.length === 2 && ch2) {
+      noteOctaveSeen = true; // oitava dupla → espaços passam a ser barras
       curTokens.push({ kind: 'oct', val: OCTAVE_MAP[two], idx: i }); i += 2; continue;
     }
 
@@ -741,6 +749,7 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
       }
       const ts = tryReadTimeSignature(input, i);
       if (ts) {
+        isMusicContextActive = true; // ⠼ = gatilho de ativação musical
         curTokens.push({ kind: 'ts', numerator: ts.numerator, denominator: ts.denominator, idx: i });
         beatsPerMeasure = ts.numerator;
         i += ts.advance; continue;
@@ -758,12 +767,14 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
     // ANTES de C/C-cortado e oitavas — ambos começam com ⠨/⠸ mas têm segunda célula ⠜
     // Garante detecção mesmo sem espaço entre mão e nota adjacente
     if (two === HAND_RIGHT) {
+      isMusicContextActive = true; // Mão Direita = gatilho de ativação musical
       curTokens.push({ kind: 'hand', hand: 'right', impliedClef: 'treble', intervalDirection: 'descending', idx: i });
-      musicStarted = true; i += 2; continue;
+      i += 2; continue;
     }
     if (two === HAND_LEFT) {
+      isMusicContextActive = true; // Mão Esquerda = gatilho de ativação musical
       curTokens.push({ kind: 'hand', hand: 'left', impliedClef: 'bass', intervalDirection: 'ascending', idx: i });
-      musicStarted = true; i += 2; continue;
+      i += 2; continue;
     }
 
     // Fórmulas C (⠨⠉ = \u2828\u2809) e C-cortado (⠸⠉ = \u2838\u2809)
@@ -782,10 +793,12 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
     // Clave de Fá (bass)   → intervalos ascendentes
     // Clave de Dó (tenor)  → intervalos descendentes (mesmo comportamento de treble)
     if (three === CLEF_TREBLE) {
+      isMusicContextActive = true; // Clave de Sol = gatilho de ativação musical
       curTokens.push({ kind: 'clef', clefType: 'treble', intervalDirection: 'descending', idx: i });
       i += 3; continue;
     }
     if (three === CLEF_BASS) {
+      isMusicContextActive = true; // Clave de Fá = gatilho de ativação musical
       curTokens.push({ kind: 'clef', clefType: 'bass', intervalDirection: 'ascending', idx: i });
       i += 3; continue;
     }
@@ -807,6 +820,7 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
 
     // Oitava simples
     if (OCTAVE_MAP[ch] !== undefined) {
+      noteOctaveSeen = true; // primeiro sinal de oitava → espaços passam a ser barras
       curTokens.push({ kind: 'oct', val: OCTAVE_MAP[ch], idx: i }); i++; continue;
     }
 
@@ -882,7 +896,7 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
 
     // Pausa
     if (REST_MAP[ch]) {
-      musicStarted = true;
+      isMusicContextActive = true; noteOctaveSeen = true;
       const r = REST_MAP[ch];
       const dotted  = i + 1 < len && input[i + 1] === AUGMENTATION_DOT;
       const dotted2 = dotted && i + 2 < len && input[i + 2] === AUGMENTATION_DOT;
@@ -892,7 +906,7 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
 
     // Nota
     if (NOTE_MAP[ch]) {
-      musicStarted = true;
+      isMusicContextActive = true; noteOctaveSeen = true;
       const n = NOTE_MAP[ch];
       const dotted  = i + 1 < len && input[i + 1] === AUGMENTATION_DOT;
       const dotted2 = dotted && i + 2 < len && input[i + 2] === AUGMENTATION_DOT;
@@ -901,6 +915,13 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
     }
 
     if (ch === AUGMENTATION_DOT) { i++; continue; }
+
+    // Caractere não reconhecido:
+    // se contexto musical não foi ativado ainda, pode ser texto plano (título, autor, etc.)
+    // → ignorar silenciosamente sem gerar elemento nem erro
+    if (!isMusicContextActive) { i++; continue; }
+
+    // No contexto musical, pular caractere desconhecido sem gerar erro
     i++;
   }
   if (curTokens.length > 0) measures.push({ tokens: curTokens, barlineType: 'single' });

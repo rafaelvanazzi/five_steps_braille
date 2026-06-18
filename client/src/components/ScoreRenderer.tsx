@@ -604,7 +604,8 @@ export default function ScoreRenderer({
     containerRef.current.innerHTML = '';
     noteHitAreas.current = [];
 
-    const totalWidth  = Math.max(width, staveWidths.reduce((s, w) => s + w, 20) + 20);
+    // +30 de offset inicial (margem para StaveConnector BRACE) + 20 de padding direito
+    const totalWidth  = Math.max(width, staveWidths.reduce((s, w) => s + w, 30) + 30);
     const totalHeight = hasBothHands ? height * 2 + GRAND_GAP : height;
 
     const renderer = new Renderer(containerRef.current, Renderer.Backends.SVG);
@@ -613,7 +614,7 @@ export default function ScoreRenderer({
 
     // ── Pauta treble ──────────────────────────────────────────────────────
     const trebleStaves = renderStaveSystem(
-      ctx, trebleMeasures, 10, 40, staveWidths,
+      ctx, trebleMeasures, 30, 40, staveWidths,
       hasBothHands ? 'treble' : activeClef,
       hasBothHands ? 'descending' : intervalDirection,
       keySignature, timeSignatureEl, timeSignature,
@@ -624,7 +625,7 @@ export default function ScoreRenderer({
     let bassStaves: Stave[] = [];
     if (hasBothHands && bassMeasures.length > 0) {
       bassStaves = renderStaveSystem(
-        ctx, bassMeasures, 10, bassStartY, staveWidths,
+        ctx, bassMeasures, 30, bassStartY, staveWidths,
         'bass', 'ascending',
         keySignature, timeSignatureEl, timeSignature,
         noteHitAreas.current,
