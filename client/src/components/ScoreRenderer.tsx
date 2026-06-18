@@ -39,6 +39,8 @@ interface ScoreRendererProps {
   width?: number;
   height?: number;
   beatsPerMeasure?: number;
+  /** Forçar modo de pauta dupla (grand staff) independente da detecção automática */
+  grandStaff?: boolean;
   /** Chamado quando o usuário clica em uma nota — recebe sourceIndex */
   onNoteClick?: (sourceIndex: number) => void;
   /** @deprecated Use onNoteClick */
@@ -250,6 +252,18 @@ interface HandSplit {
   hasBothHands: boolean;
 }
 
+/**
+ * Separa elementos por mão (Mão Direita → treble, Mão Esquerda → bass).
+ *
+ * LÓGICA DO LEITOR BRAILLE:
+ * Na partitura de piano em braille, a mão direita é escrita primeiro com seus
+ * compassos (0, 1, 2...). Ao encontrar o sinal de Mão Esquerda, o contador de
+ * compassos RESETA para 0 e a mão esquerda preenche os mesmos compassos em
+ * paralelo. O ScoreRenderer usa measureIndex para alinhar verticalmente.
+ *
+ * Barlines são propagadas para AMBAS as pautas para que groupIntoMeasures
+ * produza o mesmo número de compassos em cada pauta.
+ */
 function splitByHand(elements: ParsedElement[]): HandSplit {
   const treble: ParsedElement[] = [];
   const bass:   ParsedElement[] = [];
@@ -257,30 +271,42 @@ function splitByHand(elements: ParsedElement[]): HandSplit {
   let sawRight = false;
   let sawLeft  = false;
 
+  // Elementos globais (armadura, TS, clave) → registrados antes de qualquer mão
+  // Serão propagados para ambas as pautas
+  const globalEls: ParsedElement[] = [];
+
   for (const el of elements) {
-    // Sinal de mão: redirecionar fluxo
+    // Sinal de mão: trocar o fluxo ativo
     if (el.type === 'hand') {
       currentHand = (el as any).hand as 'right' | 'left';
-      if (currentHand === 'right') sawRight = true;
-      if (currentHand === 'left')  sawLeft  = true;
-      // Propagar sinal para ambas as pautas (contexto de clave)
-      treble.push(el);
-      bass.push(el);
+      if (currentHand === 'right') {
+        sawRight = true;
+        treble.push(el);
+        bass.push(el); // contexto de clave para a pauta bass também
+      } else {
+        sawLeft = true;
+        bass.push(el);
+        treble.push(el); // contexto de clave para a pauta treble também
+      }
       continue;
     }
-    // Elementos globais → ambas as pautas
+
+    // Elementos globais → ambas as pautas (independente da mão atual)
     if (el.type === 'keysignature' || el.type === 'timesignature' || el.type === 'clef') {
       treble.push(el);
       bass.push(el);
+      globalEls.push(el);
       continue;
     }
-    // Barlines → ambas (para sincronizar compassos)
+
+    // Barlines → AMBAS as pautas para manter compassos sincronizados
     if (el.type === 'barline') {
       treble.push(el);
       bass.push(el);
       continue;
     }
-    // Notas/pausas/intervalos → mão correspondente
+
+    // Notas, pausas, intervalos → mão atual
     if (currentHand === 'left') {
       bass.push(el);
     } else {
@@ -484,6 +510,7 @@ export default function ScoreRenderer({
   width = 1000,
   height = 300,
   beatsPerMeasure = 4,
+  grandStaff: grandStaffProp,
   onNoteClick,
   onMeasureClick,
 }: ScoreRendererProps) {
@@ -534,10 +561,12 @@ export default function ScoreRenderer({
   }, [elements]);
 
   // ── Grand staff ────────────────────────────────────────────────────────────
-  const { trebleEls, bassEls, hasBothHands } = useMemo(
+  const { trebleEls, bassEls, hasBothHands: detectedBothHands } = useMemo(
     () => splitByHand(elements),
     [elements]
   );
+  // hasBothHands: auto-detectado OU forçado pela prop grandStaff
+  const hasBothHands = grandStaffProp ?? detectedBothHands;
 
   const GRAND_GAP  = 60;
   const bassStartY = hasBothHands ? height + GRAND_GAP : 0;
@@ -545,19 +574,29 @@ export default function ScoreRenderer({
   const trebleMeasures = useMemo(() => groupIntoMeasures(trebleEls), [trebleEls]);
   const bassMeasures   = useMemo(() => groupIntoMeasures(bassEls),   [bassEls]);
 
-  // Larguras de compasso — treble define; bass espelha para alinhamento vertical
+  // Larguras de compasso: máximo entre treble e bass para cada índice
+  // Garante que compassos simultâneos tenham a mesma largura → alinhamento X perfeito
   const staveWidths = useMemo(() => {
     const BASE = 50;
     const MIN  = 200;
     const ksN  = ksAccidentalCount(keySignature);
+    const nMeasures = Math.max(trebleMeasures.length, bassMeasures.length);
 
-    return trebleMeasures.map((measure, i) => {
-      const mNotes = measure.notes.filter(n => n.type === 'note' || n.type === 'rest' || n.type === 'interval');
-      const extra  = i === 0 ? firstMeasureExtra(ksN, !!timeSignatureEl) : 0;
-      const notesW = mNotes.reduce((s, n) => s + calcNoteWidth(n, BASE), 0);
-      return Math.max(MIN, notesW + extra + 40);
+    return Array.from({ length: nMeasures }, (_, i) => {
+      const tMeasure = trebleMeasures[i];
+      const bMeasure = bassMeasures[i];
+      const extra    = i === 0 ? firstMeasureExtra(ksN, !!timeSignatureEl) : 0;
+
+      const tNotes = tMeasure?.notes.filter(n => n.type === 'note' || n.type === 'rest' || n.type === 'interval') ?? [];
+      const bNotes = bMeasure?.notes.filter(n => n.type === 'note' || n.type === 'rest' || n.type === 'interval') ?? [];
+
+      const tW = tNotes.reduce((s, n) => s + calcNoteWidth(n, BASE), 0);
+      const bW = bNotes.reduce((s, n) => s + calcNoteWidth(n, BASE), 0);
+
+      // Usar o maior entre treble e bass + espaço de cabeçalho + padding
+      return Math.max(MIN, Math.max(tW, bW) + extra + 40);
     });
-  }, [trebleMeasures, keySignature, timeSignatureEl]);
+  }, [trebleMeasures, bassMeasures, keySignature, timeSignatureEl]);
 
   // ── Efeito principal de renderização ──────────────────────────────────────
   useEffect(() => {
@@ -610,7 +649,7 @@ export default function ScoreRenderer({
   }, [
     elements, trebleMeasures, bassMeasures, staveWidths,
     width, height, activeClef, intervalDirection, hasBothHands,
-    keySignature, timeSignatureEl, timeSignature, bassStartY,
+    keySignature, timeSignatureEl, timeSignature, bassStartY, grandStaffProp,
   ]);
 
   // ── Click listener ────────────────────────────────────────────────────────

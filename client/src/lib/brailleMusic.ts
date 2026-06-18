@@ -208,8 +208,6 @@ const CLEF_TREBLE = '\u281C\u280C\u2807'; // ⠜⠌⠇ (3,4,5)+(3,4)+(1,2,3) —
 const CLEF_BASS   = '\u281C\u283C\u2807'; // ⠜⠼⠇ (3,4,5)+(3,4,5,6)+(1,2,3) — clave de fá (4ª linha)
 
 // Parte mão direita / mão esquerda (piano)
-const RIGHT_HAND  = '\u2828\u281C'; // ⠨⠜ (4,6)+(3,4,5)
-const LEFT_HAND   = '\u2838\u281C'; // ⠸⠜ (4,5,6)+(3,4,5)
 
 // Hífen musical (compasso continua na linha seguinte)
 const MUSICAL_HYPHEN = '\u2810'; // ⠐ (5) — ATENÇÃO: mesmo que oitava 4 → desambiguar por contexto
@@ -218,6 +216,7 @@ const MUSICAL_HYPHEN = '\u2810'; // ⠐ (5) — ATENÇÃO: mesmo que oitava 4 �
 const CLEF_SOL_2 = '\u281C\u280C\u2807'; // ⠜⠌⠇ (3,4,5)+(3,4)+(1,2,3) — Clave de Sol 2ª linha
 const CLEF_FA_4  = '\u281C\u283C\u2807'; // ⠜⠼⠇ (3,4,5)+(3,4,5,6)+(1,2,3) — Clave de Fá 4ª linha
 const CLEF_DO_3  = '\u281C\u282C\u2807'; // ⠜⠬⠇ (3,4,5)+(3,4,6)+(1,2,3) — Clave de Dó 3ª linha
+const CLEF_DO_4  = '\u281C\u282C\u2810\u2807'; // ⠜⠬⠐⠇ (3,4,5)+(3,4,6)+(5)+(1,2,3) — Clave de Dó 4ª linha (violoncelo)
 
 // ─── MÃO DIREITA / ESQUERDA ────────────────────────────────────────────────────
 const HAND_RIGHT = '\u2828\u281C'; // ⠨⠜ (4,6)+(3,4,5) — mão direita → clave de sol
@@ -671,7 +670,12 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
     | { kind: 'ks'; fifths: number; vexKey: string; idx: number }
     | { kind: 'clef'; clefType: 'treble' | 'bass' | 'tenor' | 'alto'; intervalDirection: 'ascending' | 'descending'; idx: number }
     | { kind: 'hand'; hand: 'right' | 'left'; impliedClef: 'treble' | 'bass'; intervalDirection: 'ascending' | 'descending'; idx: number }
-    | { kind: 'interval'; intervalSize: number; pendingAccidental?: Accidental; pendingOctave?: number; idx: number };
+    | { kind: 'interval'; intervalSize: number; pendingAccidental?: Accidental; pendingOctave?: number; idx: number }
+    | { kind: 'dynamic'; name: string; idx: number }
+    | { kind: 'ornament'; name: string; idx: number }
+    | { kind: 'articulation'; name: string; idx: number }
+    | { kind: 'quialtera'; name: string; idx: number }
+    | { kind: 'repetition'; name: string; idx: number };
 
   type RawMeasure = { tokens: RawToken[]; barlineType: string };
   const measures: RawMeasure[] = [];
@@ -750,6 +754,18 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
       if (ks3) { curTokens.push({ kind: 'ks', fifths: ks3.fifths, vexKey: ks3.vexKey, idx: i }); i += 3; continue; }
     }
 
+    // Mão direita ⠨⠜ (\u2828\u281C) e Mão esquerda ⠸⠜ (\u2838\u281C)
+    // ANTES de C/C-cortado e oitavas — ambos começam com ⠨/⠸ mas têm segunda célula ⠜
+    // Garante detecção mesmo sem espaço entre mão e nota adjacente
+    if (two === HAND_RIGHT) {
+      curTokens.push({ kind: 'hand', hand: 'right', impliedClef: 'treble', intervalDirection: 'descending', idx: i });
+      musicStarted = true; i += 2; continue;
+    }
+    if (two === HAND_LEFT) {
+      curTokens.push({ kind: 'hand', hand: 'left', impliedClef: 'bass', intervalDirection: 'ascending', idx: i });
+      musicStarted = true; i += 2; continue;
+    }
+
     // Fórmulas C (⠨⠉ = \u2828\u2809) e C-cortado (⠸⠉ = \u2838\u2809)
     // ANTES de claves — ⠸ e ⠨ são também oitavas 3 e 5
     if (two === '\u2828\u2809') {
@@ -773,8 +789,15 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
       curTokens.push({ kind: 'clef', clefType: 'bass', intervalDirection: 'ascending', idx: i });
       i += 3; continue;
     }
-    // Clave de Dó 4ª linha (violoncelo) — 4 células
-    // CLEF_DO_4 não definido, removido
+    // Clave de Dó 4ª linha (violoncelo/tenor) — 4 células
+    // Clave de Dó na 4ª linha comporta-se como bass: intervalos ASCENDENTES
+    {
+      const fourChars = input.substring(i, i + 4);
+      if (fourChars === CLEF_DO_4) {
+        curTokens.push({ kind: 'clef', clefType: 'tenor', intervalDirection: 'ascending', idx: i });
+        i += 4; continue;
+      }
+    }
 
     // Staccato ⠦
     if (ch === STACCATO) { curTokens.push({ kind: 'staccato', idx: i }); i++; continue; }
@@ -891,6 +914,8 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
   let inNoteContext    = false;
 
   // Processar cada compasso
+  // measureIndex é emitido em cada elemento para permitir sincronização do grand staff
+  let measureIndex = 0;
   for (const measure of measures) {
     const noteRestTokens = measure.tokens.filter(t => t.kind === 'note' || t.kind === 'rest') as
       Array<{ kind: string; primary: Duration; secondary: Duration; dotted: boolean; dotted2: boolean }>;
@@ -939,11 +964,11 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
         });
         continue;
       }
-      if ((tk as any).kind === 'dynamic')       { elements.push({ type: 'dynamic', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
-      if ((tk as any).kind === 'ornament')      { elements.push({ type: 'ornament', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
-      if ((tk as any).kind === 'articulation')  { elements.push({ type: 'articulation', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
-      if ((tk as any).kind === 'quialtera')     { elements.push({ type: 'quialtera', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
-      if ((tk as any).kind === 'repetition')    { elements.push({ type: 'repetition', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
+      if (tk.kind === 'dynamic')       { elements.push({ type: 'dynamic', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
+      if (tk.kind === 'ornament')      { elements.push({ type: 'ornament', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
+      if (tk.kind === 'articulation')  { elements.push({ type: 'articulation', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
+      if (tk.kind === 'quialtera')     { elements.push({ type: 'quialtera', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
+      if (tk.kind === 'repetition')    { elements.push({ type: 'repetition', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
       if (tk.kind === 'slur')          { elements.push({ type: 'slur', slurType: (tk as any).slurType, sourceIndex: (tk as any).idx }); continue; }
       if (tk.kind === 'tie')     { elements.push({ type: 'tie', sourceIndex: (tk as any).idx }); continue; }
       if (tk.kind === 'phrase')  { elements.push({ type: 'phrase', phraseType: (tk as any).phraseType, sourceIndex: (tk as any).idx }); continue; }
@@ -998,7 +1023,8 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
     }
 
     // Emitir barra de compasso
-    elements.push({ type: 'barline', sourceIndex: 0, barlineType: measure.barlineType as any });
+    elements.push({ type: 'barline', sourceIndex: 0, barlineType: measure.barlineType as any, measureIndex } as any);
+    measureIndex++;
   }
 
   // Remover barra final vazia se último elemento
