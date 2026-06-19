@@ -208,6 +208,8 @@ const CLEF_TREBLE = '\u281C\u280C\u2807'; // ⠜⠌⠇ (3,4,5)+(3,4)+(1,2,3) —
 const CLEF_BASS   = '\u281C\u283C\u2807'; // ⠜⠼⠇ (3,4,5)+(3,4,5,6)+(1,2,3) — clave de fá (4ª linha)
 
 // Parte mão direita / mão esquerda (piano)
+const RIGHT_HAND  = '\u2828\u281C'; // ⠨⠜ (4,6)+(3,4,5)
+const LEFT_HAND   = '\u2838\u281C'; // ⠸⠜ (4,5,6)+(3,4,5)
 
 // Hífen musical (compasso continua na linha seguinte)
 const MUSICAL_HYPHEN = '\u2810'; // ⠐ (5) — ATENÇÃO: mesmo que oitava 4 → desambiguar por contexto
@@ -216,7 +218,6 @@ const MUSICAL_HYPHEN = '\u2810'; // ⠐ (5) — ATENÇÃO: mesmo que oitava 4 �
 const CLEF_SOL_2 = '\u281C\u280C\u2807'; // ⠜⠌⠇ (3,4,5)+(3,4)+(1,2,3) — Clave de Sol 2ª linha
 const CLEF_FA_4  = '\u281C\u283C\u2807'; // ⠜⠼⠇ (3,4,5)+(3,4,5,6)+(1,2,3) — Clave de Fá 4ª linha
 const CLEF_DO_3  = '\u281C\u282C\u2807'; // ⠜⠬⠇ (3,4,5)+(3,4,6)+(1,2,3) — Clave de Dó 3ª linha
-const CLEF_DO_4  = '\u281C\u282C\u2810\u2807'; // ⠜⠬⠐⠇ (3,4,5)+(3,4,6)+(5)+(1,2,3) — Clave de Dó 4ª linha (violoncelo)
 
 // ─── MÃO DIREITA / ESQUERDA ────────────────────────────────────────────────────
 const HAND_RIGHT = '\u2828\u281C'; // ⠨⠜ (4,6)+(3,4,5) — mão direita → clave de sol
@@ -670,13 +671,7 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
     | { kind: 'ks'; fifths: number; vexKey: string; idx: number }
     | { kind: 'clef'; clefType: 'treble' | 'bass' | 'tenor' | 'alto'; intervalDirection: 'ascending' | 'descending'; idx: number }
     | { kind: 'hand'; hand: 'right' | 'left'; impliedClef: 'treble' | 'bass'; intervalDirection: 'ascending' | 'descending'; idx: number }
-    | { kind: 'interval'; intervalSize: number; pendingAccidental?: Accidental; pendingOctave?: number; idx: number }
-    | { kind: 'dynamic'; name: string; idx: number }
-    | { kind: 'ornament'; name: string; idx: number }
-    | { kind: 'articulation'; name: string; idx: number }
-    | { kind: 'quialtera'; name: string; idx: number }
-    | { kind: 'repetition'; name: string; idx: number }
-    | { kind: 'text'; char: string; idx: number };
+    | { kind: 'interval'; intervalSize: number; pendingAccidental?: Accidental; pendingOctave?: number; idx: number };
 
   type RawMeasure = { tokens: RawToken[]; barlineType: string };
   const measures: RawMeasure[] = [];
@@ -685,13 +680,7 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
   let i = 0;
   const len = input.length;
 
-  // isMusicContextActive: FALSE até encontrar token de ativação musical explícito.
-  // Tokens de ativação: Clave (⠜⠌⠇ / ⠜⠼⠇), Mão (⠨⠜ / ⠸⠜), Fórmula de Compasso (⠼).
-  // Enquanto FALSE, espaços são silenciosos e texto plano é ignorado.
-  let isMusicContextActive = false;
-  // noteOctaveSeen: TRUE após o primeiro sinal de oitava de nota.
-  // Espaços só incrementam compasso DEPOIS do primeiro sinal de oitava.
-  let noteOctaveSeen = false;
+  let musicStarted = false; // espaços antes da primeira nota são ignorados
 
   while (i < len) {
     const ch  = input[i];
@@ -701,38 +690,21 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
 
     if (ch === '\n' || ch === '\r') { i++; continue; }
 
-    // Espaço = barra de compasso simples (com exclusão estrutural)
-    // Regra: o espaço só cria barra de compasso se:
-    //   (1) O contexto musical está ativo (já encontrou clave, mão ou ⠼)
-    //   (2) O bloco atual (curTokens) contém notas, pausas ou intervalos reais
-    //       — blocos com APENAS configurações (hand, clef, ks, ts, oct) são
-    //         "espaços decorativos de cabeçalho" e não incrementam o compasso.
+    // Espaço = barra de compasso simples
     if (ch === ' ' || ch === '\u2800') {
-      if (isMusicContextActive) {
-        const hasRealMusic = curTokens.some(
-          tk => tk.kind === 'note' || tk.kind === 'rest' || tk.kind === 'interval'
-        );
-        if (hasRealMusic) {
-          measures.push({ tokens: curTokens, barlineType: 'single' });
-          curTokens = [];
-        }
-        // Bloco só com configurações: descartar tokens decorativos de cabeçalho
-        // mas manter o estado (armadura/clave já foram enfileirados)
+      if (musicStarted) {
+        // Espaço após a música = barra de compasso
+        measures.push({ tokens: curTokens, barlineType: 'single' });
+        curTokens = [];
       }
-      // Sem contexto musical: ignorar silenciosamente
+      // Espaço antes da música (armadura, TS): ignorar silenciosamente
       i++; continue;
     }
 
     // Barras especiais (2 células) — ANTES de testar bemol ⠣
-    // A barra final (⠣⠅) sempre termina o compasso atual, mesmo que seja um bloco de cabeçalho
     if (BARLINE_TWO_CELL[two]) {
-      const bType = BARLINE_TWO_CELL[two];
-      // Encerrar compasso atual SE há tokens (musicais ou de configuração com barra explícita)
-      if (curTokens.length > 0 || bType === 'end') {
-        measures.push({ tokens: curTokens, barlineType: bType });
-        curTokens = [];
-      }
-      i += 2; continue;
+      measures.push({ tokens: curTokens, barlineType: BARLINE_TWO_CELL[two] });
+      curTokens = []; i += 2; continue;
     }
 
     // Fermata ⠣⠇ — ANTES de testar bemol ⠣
@@ -752,7 +724,6 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
 
     // Oitavas duplas
     if (OCTAVE_MAP[two] !== undefined && two.length === 2 && ch2) {
-      noteOctaveSeen = true; // oitava dupla → espaços passam a ser barras
       curTokens.push({ kind: 'oct', val: OCTAVE_MAP[two], idx: i }); i += 2; continue;
     }
 
@@ -766,7 +737,6 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
       }
       const ts = tryReadTimeSignature(input, i);
       if (ts) {
-        isMusicContextActive = true; // ⠼ = gatilho de ativação musical
         curTokens.push({ kind: 'ts', numerator: ts.numerator, denominator: ts.denominator, idx: i });
         beatsPerMeasure = ts.numerator;
         i += ts.advance; continue;
@@ -778,20 +748,6 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
     if (i + 2 < len) {
       const ks3 = OFFICIAL_KEY_SIGNATURE_MAP[three];
       if (ks3) { curTokens.push({ kind: 'ks', fifths: ks3.fifths, vexKey: ks3.vexKey, idx: i }); i += 3; continue; }
-    }
-
-    // Mão direita ⠨⠜ (\u2828\u281C) e Mão esquerda ⠸⠜ (\u2838\u281C)
-    // ANTES de C/C-cortado e oitavas — ambos começam com ⠨/⠸ mas têm segunda célula ⠜
-    // Garante detecção mesmo sem espaço entre mão e nota adjacente
-    if (two === HAND_RIGHT) {
-      isMusicContextActive = true; // Mão Direita = gatilho de ativação musical
-      curTokens.push({ kind: 'hand', hand: 'right', impliedClef: 'treble', intervalDirection: 'descending', idx: i });
-      i += 2; continue;
-    }
-    if (two === HAND_LEFT) {
-      isMusicContextActive = true; // Mão Esquerda = gatilho de ativação musical
-      curTokens.push({ kind: 'hand', hand: 'left', impliedClef: 'bass', intervalDirection: 'ascending', idx: i });
-      i += 2; continue;
     }
 
     // Fórmulas C (⠨⠉ = \u2828\u2809) e C-cortado (⠸⠉ = \u2838\u2809)
@@ -810,21 +766,18 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
     // Clave de Fá (bass)   → intervalos ascendentes
     // Clave de Dó (tenor)  → intervalos descendentes (mesmo comportamento de treble)
     if (three === CLEF_TREBLE) {
-      isMusicContextActive = true; // Clave de Sol = gatilho de ativação musical
       curTokens.push({ kind: 'clef', clefType: 'treble', intervalDirection: 'descending', idx: i });
       i += 3; continue;
     }
     if (three === CLEF_BASS) {
-      isMusicContextActive = true; // Clave de Fá = gatilho de ativação musical
       curTokens.push({ kind: 'clef', clefType: 'bass', intervalDirection: 'ascending', idx: i });
       i += 3; continue;
     }
-    // Clave de Dó 4ª linha (violoncelo/tenor) — 4 células
-    // Clave de Dó na 4ª linha comporta-se como bass: intervalos ASCENDENTES
+    // Clave de Dó 4ª linha (violoncelo) — 4 células
     {
       const fourChars = input.substring(i, i + 4);
       if (fourChars === CLEF_DO_4) {
-        curTokens.push({ kind: 'clef', clefType: 'tenor', intervalDirection: 'ascending', idx: i });
+        curTokens.push({ kind: 'clef', clefType: 'tenor', intervalDirection: 'descending', idx: i });
         i += 4; continue;
       }
     }
@@ -837,7 +790,6 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
 
     // Oitava simples
     if (OCTAVE_MAP[ch] !== undefined) {
-      noteOctaveSeen = true; // primeiro sinal de oitava → espaços passam a ser barras
       curTokens.push({ kind: 'oct', val: OCTAVE_MAP[ch], idx: i }); i++; continue;
     }
 
@@ -913,7 +865,7 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
 
     // Pausa
     if (REST_MAP[ch]) {
-      isMusicContextActive = true; noteOctaveSeen = true;
+      musicStarted = true;
       const r = REST_MAP[ch];
       const dotted  = i + 1 < len && input[i + 1] === AUGMENTATION_DOT;
       const dotted2 = dotted && i + 2 < len && input[i + 2] === AUGMENTATION_DOT;
@@ -923,7 +875,7 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
 
     // Nota
     if (NOTE_MAP[ch]) {
-      isMusicContextActive = true; noteOctaveSeen = true;
+      musicStarted = true;
       const n = NOTE_MAP[ch];
       const dotted  = i + 1 < len && input[i + 1] === AUGMENTATION_DOT;
       const dotted2 = dotted && i + 2 < len && input[i + 2] === AUGMENTATION_DOT;
@@ -932,16 +884,6 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
     }
 
     if (ch === AUGMENTATION_DOT) { i++; continue; }
-
-    // Caractere não reconhecido:
-    // se contexto musical não foi ativado ainda, é texto literário (título, autor, etc.)
-    // → emitir como kind:'text' para que o ScoreRenderer possa filtrar explicitamente
-    if (!isMusicContextActive) {
-      curTokens.push({ kind: 'text', char: ch, idx: i });
-      i++; continue;
-    }
-
-    // No contexto musical, pular caractere desconhecido sem gerar elemento
     i++;
   }
   if (curTokens.length > 0) measures.push({ tokens: curTokens, barlineType: 'single' });
@@ -955,8 +897,6 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
   let inNoteContext    = false;
 
   // Processar cada compasso
-  // measureIndex é emitido em cada elemento para permitir sincronização do grand staff
-  let measureIndex = 0;
   for (const measure of measures) {
     const noteRestTokens = measure.tokens.filter(t => t.kind === 'note' || t.kind === 'rest') as
       Array<{ kind: string; primary: Duration; secondary: Duration; dotted: boolean; dotted2: boolean }>;
@@ -1010,7 +950,6 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
       if (tk.kind === 'articulation')  { elements.push({ type: 'articulation', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
       if (tk.kind === 'quialtera')     { elements.push({ type: 'quialtera', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
       if (tk.kind === 'repetition')    { elements.push({ type: 'repetition', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
-      if (tk.kind === 'text')           { /* texto literário: não emite elemento musical */ continue; }
       if (tk.kind === 'slur')          { elements.push({ type: 'slur', slurType: (tk as any).slurType, sourceIndex: (tk as any).idx }); continue; }
       if (tk.kind === 'tie')     { elements.push({ type: 'tie', sourceIndex: (tk as any).idx }); continue; }
       if (tk.kind === 'phrase')  { elements.push({ type: 'phrase', phraseType: (tk as any).phraseType, sourceIndex: (tk as any).idx }); continue; }
@@ -1056,7 +995,6 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
           accidental: pendingAccidental,
           vexKey: `${n.pitch.toLowerCase()}/${octave}`,
           vexDuration: durationToVex(dur, n.dotted, false),
-          measureIndex,
           sourceIndex: n.idx, grade: gradeForNote(pendingOctave !== undefined, !!pendingAccidental),
         });
         prevPitch = n.pitch; prevOctave = octave;
@@ -1066,8 +1004,7 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
     }
 
     // Emitir barra de compasso
-    elements.push({ type: 'barline', sourceIndex: 0, barlineType: measure.barlineType as any, measureIndex } as any);
-    measureIndex++;
+    elements.push({ type: 'barline', sourceIndex: 0, barlineType: measure.barlineType as any });
   }
 
   // Remover barra final vazia se último elemento
