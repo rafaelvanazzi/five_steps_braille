@@ -186,7 +186,8 @@ function buildChordKeys(
 
   type Entry = { pitch: DiatonicPitch; octave: number; acc?: string };
 
-  // Nota base
+  // Nota base — acidente incluído aqui; será mapeado ao índice correto após ordenação
+  // NÃO aplicar o acidente da nota base fora desta função para evitar duplicação
   const entries: Entry[] = [{
     pitch:  baseNote.pitch as DiatonicPitch,
     octave: baseNote.octave,
@@ -351,9 +352,15 @@ function renderStaveSystem(
     const extraW  = isFirst ? firstMeasureExtra(ksN, !!timeSignatureEl) : 0;
 
     // Elementos a renderizar (note, rest; interval é consumido com a nota-base)
+    // 'text' e outros não-musicais são filtrados aqui para evitar pautas fantasmas
     const mNotes = measure.notes.filter(n =>
       n.type === 'note' || n.type === 'rest' || n.type === 'interval'
     );
+    // Compasso sem notas reais: ignorar (não criar stave vazio) a menos que seja barra final
+    const hasRealNotes = mNotes.some(n => n.type === 'note' || n.type === 'rest');
+    if (!hasRealNotes && measure.barlineType !== 'end' && (measure.barlineType as string) !== 'end-section') {
+      x += staveW; continue;
+    }
 
     // ── Stave ─────────────────────────────────────────────────────────────
     const stave = new Stave(x, startY, staveW);
@@ -377,7 +384,10 @@ function renderStaveSystem(
     }
 
     if (measure.begBarlineType === 'repeat-begin') stave.setBegBarType(4);
-    if      (measure.barlineType === 'end')          stave.setEndBarType(3);
+    // Barra final: aplica o tipo correto na pauta atual (treble ou bass)
+    // A sincronização é garantida pois splitByHand propaga barlines para ambas as pautas
+    if      (measure.barlineType === 'end')          stave.setEndBarType(3); // barra dupla final
+    else if ((measure.barlineType as string) === 'end-section')  stave.setEndBarType(3); // barra dupla de seção
     else if (measure.barlineType === 'repeat-end')   stave.setEndBarType(5);
     else if (measure.barlineType === 'repeat-begin') stave.setEndBarType(4);
     else if (measure.barlineType === 'repeat-both')  stave.setEndBarType(6);
@@ -431,17 +441,9 @@ function renderStaveSystem(
         // ÚNICO StaveNote para toda a nota + seus intervalos (acorde)
         const vn = new StaveNote({ keys, duration: noteToVexDuration(noteEl), clef });
 
-        // Acidente da nota base: encontrar seu índice após a ordenação
-        if (noteEl.accidental) {
-          const baseKey = noteToVexKey(noteEl);
-          const baseIdx = keys.indexOf(baseKey);
-          if (baseIdx !== -1) {
-            try { vn.addModifier(new Accidental(accidentalToVex(String(noteEl.accidental))), baseIdx); }
-            catch { /* ignora */ }
-          }
-        }
-
-        // Acidentes dos intervalos no índice exato após ordenação
+        // Aplicar TODOS os acidentes (nota base + intervalos) via accMods
+        // accMods já contém o acidente da nota base com seu índice correto após ordenação
+        // Não aplicar o acidente da nota base separadamente — evita duplicação
         accMods.forEach((vexAcc, keyIdx) => {
           try { vn.addModifier(new Accidental(vexAcc), keyIdx); }
           catch { /* ignora */ }

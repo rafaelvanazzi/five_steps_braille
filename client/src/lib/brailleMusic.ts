@@ -675,7 +675,8 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
     | { kind: 'ornament'; name: string; idx: number }
     | { kind: 'articulation'; name: string; idx: number }
     | { kind: 'quialtera'; name: string; idx: number }
-    | { kind: 'repetition'; name: string; idx: number };
+    | { kind: 'repetition'; name: string; idx: number }
+    | { kind: 'text'; char: string; idx: number };
 
   type RawMeasure = { tokens: RawToken[]; barlineType: string };
   const measures: RawMeasure[] = [];
@@ -700,22 +701,38 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
 
     if (ch === '\n' || ch === '\r') { i++; continue; }
 
-    // Espaço = barra de compasso simples
-    // Condição dupla: (1) contexto musical ativo, (2) já viu sinal de oitava.
-    // Espaços antes do primeiro sinal de oitava (ex: entre armadura e TS) são silenciosos.
+    // Espaço = barra de compasso simples (com exclusão estrutural)
+    // Regra: o espaço só cria barra de compasso se:
+    //   (1) O contexto musical está ativo (já encontrou clave, mão ou ⠼)
+    //   (2) O bloco atual (curTokens) contém notas, pausas ou intervalos reais
+    //       — blocos com APENAS configurações (hand, clef, ks, ts, oct) são
+    //         "espaços decorativos de cabeçalho" e não incrementam o compasso.
     if (ch === ' ' || ch === '\u2800') {
-      if (isMusicContextActive && noteOctaveSeen) {
-        measures.push({ tokens: curTokens, barlineType: 'single' });
-        curTokens = [];
+      if (isMusicContextActive) {
+        const hasRealMusic = curTokens.some(
+          tk => tk.kind === 'note' || tk.kind === 'rest' || tk.kind === 'interval'
+        );
+        if (hasRealMusic) {
+          measures.push({ tokens: curTokens, barlineType: 'single' });
+          curTokens = [];
+        }
+        // Bloco só com configurações: descartar tokens decorativos de cabeçalho
+        // mas manter o estado (armadura/clave já foram enfileirados)
       }
-      // Espaço sem contexto musical ou sem oitava: ignorar silenciosamente
+      // Sem contexto musical: ignorar silenciosamente
       i++; continue;
     }
 
     // Barras especiais (2 células) — ANTES de testar bemol ⠣
+    // A barra final (⠣⠅) sempre termina o compasso atual, mesmo que seja um bloco de cabeçalho
     if (BARLINE_TWO_CELL[two]) {
-      measures.push({ tokens: curTokens, barlineType: BARLINE_TWO_CELL[two] });
-      curTokens = []; i += 2; continue;
+      const bType = BARLINE_TWO_CELL[two];
+      // Encerrar compasso atual SE há tokens (musicais ou de configuração com barra explícita)
+      if (curTokens.length > 0 || bType === 'end') {
+        measures.push({ tokens: curTokens, barlineType: bType });
+        curTokens = [];
+      }
+      i += 2; continue;
     }
 
     // Fermata ⠣⠇ — ANTES de testar bemol ⠣
@@ -917,11 +934,14 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
     if (ch === AUGMENTATION_DOT) { i++; continue; }
 
     // Caractere não reconhecido:
-    // se contexto musical não foi ativado ainda, pode ser texto plano (título, autor, etc.)
-    // → ignorar silenciosamente sem gerar elemento nem erro
-    if (!isMusicContextActive) { i++; continue; }
+    // se contexto musical não foi ativado ainda, é texto literário (título, autor, etc.)
+    // → emitir como kind:'text' para que o ScoreRenderer possa filtrar explicitamente
+    if (!isMusicContextActive) {
+      curTokens.push({ kind: 'text', char: ch, idx: i });
+      i++; continue;
+    }
 
-    // No contexto musical, pular caractere desconhecido sem gerar erro
+    // No contexto musical, pular caractere desconhecido sem gerar elemento
     i++;
   }
   if (curTokens.length > 0) measures.push({ tokens: curTokens, barlineType: 'single' });
@@ -990,6 +1010,7 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
       if (tk.kind === 'articulation')  { elements.push({ type: 'articulation', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
       if (tk.kind === 'quialtera')     { elements.push({ type: 'quialtera', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
       if (tk.kind === 'repetition')    { elements.push({ type: 'repetition', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
+      if (tk.kind === 'text')           { /* texto literário: não emite elemento musical */ continue; }
       if (tk.kind === 'slur')          { elements.push({ type: 'slur', slurType: (tk as any).slurType, sourceIndex: (tk as any).idx }); continue; }
       if (tk.kind === 'tie')     { elements.push({ type: 'tie', sourceIndex: (tk as any).idx }); continue; }
       if (tk.kind === 'phrase')  { elements.push({ type: 'phrase', phraseType: (tk as any).phraseType, sourceIndex: (tk as any).idx }); continue; }
