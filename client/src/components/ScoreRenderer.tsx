@@ -31,6 +31,7 @@ import type {
   ParsedRest,
   ParsedKeySignature,
 } from '../lib/brailleMusic';
+import { PREMIUM_CONTENT_ENABLED } from '../lib/brailleMusic';
 
 // ─── INTERFACES LOCAIS ────────────────────────────────────────────────────────
 
@@ -39,6 +40,8 @@ interface ScoreRendererProps {
   width?: number;
   height?: number;
   beatsPerMeasure?: number;
+  /** Nível máximo de leitura a renderizar (1=básico, 2=intervalos, 3=grand staff) */
+  maxLevel?: 1 | 2 | 3;
   /** Forçar modo de pauta dupla (grand staff) independente da detecção automática */
   grandStaff?: boolean;
   /** Chamado quando o usuário clica em uma nota — recebe sourceIndex */
@@ -630,6 +633,7 @@ export default function ScoreRenderer({
   width = 1000,
   height = 300,
   beatsPerMeasure = 4,
+  maxLevel = 3,
   grandStaff: grandStaffProp,
   onNoteClick,
   onMeasureClick,
@@ -640,9 +644,20 @@ export default function ScoreRenderer({
 
   // ── Derivações estáticas ───────────────────────────────────────────────────
 
+  // Filtrar elementos por nível de leitura e disponibilidade premium
+  const filteredElements = useMemo(() => {
+    return elements.filter(el => {
+      const elAny = el as any;
+      const elLevel: number = elAny.level ?? 1;
+      if (elLevel > maxLevel) return false;
+      if (elAny.isPremium && !PREMIUM_CONTENT_ENABLED) return false;
+      return true;
+    });
+  }, [elements, maxLevel]);
+
   const timeSignatureEl = useMemo(() =>
-    (elements.find(el => el.type === 'timesignature') as any) ?? null,
-  [elements]);
+    (filteredElements.find(el => el.type === 'timesignature') as any) ?? null,
+  [filteredElements]);
 
   const timeSignature = useMemo(() => {
     if (timeSignatureEl) return { numerator: timeSignatureEl.numerator as number, denominator: timeSignatureEl.denominator as number };
@@ -650,16 +665,16 @@ export default function ScoreRenderer({
   }, [timeSignatureEl, beatsPerMeasure]);
 
   const keySignature = useMemo(() => {
-    const el = elements.find(e => e.type === 'keysignature') as ParsedKeySignature | undefined;
+    const el = filteredElements.find(e => e.type === 'keysignature') as ParsedKeySignature | undefined;
     return el?.vexKey ?? null;
-  }, [elements]);
+  }, [filteredElements]);
 
   // ── Clave e direção de intervalos ─────────────────────────────────────────
   // Lê os campos ParsedHand.impliedClef / ParsedClef.intervalDirection
   // emitidos pelo brailleMusic.ts.
   // Fallback seguro: treble + descending quando nenhuma clave está presente.
   const { activeClef, intervalDirection } = useMemo(() => {
-    for (const el of elements) {
+    for (const el of filteredElements) {
       if (el.type === 'hand') {
         const h = el as any;
         return {
@@ -678,12 +693,12 @@ export default function ScoreRenderer({
       if (el.type === 'note') break;
     }
     return { activeClef: 'treble', intervalDirection: 'descending' as const };
-  }, [elements]);
+  }, [filteredElements]);
 
   // ── Grand staff ────────────────────────────────────────────────────────────
   const { trebleEls, bassEls, hasBothHands: detectedBothHands } = useMemo(
-    () => splitByHand(elements),
-    [elements]
+    () => splitByHand(filteredElements),
+    [filteredElements]
   );
   // hasBothHands: auto-detectado OU forçado pela prop grandStaff
   const hasBothHands = grandStaffProp ?? detectedBothHands;
@@ -772,9 +787,9 @@ export default function ScoreRenderer({
     }
 
   }, [
-    elements, trebleMeasures, bassMeasures, staveWidths,
+    elements, filteredElements, trebleMeasures, bassMeasures, staveWidths,
     width, height, activeClef, intervalDirection, hasBothHands,
-    keySignature, timeSignatureEl, timeSignature, bassStartY, grandStaffProp,
+    keySignature, timeSignatureEl, timeSignature, bassStartY, grandStaffProp, maxLevel,
   ]);
 
   // ── Click listener ────────────────────────────────────────────────────────

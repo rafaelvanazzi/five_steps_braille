@@ -33,6 +33,22 @@ export type Accidental = 'sharp' | 'flat' | 'natural' | 'double-sharp' | 'double
 // Graus pedagógicos (dissertação Vanazzi 2014)
 export type PedagogicGrade = 1 | 2 | 3 | 4 | 5;
 
+/**
+ * Nível de leitura cognitiva do músico cego (arquitetura de 3 níveis):
+ *   1 — Notas simples, pausas, armaduras, fórmulas de compasso, marcas de mão,
+ *         inferência de oitavas por proximidade MIDI.
+ *   2 — Sinais de Intervalo (ParsedInterval) — acordes braille.
+ *   3 — Sinais "em acorde" total/parcial e controle matricial de pauta dupla.
+ */
+export type ReadingLevel = 1 | 2 | 3;
+
+/**
+ * Chave administrativa central para conteúdos premium (staccato, dinâmicas,
+ * ligaduras, nuances, fermatas, ornamentos, articulações, quiálteras).
+ * Altere este valor para false para desabilitar a renderização desses elementos.
+ */
+export const PREMIUM_CONTENT_ENABLED: boolean = true;
+
 interface NoteInfo {
   pitch: NoteName;
   duration: Duration;    // valor primário (ex: colcheia)
@@ -319,7 +335,12 @@ export interface ParsedNote {
   vexKey: string;
   vexDuration: string;
   sourceIndex: number;
-  grade: PedagogicGrade; // grau pedagógico mínimo para leitura desta nota
+  measureIndex?: number;
+  grade: PedagogicGrade;
+  /** Nível cognitivo de leitura: notas simples = Nível 1 */
+  level: ReadingLevel;
+  /** Elemento de conteúdo premium (staccato, dinâmica, ornamento, etc.) */
+  isPremium: boolean;
 }
 
 export interface ParsedRest {
@@ -330,14 +351,18 @@ export interface ParsedRest {
   vexDuration: string;
   sourceIndex: number;
   grade: PedagogicGrade;
+  /** Nível cognitivo: pausas = Nível 1 */
+  level: ReadingLevel;
+  isPremium: boolean;
 }
 
 export interface ParsedBarline {
   type: 'barline';
   sourceIndex: number;
   barlineType?: 'single' | 'end' | 'end-section' | 'dotted' | 'repeat-begin' | 'repeat-end';
-  /** Índice matricial do compasso — usado para alinhar treble e bass no grand staff */
   measureIndex?: number;
+  level: ReadingLevel;
+  isPremium: boolean;
 }
 
 export interface ParsedTimeSignature {
@@ -345,7 +370,9 @@ export interface ParsedTimeSignature {
   numerator: number;
   denominator: number;
   sourceIndex: number;
-  _abbreviated?: 'C' | 'C|'; // C = 4/4 abreviado (⠨⠉), C| = 2/2 abreviado (⠸⠉)
+  _abbreviated?: 'C' | 'C|';
+  level: ReadingLevel;
+  isPremium: boolean;
 }
 
 export interface ParsedKeySignature {
@@ -353,17 +380,21 @@ export interface ParsedKeySignature {
   fifths: number;
   vexKey: string;
   sourceIndex: number;
+  level: ReadingLevel;
+  isPremium: boolean;
 }
 
 export interface ParsedNoteTie {
   type: 'notetie';
   sourceIndex: number;
+  level: ReadingLevel;
+  isPremium: boolean;
 }
 
 export interface ParsedInterval {
   type: 'interval';
   intervalSize: number;
-  /** Acidente explícito desta nota do intervalo (não afeta armadura global) */
+  /** Acidente exclusivamente local — não vaza para armadura global */
   accidental?: Accidental;
   /** Sinal de oitava explícito desta nota do intervalo */
   explicitOctave?: number;
@@ -374,88 +405,117 @@ export interface ParsedInterval {
   /** Ligadura de prolongação aplicada a esta nota de intervalo */
   slur?: boolean;
   sourceIndex: number;
+  measureIndex?: number;
   grade: PedagogicGrade;
+  /** Nível cognitivo: intervalos = Nível 2 */
+  level: ReadingLevel;
+  isPremium: boolean;
 }
 
 export interface ParsedClef {
   type: 'clef';
   clefType: 'treble' | 'bass' | 'tenor' | 'alto';
-  /** Direção dos intervalos nesta clave: treble/tenor=descending, bass=ascending */
   intervalDirection: 'ascending' | 'descending';
   sourceIndex: number;
+  level: ReadingLevel;
+  isPremium: boolean;
 }
 
 export interface ParsedChordMarker {
   type: 'chordmarker';
   markerType: 'total' | 'partial' | 'separator' | 'right-hand' | 'left-hand';
   sourceIndex: number;
+  /** Nível cognitivo: marcadores em acorde = Nível 3 */
+  level: ReadingLevel;
+  isPremium: boolean;
 }
 
 export interface ParsedSlur {
   type: 'slur';
   slurType: 'simple' | 'double';
   sourceIndex: number;
+  level: ReadingLevel;
+  isPremium: boolean;
 }
 
 export interface ParsedTie {
   type: 'tie';
   sourceIndex: number;
+  level: ReadingLevel;
+  isPremium: boolean;
 }
 
 export interface ParsedPhrase {
   type: 'phrase';
   phraseType: 'start' | 'end';
   sourceIndex: number;
+  level: ReadingLevel;
+  isPremium: boolean;
 }
 
 export interface ParsedFermata {
   type: 'fermata';
   sourceIndex: number;
+  level: ReadingLevel;
+  isPremium: boolean;
 }
 
 export interface ParsedStaccato {
   type: 'staccato';
   sourceIndex: number;
+  level: ReadingLevel;
+  isPremium: boolean;
 }
 
 export interface ParsedDynamic {
   type: 'dynamic';
-  name: string; // 'p' | 'pp' | 'mp' | 'mf' | 'f' | 'ff' | 'cresc' | 'dim' etc.
+  name: string;
   sourceIndex: number;
+  level: ReadingLevel;
+  isPremium: boolean;
 }
 
 export interface ParsedOrnament {
   type: 'ornament';
-  name: string; // 'trinado' | 'mordente-sup' | 'arpejo' | 'glissando' etc.
+  name: string;
   sourceIndex: number;
+  level: ReadingLevel;
+  isPremium: boolean;
 }
 
 export interface ParsedQuialtera {
   type: 'quialtera';
-  name: string; // 'tercina' | 'quialtera-2' etc.
+  name: string;
   sourceIndex: number;
+  level: ReadingLevel;
+  isPremium: boolean;
 }
 
 export interface ParsedRepetition {
   type: 'repetition';
-  name: string; // 'coda' | 'segno' | '1a-vez' | '2a-vez' etc.
+  name: string;
   sourceIndex: number;
+  level: ReadingLevel;
+  isPremium: boolean;
 }
 
 export interface ParsedArticulation {
   type: 'articulation';
-  name: string; // 'tenuta' | 'martelato' | 'staccato-duplo' etc.
+  name: string;
   sourceIndex: number;
+  level: ReadingLevel;
+  isPremium: boolean;
 }
 
 export interface ParsedHand {
   type: 'hand';
-  hand: 'right' | 'left'; // mão direita = clave de sol, mão esquerda = clave de fá
-  /** Clave implícita: right=treble (descendente), left=bass (ascendente) */
+  hand: 'right' | 'left';
   impliedClef: 'treble' | 'bass';
-  /** Direção dos intervalos: right=descending, left=ascending */
   intervalDirection: 'ascending' | 'descending';
   sourceIndex: number;
+  /** Nível cognitivo: marcas de mão = Nível 3 (controle matricial de pauta dupla) */
+  level: ReadingLevel;
+  isPremium: boolean;
 }
 
 export type ParsedElement =
@@ -1003,7 +1063,7 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
     for (const tk of measure.tokens) {
       if (tk.kind === 'ts') {
         const tsTk = tk as { kind: 'ts'; numerator: number; denominator: number; abbreviated?: 'C' | 'C|'; idx: number };
-        elements.push({ type: 'timesignature', numerator: tsTk.numerator, denominator: tsTk.denominator, _abbreviated: tsTk.abbreviated, sourceIndex: tsTk.idx } as ParsedTimeSignature);
+        elements.push({ type: 'timesignature', numerator: tsTk.numerator, denominator: tsTk.denominator, _abbreviated: tsTk.abbreviated, sourceIndex: tsTk.idx, level: 1 as const, isPremium: false } as ParsedTimeSignature);
         beatsPerMeasure = tsTk.numerator;
         inNoteContext = false; continue;
       }
@@ -1024,7 +1084,7 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
       if (tk.kind === 'oct') { pendingOctave = (tk as any).val; inNoteContext = true; continue; }
       if (tk.kind === 'acc') { pendingAccidental = (tk as any).val; continue; }
       if (tk.kind === 'staccato') { pendingStaccato = true; continue; }
-      if (tk.kind === 'fermata')       { elements.push({ type: 'fermata',     sourceIndex: (tk as any).idx }); continue; }
+      if (tk.kind === 'fermata')       { elements.push({ type: 'fermata', sourceIndex: (tk as any).idx, level: 1 as const, isPremium: true }); continue; }
       if (tk.kind === 'hand') {
         const handTk = tk as { kind: 'hand'; hand: 'right' | 'left'; impliedClef: 'treble' | 'bass'; intervalDirection: 'ascending' | 'descending'; idx: number };
         // Resetar o índice de compasso para a mão que está começando
@@ -1044,18 +1104,20 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
           impliedClef: handTk.impliedClef,
           intervalDirection: handTk.intervalDirection,
           sourceIndex: handTk.idx,
+          level: 3 as const,
+          isPremium: false,
         });
         continue;
       }
-      if (tk.kind === 'dynamic')       { elements.push({ type: 'dynamic', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
-      if (tk.kind === 'ornament')      { elements.push({ type: 'ornament', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
-      if (tk.kind === 'articulation')  { elements.push({ type: 'articulation', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
-      if (tk.kind === 'quialtera')     { elements.push({ type: 'quialtera', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
-      if (tk.kind === 'repetition')    { elements.push({ type: 'repetition', name: (tk as any).name, sourceIndex: (tk as any).idx }); continue; }
+      if (tk.kind === 'dynamic')       { elements.push({ type: 'dynamic', name: (tk as any).name, sourceIndex: (tk as any).idx, level: 1 as const, isPremium: true }); continue; }
+      if (tk.kind === 'ornament')      { elements.push({ type: 'ornament', name: (tk as any).name, sourceIndex: (tk as any).idx, level: 1 as const, isPremium: true }); continue; }
+      if (tk.kind === 'articulation')  { elements.push({ type: 'articulation', name: (tk as any).name, sourceIndex: (tk as any).idx, level: 1 as const, isPremium: true }); continue; }
+      if (tk.kind === 'quialtera')     { elements.push({ type: 'quialtera', name: (tk as any).name, sourceIndex: (tk as any).idx, level: 1 as const, isPremium: true }); continue; }
+      if (tk.kind === 'repetition')    { elements.push({ type: 'repetition', name: (tk as any).name, sourceIndex: (tk as any).idx, level: 1 as const, isPremium: true }); continue; }
       if (tk.kind === 'text')           { /* texto literário: não emite elemento musical */ continue; }
-      if (tk.kind === 'slur')          { elements.push({ type: 'slur', slurType: (tk as any).slurType, sourceIndex: (tk as any).idx }); continue; }
-      if (tk.kind === 'tie')     { elements.push({ type: 'tie', sourceIndex: (tk as any).idx }); continue; }
-      if (tk.kind === 'phrase')  { elements.push({ type: 'phrase', phraseType: (tk as any).phraseType, sourceIndex: (tk as any).idx }); continue; }
+      if (tk.kind === 'slur')          { elements.push({ type: 'slur', slurType: (tk as any).slurType, sourceIndex: (tk as any).idx, level: 1 as const, isPremium: true }); continue; }
+      if (tk.kind === 'tie')     { elements.push({ type: 'tie', sourceIndex: (tk as any).idx, level: 1 as const, isPremium: true }); continue; }
+      if (tk.kind === 'phrase')  { elements.push({ type: 'phrase', phraseType: (tk as any).phraseType, sourceIndex: (tk as any).idx, level: 1 as const, isPremium: true }); continue; }
       if (tk.kind === 'interval') {
         if (inNoteContext) {
           const intTk = tk as {
@@ -1070,14 +1132,16 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
           elements.push({
             type: 'interval',
             intervalSize:   intTk.intervalSize,
-            accidental:     intTk.pendingAccidental,  // acidente específico do intervalo
-            explicitOctave: intTk.pendingOctave,      // oitava específica do intervalo
-            duration:       lastNoteDuration ?? undefined, // herda duração da nota-base
-            staccato:       intTk.pendingStaccato,   // articulação específica
-            slur:           intTk.pendingSlur,        // ligadura específica
+            accidental:     intTk.pendingAccidental,
+            explicitOctave: intTk.pendingOctave,
+            duration:       lastNoteDuration ?? undefined,
+            staccato:       intTk.pendingStaccato,
+            slur:           intTk.pendingSlur,
             measureIndex,
             sourceIndex:    intTk.idx,
             grade: 4,
+            level: 2 as const,
+            isPremium: false,
           });
         }
         continue;
@@ -1089,6 +1153,7 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
           type: 'rest', duration: dur, dotted: r.dotted, dotted2: r.dotted2,
           vexDuration: durationToVex(dur, r.dotted, true),
           sourceIndex: r.idx, grade: 2,
+          level: 1 as const, isPremium: false,
         });
         inNoteContext = true; pendingAccidental = undefined; continue;
       }
@@ -1109,7 +1174,10 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
           vexKey: `${n.pitch.toLowerCase()}/${octave}`,
           vexDuration: durationToVex(dur, n.dotted, false),
           measureIndex,
-          sourceIndex: n.idx, grade: gradeForNote(pendingOctave !== undefined, !!pendingAccidental),
+          sourceIndex: n.idx,
+          grade: gradeForNote(pendingOctave !== undefined, !!pendingAccidental),
+          level: 1 as const,
+          isPremium: false,
         });
         prevPitch = n.pitch; prevOctave = octave;
         pendingAccidental = undefined; pendingStaccato = false;
@@ -1118,7 +1186,7 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
     }
 
     // Emitir barra de compasso com measureIndex da mão ativa
-    elements.push({ type: 'barline', sourceIndex: 0, barlineType: measure.barlineType as any, measureIndex } as any);
+    elements.push({ type: 'barline', sourceIndex: 0, barlineType: measure.barlineType as any, measureIndex, level: 1 as const, isPremium: false } as any);
     // Incrementar o índice da mão ativa
     if (activeMeasureHand === 'left') {
       bassMeasureIndex++;
