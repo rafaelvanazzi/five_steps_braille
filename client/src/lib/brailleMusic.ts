@@ -336,6 +336,8 @@ export interface ParsedBarline {
   type: 'barline';
   sourceIndex: number;
   barlineType?: 'single' | 'end' | 'end-section' | 'dotted' | 'repeat-begin' | 'repeat-end';
+  /** Índice matricial do compasso — usado para alinhar treble e bass no grand staff */
+  measureIndex?: number;
 }
 
 export interface ParsedTimeSignature {
@@ -367,6 +369,10 @@ export interface ParsedInterval {
   explicitOctave?: number;
   /** Duração herdada da nota-base do acorde */
   duration?: Duration;
+  /** Staccato aplicado especificamente a esta nota de intervalo */
+  staccato?: boolean;
+  /** Ligadura de prolongação aplicada a esta nota de intervalo */
+  slur?: boolean;
   sourceIndex: number;
   grade: PedagogicGrade;
 }
@@ -670,7 +676,7 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
     | { kind: 'ks'; fifths: number; vexKey: string; idx: number }
     | { kind: 'clef'; clefType: 'treble' | 'bass' | 'tenor' | 'alto'; intervalDirection: 'ascending' | 'descending'; idx: number }
     | { kind: 'hand'; hand: 'right' | 'left'; impliedClef: 'treble' | 'bass'; intervalDirection: 'ascending' | 'descending'; idx: number }
-    | { kind: 'interval'; intervalSize: number; pendingAccidental?: Accidental; pendingOctave?: number; idx: number }
+    | { kind: 'interval'; intervalSize: number; pendingAccidental?: Accidental; pendingOctave?: number; pendingStaccato?: boolean; pendingSlur?: boolean; idx: number }
     | { kind: 'dynamic'; name: string; idx: number }
     | { kind: 'ornament'; name: string; idx: number }
     | { kind: 'articulation'; name: string; idx: number }
@@ -724,14 +730,13 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
     }
 
     // Barras especiais (2 células) — ANTES de testar bemol ⠣
-    // A barra final (⠣⠅) sempre termina o compasso atual, mesmo que seja um bloco de cabeçalho
+    // A barra final (⠣⠅) encerra o compasso atual e injeta 'end' em AMBAS as trilhas.
+    // splitByHand no ScoreRenderer propaga a barline síncrona para treble e bass.
     if (BARLINE_TWO_CELL[two]) {
       const bType = BARLINE_TWO_CELL[two];
-      // Encerrar compasso atual SE há tokens (musicais ou de configuração com barra explícita)
-      if (curTokens.length > 0 || bType === 'end') {
-        measures.push({ tokens: curTokens, barlineType: bType });
-        curTokens = [];
-      }
+      // Sempre encerrar: barra final (end/end-section) fecha mesmo compasso vazio
+      measures.push({ tokens: curTokens, barlineType: bType });
+      curTokens = [];
       i += 2; continue;
     }
 
@@ -877,35 +882,55 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
       curTokens.push({ kind: 'ks', fifths: ks.fifths, vexKey: ks.vexKey, idx: i }); i += 2; continue;
     }
 
-    // Intervalo — captura acidentes e oitavas pendentes como modificadores do intervalo
-    // (não afetam a nota principal nem a armadura de clave global)
+    // Intervalo — captura acidentes, oitavas, staccato e slur pendentes
+    // como modificadores específicos desta nota do intervalo.
+    // Esses tokens são "roubados" da fila principal — não afetam a nota base.
     if (INTERVAL_MAP[ch] !== undefined && ch !== AUGMENTATION_DOT) {
-      // Verificar se o token anterior imediato é um acidente ou oitava
-      // (foram empilhados como 'acc' ou 'oct' pelo tokenizer)
-      // Precisamos "roubar" o último token se for acc ou oct
       let pendingAccForInterval: Accidental | undefined;
       let pendingOctForInterval: number | undefined;
+      let pendingStaccForInterval: boolean | undefined;
+      let pendingSlurForInterval: boolean | undefined;
 
+      // Roubar acidente pendente (imediatamente antes do intervalo)
       if (curTokens.length > 0) {
         const lastTk = curTokens[curTokens.length - 1];
         if (lastTk.kind === 'acc') {
           pendingAccForInterval = (lastTk as { kind: 'acc'; val: Accidental; idx: number }).val;
-          curTokens.pop(); // remove da fila principal — pertence ao intervalo
+          curTokens.pop();
         }
       }
+      // Roubar oitava pendente (pode estar antes do acidente)
       if (curTokens.length > 0) {
         const lastTk2 = curTokens[curTokens.length - 1];
         if (lastTk2.kind === 'oct') {
           pendingOctForInterval = (lastTk2 as { kind: 'oct'; val: number; idx: number }).val;
-          curTokens.pop(); // remove da fila principal — pertence ao intervalo
+          curTokens.pop();
+        }
+      }
+      // Roubar staccato pendente
+      if (curTokens.length > 0) {
+        const lastTk3 = curTokens[curTokens.length - 1];
+        if (lastTk3.kind === 'staccato') {
+          pendingStaccForInterval = true;
+          curTokens.pop();
+        }
+      }
+      // Roubar slur pendente
+      if (curTokens.length > 0) {
+        const lastTk4 = curTokens[curTokens.length - 1];
+        if (lastTk4.kind === 'slur') {
+          pendingSlurForInterval = true;
+          curTokens.pop();
         }
       }
 
       curTokens.push({
         kind: 'interval',
         intervalSize: INTERVAL_MAP[ch],
-        pendingAccidental: pendingAccForInterval,
-        pendingOctave: pendingOctForInterval,
+        pendingAccidental:  pendingAccForInterval,
+        pendingOctave:      pendingOctForInterval,
+        pendingStaccato:    pendingStaccForInterval,
+        pendingSlur:        pendingSlurForInterval,
         idx: i,
       });
       i++; continue;
@@ -955,7 +980,13 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
   let inNoteContext    = false;
 
   // Processar cada compasso
-  // measureIndex é emitido em cada elemento para permitir sincronização do grand staff
+  // trebleMeasureIndex e bassMeasureIndex: índices separados por mão,
+  // cada um reseta para 0 ao encontrar o token da mão correspondente.
+  // Implementam a sincronização matricial: trebleTrack[N] ↔ bassTrack[N] na mesma X.
+  let trebleMeasureIndex = 0;
+  let bassMeasureIndex   = 0;
+  let activeMeasureHand: 'right' | 'left' | null = null;
+  // measureIndex: índice efetivo da mão ativa (alias para o índice correto)
   let measureIndex = 0;
   for (const measure of measures) {
     const noteRestTokens = measure.tokens.filter(t => t.kind === 'note' || t.kind === 'rest') as
@@ -996,6 +1027,17 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
       if (tk.kind === 'fermata')       { elements.push({ type: 'fermata',     sourceIndex: (tk as any).idx }); continue; }
       if (tk.kind === 'hand') {
         const handTk = tk as { kind: 'hand'; hand: 'right' | 'left'; impliedClef: 'treble' | 'bass'; intervalDirection: 'ascending' | 'descending'; idx: number };
+        // Resetar o índice de compasso para a mão que está começando
+        // Isso implementa a lógica do leitor braille: mão direita começa do compasso 0,
+        // mão esquerda também começa do compasso 0 (alinhamento matricial)
+        if (handTk.hand === 'right') {
+          trebleMeasureIndex = 0;
+          measureIndex       = 0;
+        } else {
+          bassMeasureIndex = 0;
+          measureIndex     = 0;
+        }
+        activeMeasureHand = handTk.hand;
         elements.push({
           type: 'hand',
           hand: handTk.hand,
@@ -1016,15 +1058,25 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
       if (tk.kind === 'phrase')  { elements.push({ type: 'phrase', phraseType: (tk as any).phraseType, sourceIndex: (tk as any).idx }); continue; }
       if (tk.kind === 'interval') {
         if (inNoteContext) {
-          const intTk = tk as { kind: 'interval'; intervalSize: number; pendingAccidental?: Accidental; pendingOctave?: number; idx: number };
-          // Herdar duração da última nota emitida (lastNoteDuration rastreado abaixo)
+          const intTk = tk as {
+            kind: 'interval';
+            intervalSize: number;
+            pendingAccidental?: Accidental;
+            pendingOctave?: number;
+            pendingStaccato?: boolean;
+            pendingSlur?: boolean;
+            idx: number;
+          };
           elements.push({
             type: 'interval',
-            intervalSize: intTk.intervalSize,
-            accidental: intTk.pendingAccidental,       // acidente específico do intervalo
-            explicitOctave: intTk.pendingOctave,       // oitava específica do intervalo
-            duration: lastNoteDuration ?? undefined,   // herda duração da nota-base
-            sourceIndex: intTk.idx,
+            intervalSize:   intTk.intervalSize,
+            accidental:     intTk.pendingAccidental,  // acidente específico do intervalo
+            explicitOctave: intTk.pendingOctave,      // oitava específica do intervalo
+            duration:       lastNoteDuration ?? undefined, // herda duração da nota-base
+            staccato:       intTk.pendingStaccato,   // articulação específica
+            slur:           intTk.pendingSlur,        // ligadura específica
+            measureIndex,
+            sourceIndex:    intTk.idx,
             grade: 4,
           });
         }
@@ -1065,9 +1117,16 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
       }
     }
 
-    // Emitir barra de compasso
+    // Emitir barra de compasso com measureIndex da mão ativa
     elements.push({ type: 'barline', sourceIndex: 0, barlineType: measure.barlineType as any, measureIndex } as any);
-    measureIndex++;
+    // Incrementar o índice da mão ativa
+    if (activeMeasureHand === 'left') {
+      bassMeasureIndex++;
+      measureIndex = bassMeasureIndex;
+    } else {
+      trebleMeasureIndex++;
+      measureIndex = trebleMeasureIndex;
+    }
   }
 
   // Remover barra final vazia se último elemento
