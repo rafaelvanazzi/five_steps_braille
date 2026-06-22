@@ -440,9 +440,14 @@ function renderStaveSystem(
   timeSignature:  { numerator: number; denominator: number },
   hitAreas:       NoteHitArea[],
   showMeasureNumbers: boolean = false,
-): Stave[] {
+  availableWidth:  number = 900,
+  systemHeight:    number = 110,
+): { staves: Stave[]; totalHeight: number } {
   const staves: Stave[] = [];
+  const MARGIN_RIGHT = 20;
   let x = startX;
+  let y = startY;
+  let systemIdx = 0;
 
   // Construir mapa matricial para acesso por índice real
   const measureTrack = buildMeasureTrack(measures);
@@ -450,10 +455,20 @@ function renderStaveSystem(
 
   for (let i = 0; i <= maxIdx; i++) {
     const measure = measureTrack.get(i) ?? { notes: [], barlineType: 'single' as const };
-    const staveW  = staveWidths[i] ?? 200;
-    const isFirst = i === 0;
-    const ksN     = ksAccidentalCount(keySignature);
-    const extraW  = isFirst ? firstMeasureExtra(ksN, !!timeSignatureEl) : 0;
+    let staveW  = staveWidths[i] ?? 200;
+    // Verificar se o próximo compasso cabe na linha atual ou precisa quebrar
+    const isFirstOfSystem = (i === 0) || (x + staveW > availableWidth - MARGIN_RIGHT);
+    if (isFirstOfSystem && i > 0) {
+      // Quebra de linha: descer para o próximo sistema
+      x = startX;
+      y = startY + (++systemIdx) * systemHeight;
+    }
+    const isFirst  = i === 0;
+    const isSystem = isFirstOfSystem; // primeiro compasso deste sistema
+    const ksN      = ksAccidentalCount(keySignature);
+    // Cabeçalho extra: sempre no início de cada sistema (não só no primeiro compasso global)
+    const extraW   = isSystem ? firstMeasureExtra(ksN, isFirst && !!timeSignatureEl) : 0;
+    if (isSystem) staveW = Math.max(staveW, staveW + extraW);
 
     // Elementos a renderizar (note, rest; interval é consumido com a nota-base)
     // 'text' e outros não-musicais são filtrados aqui para evitar pautas fantasmas
@@ -467,18 +482,17 @@ function renderStaveSystem(
     }
 
     // ── Stave ─────────────────────────────────────────────────────────────
-    const stave = new Stave(x, startY, staveW);
+    const stave = new Stave(x, y, staveW);
     stave.setContext(ctx);
 
-    if (isFirst) {
+    // Reinjetar clave e armadura no início de CADA SISTEMA (não só no primeiro compasso global)
+    if (isSystem) {
       stave.addClef(clef);
-      // Armadura: só adiciona se explicitamente definida no braille.
-      // Sem armadura → Dó Maior / Lá menor por padrão (VexFlow não desenha acidentes).
       if (keySignature && (VALID_KEYS as readonly string[]).includes(keySignature)) {
         try { stave.addKeySignature(keySignature); } catch { /* ignora */ }
       }
-      // keySignature === null: não chama addKeySignature → nenhum acidente na pauta.
-      if (timeSignatureEl) {
+      // Fórmula de compasso: apenas no primeiro compasso global (início da música)
+      if (isFirst && timeSignatureEl) {
         const abbr = timeSignatureEl._abbreviated;
         const num  = timeSignatureEl.numerator as number;
         const den  = timeSignatureEl.denominator as number;
@@ -623,7 +637,10 @@ function renderStaveSystem(
     x += staveW;
   }
 
-  return staves;
+  const totalHeight = systemIdx > 0
+    ? (systemIdx + 1) * systemHeight
+    : systemHeight;
+  return { staves, totalHeight };
 }
 
 // ─── COMPONENTE PRINCIPAL ─────────────────────────────────────────────────────
@@ -743,32 +760,63 @@ export default function ScoreRenderer({
     noteHitAreas.current = [];
 
     // +30 de offset inicial (margem para StaveConnector BRACE) + 20 de padding direito
-    const totalWidth  = Math.max(width, staveWidths.reduce((s, w) => s + w, 30) + 30);
-    const totalHeight = hasBothHands ? height * 2 + GRAND_GAP : height;
+    // Largura disponível para cada sistema (excluindo margem inicial de 30px)
+    const AVAIL_WIDTH = Math.max(width - 10, 400);
+    const SYSTEM_H    = hasBothHands ? GRAND_GAP * 2 + 80 : 110;
+    const totalWidth  = AVAIL_WIDTH;
+
+    // Primeiro passo: estimar a altura total necessária
+    // (quantos sistemas serão necessários para todos os compassos)
+    const ksN        = ksAccidentalCount(keySignature);
+    const firstExtra = firstMeasureExtra(ksN, !!timeSignatureEl);
+    let   lineX      = 30;
+    let   nSystems   = 1;
+    for (let i = 0; i < staveWidths.length; i++) {
+      const sw = i === 0 ? staveWidths[i] + firstExtra : staveWidths[i];
+      if (i > 0 && lineX + sw > AVAIL_WIDTH - 20) {
+        lineX = 30;
+        nSystems++;
+      }
+      lineX += sw;
+    }
+
+    const trebleTotalH = nSystems * SYSTEM_H;
+    const totalHeight  = hasBothHands ? trebleTotalH * 2 + GRAND_GAP : trebleTotalH;
 
     const renderer = new Renderer(containerRef.current, Renderer.Backends.SVG);
-    renderer.resize(totalWidth, totalHeight);
+    renderer.resize(totalWidth, Math.max(totalHeight, 160));
     const ctx = renderer.getContext();
 
+    // Escala 0.5 para renderização mais compacta e nítida
+    ctx.scale(0.5, 0.5);
+    renderer.resize(totalWidth * 2, Math.max(totalHeight * 2, 320));
+
     // ── Pauta treble ──────────────────────────────────────────────────────
-    const trebleStaves = renderStaveSystem(
+    const { staves: trebleStaves } = renderStaveSystem(
       ctx, trebleMeasures, 30, 40, staveWidths,
       hasBothHands ? 'treble' : activeClef,
       hasBothHands ? 'descending' : intervalDirection,
       keySignature, timeSignatureEl, timeSignature,
       noteHitAreas.current,
-      true, // showMeasureNumbers — sempre na pauta superior
+      true,
+      AVAIL_WIDTH * 2, // escala 0.5 duplica as coordenadas
+      SYSTEM_H * 2,
     );
 
     // ── Pauta bass (grand staff) ──────────────────────────────────────────
     let bassStaves: Stave[] = [];
     if (hasBothHands && bassMeasures.length > 0) {
-      bassStaves = renderStaveSystem(
-        ctx, bassMeasures, 30, bassStartY, staveWidths,
+      const bassY0 = trebleTotalH * 2 + GRAND_GAP;
+      const { staves: bs } = renderStaveSystem(
+        ctx, bassMeasures, 30, bassY0, staveWidths,
         'bass', 'ascending',
         keySignature, timeSignatureEl, timeSignature,
         noteHitAreas.current,
+        false,
+        AVAIL_WIDTH * 2,
+        SYSTEM_H * 2,
       );
+      bassStaves = bs;
     }
 
     // ── StaveConnector: BRACE (chave de piano) + linha dupla esquerda ─────
@@ -829,10 +877,10 @@ export default function ScoreRenderer({
       ref={containerRef}
       style={{
         cursor:    handleClick ? 'pointer' : 'default',
-        overflowX: 'auto',
-        overflowY: 'hidden',
+        overflowX: 'hidden',
+        overflowY: 'auto',
         width:     '100%',
-        maxHeight: (hasBothHands ? height * 2 + GRAND_GAP : height) + 60,
+        minHeight: 120,
       }}
     />
   );

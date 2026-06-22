@@ -296,8 +296,8 @@ function QuickReferencePanel({ onInsert }: { onInsert: (char: string) => void })
             className="flex flex-col items-center p-1 rounded border border-border hover:bg-accent transition-colors"
             title={`${entry.description} (${entry.dots})`}
           >
-            <span className="text-lg leading-none">{entry.char}</span>
-            <span className="text-[7px] text-muted-foreground mt-0.5 truncate w-full text-center leading-tight">
+            <span className="text-2xl leading-none">{entry.char}</span>
+            <span className="text-[8px] text-muted-foreground mt-0.5 truncate w-full text-center leading-tight">
               {entry.description}
             </span>
           </button>
@@ -401,7 +401,7 @@ export default function BrailleEditor() {
   const [isPlaying,     setIsPlaying]     = useState(false);
   const [playerBpm,     setPlayerBpm]     = useState(120);
   const [bpmInputValue, setBpmInputValue] = useState("120");
-  const [soundOnType,   setSoundOnType]   = useState(false);
+  const [soundOnType,   setSoundOnType]   = useState(true);  // feedback sonoro ativo por padrão
   const audioCtxRef = useRef<AudioContext | null>(null);
 
   // ── Partitura ─────────────────────────────────────────────────────────────
@@ -941,7 +941,7 @@ export default function BrailleEditor() {
 
   // Painel da partitura (VexFlow)
   const scorePanel = (
-    <div className="flex flex-col h-full min-h-0">
+    <div className="flex flex-col h-full min-h-0 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm mx-2">
       <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-card/50">
         <span className="text-xs font-medium flex items-center gap-1.5 text-muted-foreground">
           <Music className="w-3.5 h-3.5" />
@@ -974,7 +974,7 @@ export default function BrailleEditor() {
 
   // Painel do editor Braille
   const braillePanel = (
-    <div className="flex flex-col h-full min-h-0">
+    <div className="flex flex-col h-full min-h-0 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm mx-2">
       {/* Cabeçalho do painel Braille */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-card/50 flex-wrap gap-1">
         <span className="text-xs font-medium flex items-center gap-1.5 text-muted-foreground">
@@ -1043,10 +1043,24 @@ export default function BrailleEditor() {
 
       {/* Romano (opcional) */}
       {showRomano && (
-        <div className="border-t border-border/50 p-2">
-          <p className="text-[9px] text-muted-foreground mb-1 font-medium uppercase tracking-wide">Notação Romana</p>
-          <div className="font-mono text-xs text-muted-foreground leading-relaxed whitespace-pre-wrap break-all max-h-20 overflow-y-auto">
-            {romanContent || "—"}
+        <div className="border-t border-slate-200 dark:border-slate-700 p-2 bg-slate-50 dark:bg-slate-900/30">
+          <p className="text-[9px] text-muted-foreground mb-1 font-medium uppercase tracking-wide select-none">
+            Notação Romana (mapeamento síncrono)
+          </p>
+          {/* Mapeamento caractere a caractere: cada célula braille → seu equivalente romano */}
+          <div className="font-mono text-xs text-foreground/80 leading-relaxed whitespace-pre-wrap break-all max-h-24 overflow-y-auto select-text">
+            {romanContent
+              ? romanContent.split('').map((char, idx) => (
+                  <span
+                    key={idx}
+                    className="inline-block hover:bg-primary/10 rounded transition-colors px-px"
+                    title={`U+${brailleContent.charCodeAt(idx).toString(16).toUpperCase().padStart(4,'0')}`}
+                  >
+                    {char}
+                  </span>
+                ))
+              : <span className="text-muted-foreground">—</span>
+            }
           </div>
         </div>
       )}
