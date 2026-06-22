@@ -4,24 +4,21 @@ import { trpc } from "@/lib/trpc";
 import { getLoginUrl } from "@/const";
 import SiteLayout from "@/components/SiteLayout";
 import ScoreRenderer from "@/components/ScoreRenderer";
-import { playScore, stopScore, setBpm, playSingleNote } from "@/pages/scoreAudioPlayer";
 import {
   parseBrailleMusic,
   parseBrailleLine,
   parseBrailleSelection,
   perkinsDotsToUnicode,
-  describeBrailleChar,
-  unicodeToDots,
   getQuickReference,
   type ParsedElement,
   type ParsedNote,
   type PerkinsKeyState,
   type ParseOptions,
 } from "@/lib/brailleMusic";
-import { brailleToRoman, romanToBraille, getRomanFormatHelp } from "@/lib/brailleRomano";
+import { brailleToRoman } from "@/lib/brailleRomano";
 import { asciiToUnicodeBraille, detectBrailleFormat } from "@/lib/brailleAscii";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import {
@@ -34,14 +31,114 @@ import {
   Keyboard,
   Info,
   Upload,
-  HelpCircle,
   Play,
   Square,
   Volume2,
   VolumeX,
+  LayoutTemplate,
+  FlipHorizontal2,
+  FlipVertical2,
+  Lock,
+  ChevronDown,
 } from "lucide-react";
 
-// ─── PERKINS KEYBOARD COMPONENT ────────────────────────────────────────────────
+// ─── TIPOS ────────────────────────────────────────────────────────────────────
+
+type LayoutMode   = "horizontal" | "vertical";
+type PanelOrder   = "braille-first" | "score-first";
+type ExportFormat = "brf" | "pdf" | "audio";
+type ImportFormat = "musicxml" | "midi";
+
+// ─── MAPA DE AMOSTRAS DE PIANO (SF2/WAV) ─────────────────────────────────────
+// URLs das amostras .wav organizadas por número MIDI.
+// Popule com os arquivos reais extraídos do SoundFont desejado.
+// O player faz fallback silencioso quando a URL ainda está carregando.
+
+const PIANO_SAMPLE_MAP: Partial<Record<number, string>> = {
+  // Oitava 3 (exemplos — substituir por URLs reais)
+  48: "/audio/piano/C3.wav",
+  50: "/audio/piano/D3.wav",
+  52: "/audio/piano/E3.wav",
+  53: "/audio/piano/F3.wav",
+  55: "/audio/piano/G3.wav",
+  57: "/audio/piano/A3.wav",
+  59: "/audio/piano/B3.wav",
+  // Oitava 4
+  60: "/audio/piano/C4.wav",
+  62: "/audio/piano/D4.wav",
+  64: "/audio/piano/E4.wav",
+  65: "/audio/piano/F4.wav",
+  67: "/audio/piano/G4.wav",
+  69: "/audio/piano/A4.wav",
+  71: "/audio/piano/B4.wav",
+  // Oitava 5
+  72: "/audio/piano/C5.wav",
+  74: "/audio/piano/D5.wav",
+  76: "/audio/piano/E5.wav",
+  77: "/audio/piano/F5.wav",
+  79: "/audio/piano/G5.wav",
+  81: "/audio/piano/A5.wav",
+  83: "/audio/piano/B5.wav",
+};
+
+// Cache de AudioBuffer decodificados (MIDI → buffer)
+const audioBufferCache = new Map<number, AudioBuffer | null>();
+// null = carregando ou falhou; AudioBuffer = pronto
+
+async function loadPianoSample(
+  audioCtx: AudioContext,
+  midi: number
+): Promise<AudioBuffer | null> {
+  if (audioBufferCache.has(midi)) return audioBufferCache.get(midi) ?? null;
+
+  // Encontrar a amostra mais próxima disponível no mapa
+  const keys = Object.keys(PIANO_SAMPLE_MAP).map(Number);
+  if (keys.length === 0) return null;
+  const closest = keys.reduce((a, b) =>
+    Math.abs(b - midi) < Math.abs(a - midi) ? b : a
+  );
+  const url = PIANO_SAMPLE_MAP[closest];
+  if (!url) return null;
+
+  audioBufferCache.set(midi, null); // marcar como carregando
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) { audioBufferCache.set(midi, null); return null; }
+    const arrayBuf = await resp.arrayBuffer();
+    const buf = await audioCtx.decodeAudioData(arrayBuf);
+    audioBufferCache.set(midi, buf);
+    return buf;
+  } catch {
+    audioBufferCache.set(midi, null);
+    return null;
+  }
+}
+
+function playPianoBuffer(
+  audioCtx: AudioContext,
+  buffer: AudioBuffer,
+  midi: number,
+  closestMidi: number,
+  startTime: number,
+  duration: number,
+  velocity = 0.75
+): void {
+  const src  = audioCtx.createBufferSource();
+  const gain = audioCtx.createGain();
+  src.buffer = buffer;
+  // Transpor pelo desvio de semitom em relação à nota base da amostra
+  src.playbackRate.value = Math.pow(2, (midi - closestMidi) / 12);
+
+  gain.gain.setValueAtTime(velocity, startTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
+
+  src.connect(gain);
+  gain.connect(audioCtx.destination);
+  src.start(startTime);
+  src.stop(startTime + duration + 0.05);
+}
+
+// ─── PERKINS KEYBOARD ─────────────────────────────────────────────────────────
 
 function PerkinsKeyboard({
   onChar,
@@ -54,9 +151,9 @@ function PerkinsKeyboard({
   onBackspace: () => void;
   onNewline: () => void;
 }) {
-  const [pressed, setPressed] = useState<Set<string>>(new Set());
-  const pressedRef = useRef<Set<string>>(new Set());
-  const activeDotsRef = useRef<PerkinsKeyState>({
+  const [pressed, setPressed]   = useState<Set<string>>(new Set());
+  const pressedRef              = useRef<Set<string>>(new Set());
+  const activeDotsRef           = useRef<PerkinsKeyState>({
     dot1: false, dot2: false, dot3: false,
     dot4: false, dot5: false, dot6: false,
   });
@@ -64,7 +161,7 @@ function PerkinsKeyboard({
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
       const key = e.key.toLowerCase();
-      if (["f", "d", "s", "j", "k", "l"].includes(key)) {
+      if (["f","d","s","j","k","l"].includes(key)) {
         e.preventDefault();
         if (key === "f") activeDotsRef.current.dot1 = true;
         if (key === "d") activeDotsRef.current.dot2 = true;
@@ -75,26 +172,21 @@ function PerkinsKeyboard({
         pressedRef.current.add(key);
         setPressed(new Set(pressedRef.current));
       }
-      if (key === " ") e.preventDefault();
-      if (key === "backspace") e.preventDefault();
-      if (key === "enter") e.preventDefault();
+      if (key === " " || key === "backspace" || key === "enter") e.preventDefault();
     };
-
     const up = (e: KeyboardEvent) => {
       const key = e.key.toLowerCase();
-      if (key === " ") { e.preventDefault(); onSpace(); return; }
+      if (key === " ")         { e.preventDefault(); onSpace();     return; }
       if (key === "backspace") { e.preventDefault(); onBackspace(); return; }
-      if (key === "enter") { e.preventDefault(); onNewline(); return; }
-      if (["f", "d", "s", "j", "k", "l"].includes(key)) {
+      if (key === "enter")     { e.preventDefault(); onNewline();   return; }
+      if (["f","d","s","j","k","l"].includes(key)) {
         e.preventDefault();
         pressedRef.current.delete(key);
         setPressed(new Set(pressedRef.current));
-
         if (pressedRef.current.size === 0) {
           const dots = { ...activeDotsRef.current };
           if (dots.dot1 || dots.dot2 || dots.dot3 || dots.dot4 || dots.dot5 || dots.dot6) {
-            const char = perkinsDotsToUnicode(dots);
-            onChar(char);
+            onChar(perkinsDotsToUnicode(dots));
           }
           activeDotsRef.current = {
             dot1: false, dot2: false, dot3: false,
@@ -103,12 +195,11 @@ function PerkinsKeyboard({
         }
       }
     };
-
     window.addEventListener("keydown", down);
-    window.addEventListener("keyup", up);
+    window.addEventListener("keyup",   up);
     return () => {
       window.removeEventListener("keydown", down);
-      window.removeEventListener("keyup", up);
+      window.removeEventListener("keyup",   up);
     };
   }, [onChar, onSpace, onBackspace, onNewline]);
 
@@ -122,71 +213,71 @@ function PerkinsKeyboard({
   ];
 
   return (
-    <div className="flex flex-col items-center gap-2 py-2">
-      <div className="flex gap-2 items-center">
-        {keys.map((k, i) => (
+    <div className="flex flex-col items-center gap-1.5 py-1">
+      <div className="flex gap-1.5 items-center">
+        {keys.map((k, idx) => (
           <div key={k.key} className="flex items-center">
-            {i === 3 && <span className="inline-block w-6" />}
+            {idx === 3 && <span className="inline-block w-4" />}
             <button
-              className={`w-12 h-14 rounded-lg border-2 flex flex-col items-center justify-center transition-colors font-bold text-base ${
+              className={`w-11 h-13 rounded-lg border-2 flex flex-col items-center justify-center font-bold text-sm transition-colors ${
                 pressed.has(k.key)
                   ? "bg-primary text-primary-foreground border-primary"
                   : "bg-card text-card-foreground border-border hover:border-primary/50"
               }`}
-              aria-label={`Tecla ${k.label} - ${k.sub}`}
+              aria-label={`${k.label} – ${k.sub}`}
               tabIndex={-1}
             >
               <span>{k.label}</span>
-              <span className="text-[9px] font-normal opacity-70">{k.sub}</span>
+              <span className="text-[8px] font-normal opacity-60">{k.sub}</span>
             </button>
           </div>
         ))}
       </div>
-      <p className="text-[10px] text-muted-foreground">
-        Espaço = Barra de compasso · Enter = Nova linha · Backspace = Apagar
+      <p className="text-[9px] text-muted-foreground text-center leading-tight">
+        Espaço = barra · Enter = nova linha · Backspace = apagar
       </p>
     </div>
   );
 }
 
-// ─── QUICK REFERENCE PANEL ─────────────────────────────────────────────────────
+// ─── REFERÊNCIA RÁPIDA ────────────────────────────────────────────────────────
 
 function QuickReferencePanel({ onInsert }: { onInsert: (char: string) => void }) {
-  const ref = useMemo(() => getQuickReference(), []);
+  const ref      = useMemo(() => getQuickReference(), []);
   const [filter, setFilter] = useState<string>("note-whole");
 
   const categories = [
-    { key: "note-whole",   label: "Semibreve / Semicolcheia" },
-    { key: "note-half",    label: "Mínima / Fusa" },
-    { key: "note-quarter", label: "Semínima / Semifusa" },
-    { key: "note-eighth",  label: "Colcheia / Quartifusa" },
+    { key: "note-whole",   label: "Sb / Sc" },
+    { key: "note-half",    label: "Mín / Fu" },
+    { key: "note-quarter", label: "Sem / Sf" },
+    { key: "note-eighth",  label: "Col / Qt" },
     { key: "rest",         label: "Pausas" },
     { key: "octave",       label: "Oitavas" },
-    { key: "accidental",   label: "Alterações" },
-    { key: "armadura",     label: "Armaduras" },
-    { key: "timesig",      label: "Compassos" },
+    { key: "accidental",   label: "Alters." },
+    { key: "armadura",     label: "Armad." },
+    { key: "timesig",      label: "Comps." },
     { key: "barline",      label: "Barras" },
-    { key: "interval",     label: "Intervalos" },
-    { key: "ligadura",     label: "Ligaduras" },
-    { key: "articulacao",  label: "Articulação" },
-    { key: "dinamica",     label: "Dinâmica" },
-    { key: "ornamento",    label: "Ornamentos" },
-    { key: "quialtera",    label: "Quiálteras" },
-    { key: "repeticao",    label: "Repetição" },
-    { key: "clave",        label: "Claves / Mãos" },
+    { key: "interval",     label: "Interv." },
+    { key: "ligadura",     label: "Ligad." },
+    { key: "articulacao",  label: "Articu." },
+    { key: "dinamica",     label: "Dinâm." },
+    { key: "ornamento",    label: "Orn." },
+    { key: "quialtera",    label: "Quiált." },
+    { key: "repeticao",    label: "Repet." },
+    { key: "clave",        label: "Claves" },
     { key: "other",        label: "Outros" },
   ];
 
-  const filtered = filter === "all" ? ref : ref.filter((e) => e.category === filter);
+  const filtered = ref.filter((e) => e.category === filter);
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-1.5">
       <div className="flex flex-wrap gap-1">
         {categories.map((cat) => (
           <button
             key={cat.key}
             onClick={() => setFilter(cat.key)}
-            className={`px-2 py-0.5 text-xs rounded-md transition-colors ${
+            className={`px-1.5 py-0.5 text-[10px] rounded transition-colors ${
               filter === cat.key
                 ? "bg-primary text-primary-foreground"
                 : "bg-muted text-muted-foreground hover:bg-accent"
@@ -196,16 +287,16 @@ function QuickReferencePanel({ onInsert }: { onInsert: (char: string) => void })
           </button>
         ))}
       </div>
-      <div className="grid grid-cols-4 sm:grid-cols-6 gap-1 max-h-48 overflow-y-auto">
+      <div className="grid grid-cols-4 sm:grid-cols-5 gap-1 max-h-36 overflow-y-auto">
         {filtered.map((entry, i) => (
           <button
             key={i}
             onClick={() => onInsert(entry.char)}
-            className="flex flex-col items-center p-1.5 rounded-md border border-border hover:bg-accent transition-colors"
-            title={`${entry.description} (Pontos ${entry.dots})`}
+            className="flex flex-col items-center p-1 rounded border border-border hover:bg-accent transition-colors"
+            title={`${entry.description} (${entry.dots})`}
           >
-            <span className="text-xl leading-none">{entry.char}</span>
-            <span className="text-[8px] text-muted-foreground mt-0.5 truncate w-full text-center">
+            <span className="text-lg leading-none">{entry.char}</span>
+            <span className="text-[7px] text-muted-foreground mt-0.5 truncate w-full text-center leading-tight">
               {entry.description}
             </span>
           </button>
@@ -215,229 +306,303 @@ function QuickReferencePanel({ onInsert }: { onInsert: (char: string) => void })
   );
 }
 
-// ─── MAIN EDITOR PAGE ──────────────────────────────────────────────────────────
+// ─── DROPDOWN COMPONENT ───────────────────────────────────────────────────────
+
+function Dropdown({
+  label,
+  icon,
+  items,
+  disabled = false,
+}: {
+  label: string;
+  icon: React.ReactNode;
+  items: { label: string; icon?: React.ReactNode; onClick: () => void; locked?: boolean }[];
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => !disabled && setOpen((v) => !v)}
+        disabled={disabled}
+        className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-md border border-border bg-card hover:bg-accent transition-colors disabled:opacity-40"
+      >
+        {icon}
+        <span className="hidden sm:inline">{label}</span>
+        <ChevronDown className="w-3 h-3 opacity-60" />
+      </button>
+      {open && (
+        <div className="absolute z-50 top-full mt-1 left-0 bg-popover border border-border rounded-lg shadow-lg py-1 min-w-[180px]">
+          {items.map((item, i) => (
+            <button
+              key={i}
+              onClick={() => { if (!item.locked) { item.onClick(); setOpen(false); } }}
+              className={`flex items-center gap-2 w-full px-3 py-1.5 text-xs text-left transition-colors ${
+                item.locked
+                  ? "text-muted-foreground cursor-not-allowed"
+                  : "hover:bg-accent"
+              }`}
+            >
+              {item.locked ? <Lock className="w-3 h-3" /> : (item.icon ?? null)}
+              {item.label}
+              {item.locked && <span className="ml-auto text-[9px] text-primary font-medium">PRO</span>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── MAIN EDITOR ──────────────────────────────────────────────────────────────
 
 export default function BrailleEditor() {
-  // ALL hooks before any conditional return
   const { user, loading: authLoading } = useAuth({ redirectOnUnauthenticated: true });
-  const projectsQuery = trpc.editor.list.useQuery(undefined, { enabled: !!user });
-  const createMutation = trpc.editor.create.useMutation();
-  const updateMutation = trpc.editor.update.useMutation();
-  const deleteMutation = trpc.editor.delete.useMutation();
-  const exportMutation = trpc.editor.export.useMutation();
+  const projectsQuery          = trpc.editor.list.useQuery(undefined, { enabled: !!user });
+  const createMutation         = trpc.editor.create.useMutation();
+  const updateMutation         = trpc.editor.update.useMutation();
+  const deleteMutation         = trpc.editor.delete.useMutation();
+  const exportMutation         = trpc.editor.export.useMutation();
   const importMusicXMLMutation = trpc.editor.importMusicXML.useMutation();
-  const utils = trpc.useUtils();
+  const utils                  = trpc.useUtils();
 
+  // ── Conteúdo ──────────────────────────────────────────────────────────────
   const [currentProjectId, setCurrentProjectId] = useState<number | null>(null);
-  const [projectTitle, setProjectTitle] = useState("");
-  const [brailleContent, setBrailleContent] = useState("");
+  const [projectTitle,     setProjectTitle]     = useState("");
+  const [brailleContent,   setBrailleContent]   = useState("");
+  const [romanContent,     setRomanContent]     = useState("");
 
-  // Undo/Redo
-  const undoStack = useRef<string[]>([]);
-  const redoStack = useRef<string[]>([]);
+  // ── Undo / Redo ───────────────────────────────────────────────────────────
+  const undoStack  = useRef<string[]>([]);
+  const redoStack  = useRef<string[]>([]);
   const isUndoRedo = useRef(false);
 
-  const [romanContent, setRomanContent] = useState("");
-  const [activePanel, setActivePanel] = useState<"braille" | "romano">("braille");
-  const [showReference, setShowReference] = useState(false);
-  const [showRomanHelp, setShowRomanHelp] = useState(false);
-  const [showProjects, setShowProjects] = useState(true);
-  const [parsedElements, setParsedElements] = useState<ParsedElement[]>([]);
-  const [saveStatus, setSaveStatus] = useState<"saved" | "saving" | "unsaved">("saved");
+  // ── UI state ──────────────────────────────────────────────────────────────
+  const [showProjects,   setShowProjects]   = useState(true);
+  const [showReference,  setShowReference]  = useState(false);
+  const [showRomano,     setShowRomano]     = useState(false);
+  const [layoutMode,     setLayoutMode]     = useState<LayoutMode>("horizontal");
+  const [panelOrder,     setPanelOrder]     = useState<PanelOrder>("braille-first");
+  const [saveStatus,     setSaveStatus]     = useState<"saved" | "saving" | "unsaved">("saved");
+  const [importing,      setImporting]      = useState(false);
 
-  // ── Player state ──────────────────────────────────────────────────────────
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [playerBpm, setPlayerBpm] = useState(120);
-  // Estado local do input BPM — permite digitação fluida sem despachar setBpm() a cada tecla.
-  // O valor global (playerBpm) e o player só são atualizados ao sair do campo (onBlur/Enter).
+  // ── Audio state ───────────────────────────────────────────────────────────
+  const [isPlaying,     setIsPlaying]     = useState(false);
+  const [playerBpm,     setPlayerBpm]     = useState(120);
   const [bpmInputValue, setBpmInputValue] = useState("120");
-  const [soundOnType, setSoundOnType] = useState(false); // feedback sonoro ao digitar
+  const [soundOnType,   setSoundOnType]   = useState(false);
+  const audioCtxRef = useRef<AudioContext | null>(null);
 
-  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [scoreWidth, setScoreWidth] = useState(800);
-  const scoreContainerRef = useRef<HTMLDivElement>(null);
-  const [importing, setImporting] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const brailleTextareaRef = useRef<HTMLTextAreaElement>(null);
-  const romanTextareaRef = useRef<HTMLTextAreaElement>(null);
-
-  // Cursor position tracking for line-based rendering
-  const [cursorPos, setCursorPos] = useState(0);
+  // ── Partitura ─────────────────────────────────────────────────────────────
+  const [parsedElements, setParsedElements] = useState<ParsedElement[]>([]);
+  const [cursorPos,      setCursorPos]      = useState(0);
   const [selectionRange, setSelectionRange] = useState<[number, number] | null>(null);
+  const [scoreWidth,     setScoreWidth]     = useState(800);
 
-  // Time signature for disambiguation
-  const [beatsPerMeasure, setBeatsPerMeasure] = useState(4);
+  // ── Refs ──────────────────────────────────────────────────────────────────
+  const syncSourceRef      = useRef<"braille" | "romano" | "none">("none");
+  const brailleTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const scoreContainerRef  = useRef<HTMLDivElement>(null);
+  const fileInputRef       = useRef<HTMLInputElement>(null);
+  const midiFileInputRef   = useRef<HTMLInputElement>(null);
 
-  // Track which panel last changed content to avoid infinite sync loops
-  const syncSourceRef = useRef<"braille" | "romano" | "none">("none");
+  // ── parseOptions (sem beatsPerMeasure: detectado pelo parser) ────────────
+  const parseOptions = useMemo<ParseOptions>(() => ({}), []);
 
-  // Parse options
-  const parseOptions = useMemo<ParseOptions>(() => ({
-    beatsPerMeasure,
-  }), [beatsPerMeasure]);
+  // ── Export locked (nível básico não tem PDF/Audio) ────────────────────────
+  // Em produção, derivar do plano do usuário.
+  const isExportLocked = false; // false = PRO ativo; true = bloqueia PDF/Audio
 
-  // Parse braille content based on cursor position → render only current line
+  // ── Parse ─────────────────────────────────────────────────────────────────
   useEffect(() => {
-    if (brailleContent.trim()) {
-      try {
-        let result;
-        if (selectionRange && selectionRange[0] !== selectionRange[1]) {
-          result = parseBrailleSelection(brailleContent, selectionRange[0], selectionRange[1], parseOptions);
-        } else {
-          const lines = brailleContent.split('\n');
-          const firstLine = lines[0] || '';
-
-          let charCount = 0;
-          let cursorLineIdx = 0;
-          for (let li = 0; li < lines.length; li++) {
-            if (cursorPos <= charCount + lines[li].length) { cursorLineIdx = li; break; }
-            charCount += lines[li].length + 1;
-          }
-
-          result = parseBrailleLine(brailleContent, cursorPos, parseOptions);
-
-          if (firstLine.trim()) {
-            const fullResult = parseBrailleMusic(
-              lines.slice(0, Math.max(1, cursorLineIdx)).join('\n'),
-              parseOptions
-            );
-            let lastClef = null as any;
-            let lastKS   = null as any;
-            for (const el of fullResult.elements) {
-              if (el.type === 'clef' || el.type === 'hand') lastClef = el;
-              if (el.type === 'keysignature') lastKS = el;
-            }
-            const hasOwnKS   = result.elements.some(el => el.type === 'keysignature');
-            const hasOwnClef = result.elements.some(el => el.type === 'clef' || el.type === 'hand');
-            const prefix: any[] = [];
-            if (!hasOwnClef && lastClef) prefix.push(lastClef);
-            if (!hasOwnKS   && lastKS)   prefix.push(lastKS);
-            if (prefix.length > 0) {
-              result = { ...result, elements: [...prefix, ...result.elements] };
-            }
-          }
-        }
-        setParsedElements(result.elements);
-      } catch {
-        setParsedElements([]);
+    if (!brailleContent.trim()) { setParsedElements([]); return; }
+    try {
+      const lines = brailleContent.split("\n");
+      const firstLine = lines[0] ?? "";
+      let charCount = 0;
+      let cursorLineIdx = 0;
+      for (let li = 0; li < lines.length; li++) {
+        if (cursorPos <= charCount + lines[li].length) { cursorLineIdx = li; break; }
+        charCount += lines[li].length + 1;
       }
-    } else {
+
+      let result;
+      if (selectionRange && selectionRange[0] !== selectionRange[1]) {
+        result = parseBrailleSelection(brailleContent, selectionRange[0], selectionRange[1], parseOptions);
+      } else {
+        result = parseBrailleLine(brailleContent, cursorPos, parseOptions);
+      }
+
+      if (cursorLineIdx > 0 && firstLine.trim()) {
+        const fullResult = parseBrailleMusic(
+          lines.slice(0, Math.max(1, cursorLineIdx)).join("\n"),
+          parseOptions
+        );
+        let lastClef: ParsedElement | null = null;
+        let lastKS:   ParsedElement | null = null;
+        for (const el of fullResult.elements) {
+          if (el.type === "clef" || el.type === "hand") lastClef = el;
+          if (el.type === "keysignature")               lastKS   = el;
+        }
+        const hasOwnKS   = result.elements.some(e => e.type === "keysignature");
+        const hasOwnClef = result.elements.some(e => e.type === "clef" || e.type === "hand");
+        const prefix: ParsedElement[] = [];
+        if (!hasOwnClef && lastClef) prefix.push(lastClef);
+        if (!hasOwnKS   && lastKS)   prefix.push(lastKS);
+        if (prefix.length) result = { ...result, elements: [...prefix, ...result.elements] };
+      }
+
+      setParsedElements(result.elements);
+    } catch {
       setParsedElements([]);
     }
   }, [brailleContent, cursorPos, selectionRange, parseOptions]);
 
-  // Sync: Braille → Romano
+  // ── Sync braille → romano ─────────────────────────────────────────────────
   useEffect(() => {
     if (syncSourceRef.current === "braille") {
-      const roman = brailleToRoman(brailleContent);
-      setRomanContent(roman);
+      setRomanContent(brailleToRoman(brailleContent));
       syncSourceRef.current = "none";
     }
   }, [brailleContent]);
 
-  // Sync: Romano → Braille
+  // ── Score container width ─────────────────────────────────────────────────
   useEffect(() => {
-    if (syncSourceRef.current === "romano") {
-      const braille = romanToBraille(romanContent);
-      setBrailleContent(braille);
-      syncSourceRef.current = "none";
-    }
-  }, [romanContent]);
+    if (!scoreContainerRef.current) return;
+    const obs = new ResizeObserver(entries => {
+      for (const entry of entries) {
+        setScoreWidth(Math.max(300, entry.contentRect.width - 8));
+      }
+    });
+    obs.observe(scoreContainerRef.current);
+    return () => obs.disconnect();
+  }, []);
 
-  // ── Player controls ────────────────────────────────────────────────────────
+  // ── Player: AudioContext lazy init ────────────────────────────────────────
+  function getAudioCtx(): AudioContext {
+    if (!audioCtxRef.current) {
+      audioCtxRef.current = new (window.AudioContext ||
+        (window as any).webkitAudioContext)();
+    }
+    return audioCtxRef.current;
+  }
+
+  useEffect(() => { return () => { audioCtxRef.current?.close(); }; }, []);
+
+  // ── Stop player on unmount ────────────────────────────────────────────────
+  const { stopScore, setBpm: setScoreBpm, playScore } = useMemo(() => {
+    // Dynamic import para evitar dependência circular
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const mod = require("@/lib/scoreAudioPlayer") as {
+      stopScore: () => void;
+      setBpm:    (n: number) => void;
+      playScore: (els: ParsedElement[], bpm: number, onFinish?: () => void) => void;
+    };
+    return mod;
+  }, []);
+
+  useEffect(() => { return () => stopScore(); }, [stopScore]);
 
   const handleStop = useCallback(() => {
     stopScore();
     setIsPlaying(false);
-  }, []);
+  }, [stopScore]);
 
   const handlePlay = useCallback(() => {
     if (parsedElements.length === 0) return;
-    if (isPlaying) {
-      handleStop();
-      return;
-    }
-    setBpm(playerBpm);
-    playScore(parsedElements, playerBpm, () => {
-      setIsPlaying(false);
-    });
+    if (isPlaying) { handleStop(); return; }
+    setScoreBpm(playerBpm);
+    playScore(parsedElements, playerBpm, () => setIsPlaying(false));
     setIsPlaying(true);
-  }, [parsedElements, isPlaying, playerBpm, handleStop]);
+  }, [parsedElements, isPlaying, playerBpm, handleStop, setScoreBpm, playScore]);
 
-  // Atualiza BPM em tempo real se o player estiver tocando
-  /** Chamado a cada tecla — atualiza apenas o valor visual do input. */
-  const handleBpmInputChange = useCallback((raw: string) => {
-    setBpmInputValue(raw);
-  }, []);
-
-  /** Chamado no onBlur e no Enter — valida, clipa e despacha para o player. */
+  const handleBpmInputChange = useCallback((raw: string) => setBpmInputValue(raw), []);
   const handleBpmCommit = useCallback((raw: string) => {
     const parsed = parseInt(raw, 10);
     const clamped = Number.isNaN(parsed) ? 120 : Math.max(20, Math.min(400, parsed));
-    setBpmInputValue(String(clamped)); // normaliza o display
-    setPlayerBpm(clamped);
-    setBpm(clamped); // aplica imediatamente nas próximas notas agendadas
-  }, []);
-
-  /** Mantida para compatibilidade com handlePlay (usa playerBpm). */
-  const handleBpmChange = useCallback((newBpm: number) => {
-    const clamped = Math.max(20, Math.min(400, newBpm));
     setBpmInputValue(String(clamped));
     setPlayerBpm(clamped);
-    setBpm(clamped);
-  }, []);
+    setScoreBpm(clamped);
+  }, [setScoreBpm]);
 
-  // Para ao desmontar
-  useEffect(() => {
-    return () => { stopScore(); };
-  }, []);
+  // ── Feedback sonoro ao digitar (AudioBufferSourceNode) ────────────────────
+  const tryPlayFeedback = useCallback((char: string) => {
+    if (!soundOnType) return;
+    try {
+      const r = parseBrailleMusic(char, parseOptions);
+      const noteEl = r.elements.find(e => e.type === "note") as ParsedNote | undefined;
+      if (!noteEl) return;
+
+      const PITCH_CLASS: Record<string, number> = { C:0,D:2,E:4,F:5,G:7,A:9,B:11 };
+      const midi = 12 * (noteEl.octave + 1) + (PITCH_CLASS[noteEl.pitch] ?? 0);
+
+      const ctx = getAudioCtx();
+      // Tentar usar amostra real; fallback para oscilador simples
+      loadPianoSample(ctx, midi).then(buf => {
+        if (buf) {
+          const closestKey = Object.keys(PIANO_SAMPLE_MAP)
+            .map(Number)
+            .reduce((a, b) => Math.abs(b - midi) < Math.abs(a - midi) ? b : a);
+          playPianoBuffer(ctx, buf, midi, closestKey, ctx.currentTime + 0.01, 0.28, 0.7);
+        } else {
+          // Fallback: oscilador FM leve
+          const osc  = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = "triangle";
+          osc.frequency.value = 440 * Math.pow(2, (midi - 69) / 12);
+          gain.gain.setValueAtTime(0.3, ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.28);
+          osc.connect(gain); gain.connect(ctx.destination);
+          osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.3);
+        }
+      });
+    } catch { /* ignora */ }
+  }, [soundOnType, parseOptions]);
 
   // ── Save ──────────────────────────────────────────────────────────────────
-
   const handleSave = useCallback(() => {
     if (!currentProjectId) return;
     setSaveStatus("saving");
     updateMutation.mutate(
       { id: currentProjectId, contentBraille: brailleContent, title: projectTitle },
       {
-        onSuccess: () => {
-          setSaveStatus("saved");
-          utils.editor.list.invalidate();
-        },
-        onError: () => setSaveStatus("unsaved"),
+        onSuccess: () => { setSaveStatus("saved"); utils.editor.list.invalidate(); },
+        onError:   () => setSaveStatus("unsaved"),
       }
     );
   }, [currentProjectId, brailleContent, projectTitle, updateMutation, utils]);
 
-  // Marcar como não salvo quando o conteúdo muda
   useEffect(() => {
-    if (currentProjectId && brailleContent) {
-      setSaveStatus("unsaved");
-    }
+    if (currentProjectId && brailleContent) setSaveStatus("unsaved");
   }, [brailleContent, currentProjectId]);
 
-  // Salvar ao sair da página (beforeunload)
   useEffect(() => {
-    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+    const handler = (e: BeforeUnloadEvent) => {
       if (saveStatus === "unsaved" && currentProjectId) {
-        handleSave();
-        e.preventDefault();
-        e.returnValue = '';
+        handleSave(); e.preventDefault(); e.returnValue = "";
       }
     };
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
   }, [saveStatus, currentProjectId, handleSave]);
 
-  // ── Undo (Ctrl+Z) / Redo (Ctrl+Y / Ctrl+Shift+Z) / Save (Ctrl+S) ─────────
-
+  // ── Undo/Redo/Ctrl+S ─────────────────────────────────────────────────────
   useEffect(() => {
-    const handleKeyboard = (e: KeyboardEvent) => {
-      const isMac = navigator.platform.toUpperCase().includes('MAC');
-      const ctrl = isMac ? e.metaKey : e.ctrlKey;
+    const handler = (e: KeyboardEvent) => {
+      const isMac = navigator.platform.toUpperCase().includes("MAC");
+      const ctrl  = isMac ? e.metaKey : e.ctrlKey;
       if (!ctrl) return;
-
-      if (e.key === 'z' && !e.shiftKey) {
+      if (e.key === "z" && !e.shiftKey) {
         e.preventDefault();
         if (undoStack.current.length > 0) {
           const prev = undoStack.current.pop()!;
@@ -446,7 +611,7 @@ export default function BrailleEditor() {
           setBrailleContent(prev);
         }
       }
-      if ((e.key === 'y') || (e.key === 'z' && e.shiftKey)) {
+      if (e.key === "y" || (e.key === "z" && e.shiftKey)) {
         e.preventDefault();
         if (redoStack.current.length > 0) {
           const next = redoStack.current.pop()!;
@@ -455,59 +620,51 @@ export default function BrailleEditor() {
           setBrailleContent(next);
         }
       }
-      if (e.key === 's') {
-        e.preventDefault();
-        handleSave();
-      }
+      if (e.key === "s") { e.preventDefault(); handleSave(); }
     };
-    window.addEventListener('keydown', handleKeyboard);
-    return () => window.removeEventListener('keydown', handleKeyboard);
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
   }, [brailleContent, handleSave]);
 
-  // ── Score container width ─────────────────────────────────────────────────
-
-  useEffect(() => {
-    if (!scoreContainerRef.current) return;
-    const observer = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        setScoreWidth(Math.max(400, entry.contentRect.width - 16));
-      }
-    });
-    observer.observe(scoreContainerRef.current);
-    return () => observer.disconnect();
+  // ── Cursor tracking ───────────────────────────────────────────────────────
+  const updateCursor = useCallback((ta: HTMLTextAreaElement) => {
+    const s = ta.selectionStart, e = ta.selectionEnd;
+    setCursorPos(s);
+    setSelectionRange(s !== e ? [s, e] : null);
   }, []);
 
-  // ─── CURSOR TRACKING ──────────────────────────────────────────────────────
-
-  const updateCursorPosition = useCallback((textarea: HTMLTextAreaElement) => {
-    const start = textarea.selectionStart;
-    const end = textarea.selectionEnd;
-    setCursorPos(start);
-    if (start !== end) {
-      setSelectionRange([start, end]);
-    } else {
+  // ── Insert at cursor ──────────────────────────────────────────────────────
+  const insertCharAtCursor = useCallback((char: string) => {
+    const ta = brailleTextareaRef.current;
+    if (ta) {
+      const start  = ta.selectionStart;
+      const end    = ta.selectionEnd;
+      const newPos = start + char.length;
+      ta.focus();
+      const newContent = brailleContent.slice(0, start) + char + brailleContent.slice(end);
+      if (!isUndoRedo.current) {
+        undoStack.current.push(brailleContent);
+        if (undoStack.current.length > 100) undoStack.current.shift();
+        redoStack.current = [];
+      }
+      isUndoRedo.current = false;
+      syncSourceRef.current = "braille";
+      setBrailleContent(newContent);
+      setCursorPos(newPos);
       setSelectionRange(null);
+      requestAnimationFrame(() => {
+        if (brailleTextareaRef.current) {
+          brailleTextareaRef.current.selectionStart = newPos;
+          brailleTextareaRef.current.selectionEnd   = newPos;
+          brailleTextareaRef.current.focus();
+        }
+      });
+    } else {
+      syncSourceRef.current = "braille";
+      setBrailleContent(prev => prev + char);
     }
-  }, []);
-
-  // ─── BRAILLE INPUT HANDLERS ────────────────────────────────────────────────
-
-  /**
-   * Tenta extrair uma ParsedNote do último caractere inserido para o feedback sonoro.
-   * Usa parseBrailleMusic no trecho recém-inserido — leve e rápido.
-   */
-  const tryPlayFeedback = useCallback((char: string) => {
-    if (!soundOnType) return;
-    try {
-      const result = parseBrailleMusic(char, parseOptions);
-      const noteEl = result.elements.find(el => el.type === 'note') as ParsedNote | undefined;
-      if (noteEl) {
-        playSingleNote(noteEl, 280);
-      }
-    } catch {
-      // ignora silenciosamente
-    }
-  }, [soundOnType, parseOptions]);
+    tryPlayFeedback(char);
+  }, [brailleContent, tryPlayFeedback]);
 
   const handleBrailleChange = useCallback((newContent: string) => {
     if (!isUndoRedo.current) {
@@ -520,272 +677,159 @@ export default function BrailleEditor() {
     setBrailleContent(newContent);
   }, [brailleContent]);
 
-  const insertCharAtCursor = useCallback((char: string) => {
-    const textarea = brailleTextareaRef.current;
-    if (textarea) {
-      // Capturar posição do cursor ANTES de qualquer atualização de estado
-      // (o React pode re-renderizar antes do requestAnimationFrame executar)
-      const start = textarea.selectionStart;
-      const end   = textarea.selectionEnd;
-      const newPos = start + char.length;
-
-      // Forçar foco imediatamente, antes do re-render, para não perder o elemento ativo
-      textarea.focus();
-
-      const newContent = brailleContent.slice(0, start) + char + brailleContent.slice(end);
-      syncSourceRef.current = "braille";
-      setBrailleContent(newContent);
-      setCursorPos(newPos);
-      setSelectionRange(null);
-
-      // RAF apenas para reposicionar o cursor após o React confirmar o novo value
-      requestAnimationFrame(() => {
-        if (brailleTextareaRef.current) {
-          brailleTextareaRef.current.selectionStart = newPos;
-          brailleTextareaRef.current.selectionEnd   = newPos;
-          // Segundo foco garante que nenhum re-render intermediário roubou o foco
-          brailleTextareaRef.current.focus();
-        }
-      });
-    } else {
-      syncSourceRef.current = "braille";
-      setBrailleContent((prev) => prev + char);
-    }
-    tryPlayFeedback(char);
-  }, [brailleContent, tryPlayFeedback]);
-
-  const insertSpaceAtCursor = useCallback(() => {
-    insertCharAtCursor(" ");
-  }, [insertCharAtCursor]);
-
-  const insertNewlineAtCursor = useCallback(() => {
-    insertCharAtCursor("\n");
-  }, [insertCharAtCursor]);
-
-  const handleBackspaceAtCursor = useCallback(() => {
-    const textarea = brailleTextareaRef.current;
-    if (textarea) {
-      const start = textarea.selectionStart;
-      const end = textarea.selectionEnd;
-      if (start !== end) {
-        const newContent = brailleContent.slice(0, start) + brailleContent.slice(end);
+  const insertSpace    = useCallback(() => insertCharAtCursor(" "),  [insertCharAtCursor]);
+  const insertNewline  = useCallback(() => insertCharAtCursor("\n"), [insertCharAtCursor]);
+  const handleBackspace = useCallback(() => {
+    const ta = brailleTextareaRef.current;
+    if (ta) {
+      const s = ta.selectionStart, e = ta.selectionEnd;
+      if (s !== e) {
+        const nc = brailleContent.slice(0, s) + brailleContent.slice(e);
         syncSourceRef.current = "braille";
-        setBrailleContent(newContent);
-        setCursorPos(start);
+        setBrailleContent(nc);
+        setCursorPos(s);
         setSelectionRange(null);
-        requestAnimationFrame(() => {
-          textarea.selectionStart = textarea.selectionEnd = start;
-          textarea.focus();
-        });
-      } else if (start > 0) {
-        const newContent = brailleContent.slice(0, start - 1) + brailleContent.slice(start);
+        requestAnimationFrame(() => { ta.selectionStart = ta.selectionEnd = s; ta.focus(); });
+      } else if (s > 0) {
+        const nc = brailleContent.slice(0, s - 1) + brailleContent.slice(s);
         syncSourceRef.current = "braille";
-        setBrailleContent(newContent);
-        setCursorPos(start - 1);
+        setBrailleContent(nc);
+        setCursorPos(s - 1);
         setSelectionRange(null);
-        requestAnimationFrame(() => {
-          textarea.selectionStart = textarea.selectionEnd = start - 1;
-          textarea.focus();
-        });
+        requestAnimationFrame(() => { ta.selectionStart = ta.selectionEnd = s - 1; ta.focus(); });
       }
     } else {
       syncSourceRef.current = "braille";
-      setBrailleContent((prev) => prev.slice(0, -1));
+      setBrailleContent(prev => prev.slice(0, -1));
     }
   }, [brailleContent]);
 
-  // ─── ROMANO INPUT HANDLER ──────────────────────────────────────────────────
-
-  const handleRomanChange = useCallback((newContent: string) => {
-    syncSourceRef.current = "romano";
-    setRomanContent(newContent);
-  }, []);
-
-  // ─── PROJECT HANDLERS ──────────────────────────────────────────────────────
-
-  const handleCreateProject = useCallback(async () => {
-    const title = "Novo Projeto " + new Date().toLocaleDateString("pt-BR");
+  // ── Export handlers ───────────────────────────────────────────────────────
+  const handleExportBRF = useCallback(async () => {
+    if (!currentProjectId) return;
     try {
-      const project = await createMutation.mutateAsync({ title, language: "pt" });
-      setCurrentProjectId(project.id);
-      setProjectTitle(title);
-      setBrailleContent("");
-      setRomanContent("");
-      setShowProjects(false);
-      utils.editor.list.invalidate();
-      toast.success("Projeto criado com sucesso!");
-    } catch {
-      toast.error("Erro ao criar projeto");
-    }
-  }, [createMutation, utils]);
+      const result = await exportMutation.mutateAsync({ id: currentProjectId, format: "brf" });
+      const blob   = new Blob([result.content], { type: "text/plain;charset=utf-8" });
+      const url    = URL.createObjectURL(blob);
+      const a      = document.createElement("a");
+      a.href = url; a.download = result.filename;
+      document.body.appendChild(a); a.click();
+      document.body.removeChild(a); URL.revokeObjectURL(url);
+      toast.success("Exportado como BRF");
+    } catch { toast.error("Erro ao exportar BRF"); }
+  }, [currentProjectId, exportMutation]);
 
-  const handleOpenProject = useCallback(
-    (project: { id: number; title: string; contentBraille: string | null }) => {
-      setCurrentProjectId(project.id);
-      setProjectTitle(project.title);
-      const braille = project.contentBraille || "";
-      syncSourceRef.current = "braille";
-      setBrailleContent(braille);
-      setRomanContent(brailleToRoman(braille));
-      setShowProjects(false);
-      setSaveStatus("saved");
-      setCursorPos(0);
-      setSelectionRange(null);
-    },
-    []
-  );
+  const handleExportPDF = useCallback(() => {
+    if (isExportLocked) { toast.error("Exportar PDF requer plano PRO"); return; }
+    toast.info("Exportação de PDF em desenvolvimento");
+  }, [isExportLocked]);
 
-  const handleDeleteProject = useCallback(
-    async (id: number) => {
-      if (!confirm("Tem certeza que deseja excluir este projeto?")) return;
-      try {
-        await deleteMutation.mutateAsync({ id });
-        if (currentProjectId === id) {
-          setCurrentProjectId(null);
-          setBrailleContent("");
-          setRomanContent("");
-          setShowProjects(true);
-        }
-        utils.editor.list.invalidate();
-        toast.success("Projeto excluído");
-      } catch {
-        toast.error("Erro ao excluir projeto");
-      }
-    },
-    [deleteMutation, currentProjectId, utils]
-  );
+  const handleExportAudio = useCallback(() => {
+    if (isExportLocked) { toast.error("Exportar áudio requer plano PRO"); return; }
+    toast.info("Exportação de áudio em desenvolvimento");
+  }, [isExportLocked]);
 
-  const handleExport = useCallback(
-    async (format: "brf" | "txt") => {
-      if (!currentProjectId) return;
-      try {
-        const result = await exportMutation.mutateAsync({ id: currentProjectId, format });
-        const blob = new Blob([result.content], { type: "text/plain;charset=utf-8" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = result.filename;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-        toast.success(`Exportado como ${format.toUpperCase()}`);
-      } catch {
-        toast.error("Erro ao exportar");
-      }
-    },
-    [currentProjectId, exportMutation]
-  );
-
-  // ─── IMPORT HANDLER ────────────────────────────────────────────────────────
-
+  // ── Import handlers ───────────────────────────────────────────────────────
   const handleImportFile = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
-    const fileName = file.name.toLowerCase();
-    const isBrf = fileName.endsWith('.brf');
-    const isMusicXML = fileName.endsWith('.musicxml') || fileName.endsWith('.xml') || fileName.endsWith('.mxl');
-
-    if (!isBrf && !isMusicXML) {
-      toast.error('Formato não suportado. Use .brf ou .musicxml');
-      if (fileInputRef.current) fileInputRef.current.value = '';
+    const fileName  = file.name.toLowerCase();
+    const isBrf     = fileName.endsWith(".brf");
+    const isXML     = fileName.endsWith(".musicxml") || fileName.endsWith(".xml") || fileName.endsWith(".mxl");
+    if (!isBrf && !isXML) {
+      toast.error("Formato não suportado. Use .brf ou .musicxml");
+      if (fileInputRef.current) fileInputRef.current.value = "";
       return;
     }
-
     setImporting(true);
-
     try {
       const text = await file.text();
-
       if (isBrf) {
-        const format = detectBrailleFormat(text);
-        let brailleText: string;
-
-        if (format === 'ascii' || format === 'mixed') {
-          brailleText = asciiToUnicodeBraille(text);
-        } else {
-          brailleText = text;
-        }
-
-        brailleText = brailleText.replace(/\n{3,}/g, '\n\n').trim();
-
-        if (!brailleText) {
-          toast.error('O arquivo BRF está vazio ou não contém conteúdo Braille válido');
-          return;
-        }
-
+        const fmt = detectBrailleFormat(text);
+        let braille = (fmt === "ascii" || fmt === "mixed") ? asciiToUnicodeBraille(text) : text;
+        braille = braille.replace(/\n{3,}/g, "\n\n").trim();
+        if (!braille) { toast.error("BRF vazio"); return; }
         if (!currentProjectId) {
-          const title = file.name.replace(/\.(brf)$/i, '');
-          const project = await createMutation.mutateAsync({ title, language: 'pt', contentBraille: brailleText });
-          setCurrentProjectId(project.id);
-          setProjectTitle(title);
+          const title = file.name.replace(/\.brf$/i, "");
+          const proj  = await createMutation.mutateAsync({ title, language: "pt", contentBraille: braille });
+          setCurrentProjectId(proj.id); setProjectTitle(title);
           syncSourceRef.current = "braille";
-          setBrailleContent(brailleText);
-          setRomanContent(brailleToRoman(brailleText));
-          setShowProjects(false);
-          utils.editor.list.invalidate();
-          toast.success(`Arquivo BRF importado: ${file.name}`);
+          setBrailleContent(braille); setRomanContent(brailleToRoman(braille));
+          setShowProjects(false); utils.editor.list.invalidate();
         } else {
           syncSourceRef.current = "braille";
-          setBrailleContent(brailleText);
-          setRomanContent(brailleToRoman(brailleText));
-          toast.success(`Conteúdo BRF carregado: ${file.name}`);
+          setBrailleContent(braille); setRomanContent(brailleToRoman(braille));
         }
+        toast.success(`BRF importado: ${file.name}`);
       } else {
-        // MusicXML
         if (!currentProjectId) {
-          const title = file.name.replace(/\.(musicxml|xml|mxl)$/i, '');
-          const project = await createMutation.mutateAsync({ title, language: 'pt' });
-          setCurrentProjectId(project.id);
-          setProjectTitle(title);
-          setShowProjects(false);
-          utils.editor.list.invalidate();
-
-          const result = await importMusicXMLMutation.mutateAsync({
-            projectId: project.id,
-            xmlContent: text,
-            fileName: file.name,
-          });
-
-          if (result.metadata?.title) setProjectTitle(result.metadata.title);
-          const updated = await utils.editor.get.fetch({ id: project.id });
-          const braille = updated?.contentBraille || '';
+          const title = file.name.replace(/\.(musicxml|xml|mxl)$/i, "");
+          const proj  = await createMutation.mutateAsync({ title, language: "pt" });
+          setCurrentProjectId(proj.id); setProjectTitle(title);
+          setShowProjects(false); utils.editor.list.invalidate();
+          const res     = await importMusicXMLMutation.mutateAsync({ projectId: proj.id, xmlContent: text, fileName: file.name });
+          if (res.metadata?.title) setProjectTitle(res.metadata.title);
+          const updated = await utils.editor.get.fetch({ id: proj.id });
+          const braille = updated?.contentBraille || "";
           syncSourceRef.current = "braille";
-          setBrailleContent(braille);
-          setRomanContent(brailleToRoman(braille));
-          toast.success(
-            `MusicXML importado: ${result.metadata?.notesCount || 0} notas convertidas para Braille`
-          );
+          setBrailleContent(braille); setRomanContent(brailleToRoman(braille));
+          toast.success(`MusicXML importado: ${res.metadata?.notesCount || 0} notas`);
         } else {
-          const result = await importMusicXMLMutation.mutateAsync({
-            projectId: currentProjectId,
-            xmlContent: text,
-            fileName: file.name,
-          });
-
-          if (result.metadata?.title) setProjectTitle(result.metadata.title);
+          const res     = await importMusicXMLMutation.mutateAsync({ projectId: currentProjectId, xmlContent: text, fileName: file.name });
+          if (res.metadata?.title) setProjectTitle(res.metadata.title);
           const updated = await utils.editor.get.fetch({ id: currentProjectId });
-          const braille = updated?.contentBraille || '';
+          const braille = updated?.contentBraille || "";
           syncSourceRef.current = "braille";
-          setBrailleContent(braille);
-          setRomanContent(brailleToRoman(braille));
+          setBrailleContent(braille); setRomanContent(brailleToRoman(braille));
           utils.editor.list.invalidate();
-          toast.success(
-            `MusicXML importado: ${result.metadata?.notesCount || 0} notas convertidas para Braille`
-          );
+          toast.success(`MusicXML importado: ${res.metadata?.notesCount || 0} notas`);
         }
       }
     } catch (err: any) {
-      console.error('Import error:', err);
-      toast.error(err?.message || 'Erro ao importar arquivo');
+      toast.error(err?.message || "Erro ao importar");
     } finally {
       setImporting(false);
-      if (fileInputRef.current) fileInputRef.current.value = '';
+      if (fileInputRef.current) fileInputRef.current.value = "";
     }
   }, [currentProjectId, createMutation, importMusicXMLMutation, utils]);
 
-  // ─── LOADING / AUTH STATES ─────────────────────────────────────────────────
+  const handleImportMidi = useCallback(() => {
+    toast.info("Importação de MIDI em desenvolvimento");
+  }, []);
+
+  // ── Project handlers ──────────────────────────────────────────────────────
+  const handleCreateProject = useCallback(async () => {
+    const title = "Novo Projeto " + new Date().toLocaleDateString("pt-BR");
+    try {
+      const proj = await createMutation.mutateAsync({ title, language: "pt" });
+      setCurrentProjectId(proj.id); setProjectTitle(title);
+      setBrailleContent(""); setRomanContent("");
+      setShowProjects(false); utils.editor.list.invalidate();
+      toast.success("Projeto criado!");
+    } catch { toast.error("Erro ao criar projeto"); }
+  }, [createMutation, utils]);
+
+  const handleOpenProject = useCallback((proj: { id: number; title: string; contentBraille: string | null }) => {
+    setCurrentProjectId(proj.id); setProjectTitle(proj.title);
+    const braille = proj.contentBraille || "";
+    syncSourceRef.current = "braille";
+    setBrailleContent(braille); setRomanContent(brailleToRoman(braille));
+    setShowProjects(false); setSaveStatus("saved");
+    setCursorPos(0); setSelectionRange(null);
+  }, []);
+
+  const handleDeleteProject = useCallback(async (id: number) => {
+    if (!confirm("Excluir este projeto?")) return;
+    try {
+      await deleteMutation.mutateAsync({ id });
+      if (currentProjectId === id) {
+        setCurrentProjectId(null); setBrailleContent(""); setRomanContent(""); setShowProjects(true);
+      }
+      utils.editor.list.invalidate(); toast.success("Projeto excluído");
+    } catch { toast.error("Erro ao excluir"); }
+  }, [deleteMutation, currentProjectId, utils]);
+
+  // ─── LOADING / AUTH ────────────────────────────────────────────────────────
 
   if (authLoading) {
     return (
@@ -804,24 +848,21 @@ export default function BrailleEditor() {
           <Music className="w-16 h-16 mx-auto text-primary" />
           <h1 className="text-3xl font-bold">Editor de Musicografia Braille</h1>
           <p className="text-muted-foreground text-lg">
-            Escreva em Braille musical e veja a partitura aparecer em tempo real.
-            Faça login para começar.
+            Escreva em Braille musical e veja a partitura aparecer em tempo real. Faça login para começar.
           </p>
-          <Button asChild size="lg">
-            <a href={getLoginUrl()}>Fazer Login</a>
-          </Button>
+          <Button asChild size="lg"><a href={getLoginUrl()}>Fazer Login</a></Button>
         </div>
       </SiteLayout>
     );
   }
 
-  // ─── PROJECT LIST VIEW ─────────────────────────────────────────────────────
+  // ─── PROJECT LIST ──────────────────────────────────────────────────────────
 
   if (showProjects) {
     return (
       <SiteLayout>
         <div className="container max-w-4xl py-10 space-y-6">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between flex-wrap gap-3">
             <div className="flex items-center gap-3">
               <a href="/" className="text-muted-foreground hover:text-foreground transition-colors">
                 <ArrowLeft className="w-5 h-5" />
@@ -829,71 +870,47 @@ export default function BrailleEditor() {
               <h1 className="text-2xl font-bold">Editor de Musicografia Braille</h1>
             </div>
             <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={importing}
-              >
-                <Upload className="w-4 h-4 mr-2" />
-                {importing ? 'Importando...' : 'Importar Arquivo'}
-              </Button>
+              <Dropdown
+                label="Importar"
+                icon={<Upload className="w-3.5 h-3.5" />}
+                items={[
+                  { label: "MusicXML (.xml / .musicxml)", icon: <FileText className="w-3 h-3" />, onClick: () => fileInputRef.current?.click() },
+                  { label: "MIDI (.mid)", icon: <Music className="w-3 h-3" />, onClick: handleImportMidi },
+                ]}
+              />
               <Button onClick={handleCreateProject} disabled={createMutation.isPending}>
-                <Plus className="w-4 h-4 mr-2" />
-                Novo Projeto
+                <Plus className="w-4 h-4 mr-2" />Novo Projeto
               </Button>
             </div>
           </div>
 
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".brf,.musicxml,.xml,.mxl"
-            onChange={handleImportFile}
-            className="hidden"
-            aria-label="Importar arquivo BRF ou MusicXML"
-          />
+          <input ref={fileInputRef} type="file" accept=".brf,.musicxml,.xml,.mxl" onChange={handleImportFile} className="hidden" />
+          <input ref={midiFileInputRef} type="file" accept=".mid,.midi" onChange={() => handleImportMidi()} className="hidden" />
 
-          <p className="text-muted-foreground">
-            Escreva em Braille musical usando o teclado Perkins ou o teclado padrão.
-            A partitura é renderizada em tempo real conforme você digita.
-            Você também pode <strong>importar arquivos .brf</strong> ou <strong>.musicxml</strong>.
+          <p className="text-muted-foreground text-sm">
+            Escreva em Braille musical com o teclado Perkins (F,D,S / J,K,L) ou importe arquivos BRF e MusicXML.
           </p>
 
           {projectsQuery.isLoading ? (
             <div className="flex justify-center py-10">
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
             </div>
-          ) : projectsQuery.data && projectsQuery.data.length > 0 ? (
+          ) : projectsQuery.data?.length ? (
             <div className="grid gap-3">
               {projectsQuery.data.map((project: any) => (
-                <Card
-                  key={project.id}
-                  className="cursor-pointer hover:border-primary/50 transition-colors"
-                  onClick={() => handleOpenProject(project)}
-                >
+                <Card key={project.id} className="cursor-pointer hover:border-primary/50 transition-colors" onClick={() => handleOpenProject(project)}>
                   <CardContent className="flex items-center justify-between py-4">
                     <div className="flex items-center gap-3 min-w-0">
                       <FileText className="w-5 h-5 text-muted-foreground shrink-0" />
                       <div className="min-w-0">
                         <p className="font-medium truncate">{project.title}</p>
-                        <p className="text-sm text-muted-foreground">
-                          {project.contentBraille
-                            ? `${project.contentBraille.length} caracteres`
-                            : "Vazio"}
-                          {" · "}
-                          {new Date(project.updatedAt).toLocaleDateString("pt-BR")}
+                        <p className="text-xs text-muted-foreground">
+                          {project.contentBraille ? `${project.contentBraille.length} chars` : "Vazio"}
+                          {" · "}{new Date(project.updatedAt).toLocaleDateString("pt-BR")}
                         </p>
                       </div>
                     </div>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleDeleteProject(project.id);
-                      }}
-                      aria-label="Excluir projeto"
-                    >
+                    <Button variant="ghost" size="icon" onClick={e => { e.stopPropagation(); handleDeleteProject(project.id); }} aria-label="Excluir">
                       <Trash2 className="w-4 h-4 text-destructive" />
                     </Button>
                   </CardContent>
@@ -904,9 +921,7 @@ export default function BrailleEditor() {
             <Card>
               <CardContent className="py-12 text-center">
                 <Music className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
-                <p className="text-muted-foreground">
-                  Nenhum projeto ainda. Crie um novo para começar!
-                </p>
+                <p className="text-muted-foreground">Nenhum projeto ainda. Crie um novo!</p>
               </CardContent>
             </Card>
           )}
@@ -915,360 +930,291 @@ export default function BrailleEditor() {
     );
   }
 
-  // ─── EDITOR VIEW (3 PANELS) ────────────────────────────────────────────────
+  // ─── EDITOR VIEW ──────────────────────────────────────────────────────────
 
-  const fullParse = parseBrailleMusic(brailleContent, parseOptions);
-  const noteCount = fullParse.elements.filter((e) => e.type === "note").length;
-  const restCount = fullParse.elements.filter((e) => e.type === "rest").length;
-  const barCount  = fullParse.elements.filter((e) => e.type === "barline").length + 1;
+  const lines          = brailleContent.split("\n");
+  const fullParse      = parseBrailleMusic(brailleContent, parseOptions);
+  const noteCount      = fullParse.elements.filter(e => e.type === "note").length;
+  const barCount       = fullParse.elements.filter(e => e.type === "barline").length + 1;
 
-  const lines = brailleContent.split('\n');
-  let currentLineNum = 1;
-  let charCount = 0;
+  // Calcular linha atual do cursor
+  let charCount = 0, currentLineNum = 1;
   for (let li = 0; li < lines.length; li++) {
-    if (cursorPos <= charCount + lines[li].length) {
-      currentLineNum = li + 1;
-      break;
-    }
+    if (cursorPos <= charCount + lines[li].length) { currentLineNum = li + 1; break; }
     charCount += lines[li].length + 1;
   }
 
+  // ─── PAINÉIS ────────────────────────────────────────────────────────────────
+
+  // Painel da partitura (VexFlow)
+  const scorePanel = (
+    <div className="flex flex-col h-full min-h-0">
+      <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-card/50">
+        <span className="text-xs font-medium flex items-center gap-1.5 text-muted-foreground">
+          <Music className="w-3.5 h-3.5" />
+          Partitura
+        </span>
+        <span className="text-[10px] text-muted-foreground">{noteCount} notas · {barCount} compassos</span>
+      </div>
+      <div ref={scoreContainerRef} className="flex-1 overflow-auto p-2 min-h-[140px]">
+        {parsedElements.length > 0 ? (
+          <ScoreRenderer
+            elements={parsedElements}
+            width={scoreWidth}
+            height={layoutMode === "vertical" ? 160 : 200}
+            onMeasureClick={(srcIdx) => {
+              const ta = brailleTextareaRef.current;
+              if (!ta) return;
+              ta.focus();
+              ta.setSelectionRange(srcIdx, srcIdx);
+            }}
+          />
+        ) : (
+          <div className="flex flex-col items-center justify-center h-full min-h-[120px] text-muted-foreground">
+            <Music className="w-10 h-10 mb-2 opacity-20" />
+            <p className="text-xs text-center">Digite em Braille para ver a partitura</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  // Painel do editor Braille
+  const braillePanel = (
+    <div className="flex flex-col h-full min-h-0">
+      {/* Cabeçalho do painel Braille */}
+      <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-card/50 flex-wrap gap-1">
+        <span className="text-xs font-medium flex items-center gap-1.5 text-muted-foreground">
+          <Keyboard className="w-3.5 h-3.5" />
+          Braille Musical
+          <span className="text-[9px] opacity-60">Linha {currentLineNum}</span>
+        </span>
+        <div className="flex items-center gap-1">
+          {/* Som ao digitar */}
+          <label className="flex items-center gap-1 cursor-pointer" title={soundOnType ? "Desativar feedback sonoro" : "Ativar feedback sonoro"}>
+            {soundOnType ? <Volume2 className="w-3.5 h-3.5 text-primary" /> : <VolumeX className="w-3.5 h-3.5 text-muted-foreground" />}
+            <div className="relative" onClick={() => setSoundOnType(v => !v)}>
+              <div className={`w-7 h-4 rounded-full transition-colors ${soundOnType ? "bg-primary" : "bg-muted-foreground/30"}`} />
+              <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-transform ${soundOnType ? "translate-x-3.5" : "translate-x-0.5"}`} />
+            </div>
+          </label>
+          {/* Mostrar Romano */}
+          <button
+            onClick={() => setShowRomano(v => !v)}
+            className={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${showRomano ? "bg-primary/20 text-primary" : "text-muted-foreground hover:text-foreground"}`}
+            title="Mostrar notação romana"
+          >
+            Abc
+          </button>
+          {/* Referência */}
+          <button
+            onClick={() => setShowReference(v => !v)}
+            className={`p-1 rounded transition-colors ${showReference ? "text-primary" : "text-muted-foreground hover:text-foreground"}`}
+            title="Referência rápida de símbolos"
+          >
+            <Info className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      </div>
+
+      {/* Teclado Perkins */}
+      <div className="px-2 py-1 border-b border-border/50">
+        <PerkinsKeyboard
+          onChar={insertCharAtCursor}
+          onSpace={insertSpace}
+          onBackspace={handleBackspace}
+          onNewline={insertNewline}
+        />
+      </div>
+
+      {/* Referência rápida (colapsável) */}
+      {showReference && (
+        <div className="px-3 py-2 border-b border-border/50 bg-muted/20">
+          <QuickReferencePanel onInsert={insertCharAtCursor} />
+        </div>
+      )}
+
+      {/* Área de texto Braille */}
+      <textarea
+        ref={brailleTextareaRef}
+        value={brailleContent}
+        onChange={e => handleBrailleChange(e.target.value)}
+        onSelect={e => updateCursor(e.currentTarget)}
+        onClick={e  => updateCursor(e.currentTarget)}
+        onKeyUp={e  => updateCursor(e.currentTarget)}
+        className="flex-1 p-3 font-mono text-2xl leading-relaxed resize-none focus:outline-none bg-transparent min-h-[120px]"
+        placeholder="⠐⠹⠱⠫⠻⠳⠪⠺"
+        aria-label="Área de entrada em Braille musical"
+        spellCheck={false}
+      />
+
+      {/* Romano (opcional) */}
+      {showRomano && (
+        <div className="border-t border-border/50 p-2">
+          <p className="text-[9px] text-muted-foreground mb-1 font-medium uppercase tracking-wide">Notação Romana</p>
+          <div className="font-mono text-xs text-muted-foreground leading-relaxed whitespace-pre-wrap break-all max-h-20 overflow-y-auto">
+            {romanContent || "—"}
+          </div>
+        </div>
+      )}
+
+      {/* Rodapé do painel */}
+      <div className="flex justify-between px-3 py-1 border-t border-border/50 text-[9px] text-muted-foreground">
+        <span>{brailleContent.length} chars</span>
+        <span>Ctrl+Z desfaz · Ctrl+S salva</span>
+      </div>
+    </div>
+  );
+
+  // Ordem dos painéis conforme layout e preferência
+  const firstPanel  = panelOrder === "braille-first" ? braillePanel : scorePanel;
+  const secondPanel = panelOrder === "braille-first" ? scorePanel   : braillePanel;
+
   return (
     <SiteLayout>
-      <div className="container max-w-7xl py-4 space-y-3">
+      <div className="flex flex-col h-screen overflow-hidden">
 
-        {/* ── CABEÇALHO ────────────────────────────────────────────────────── */}
-        <div className="flex items-center justify-between flex-wrap gap-2">
-          <div className="flex items-center gap-3 flex-wrap">
+        {/* ── BARRA DE FERRAMENTAS PRINCIPAL ─────────────────────────────── */}
+        <header className="flex items-center gap-2 px-3 py-2 border-b border-border bg-card shrink-0 flex-wrap">
 
-            {/* Voltar (salva se necessário) */}
-            <button
-              onClick={() => {
-                if (saveStatus === 'unsaved' && currentProjectId) handleSave();
-                setShowProjects(true);
-              }}
-              className="text-muted-foreground hover:text-foreground transition-colors"
-              aria-label="Voltar aos projetos"
-            >
-              <ArrowLeft className="w-5 h-5" />
-            </button>
+          {/* Voltar */}
+          <button
+            onClick={() => { if (saveStatus === "unsaved" && currentProjectId) handleSave(); setShowProjects(true); }}
+            className="text-muted-foreground hover:text-foreground transition-colors p-1"
+            aria-label="Voltar aos projetos"
+          >
+            <ArrowLeft className="w-4 h-4" />
+          </button>
 
-            {/* Título do projeto */}
-            <Input
-              value={projectTitle}
-              onChange={(e) => setProjectTitle(e.target.value)}
-              className="text-lg font-semibold border-none bg-transparent px-0 h-auto focus-visible:ring-0 max-w-xs"
-              aria-label="Nome do projeto"
-            />
+          {/* Título */}
+          <Input
+            value={projectTitle}
+            onChange={e => setProjectTitle(e.target.value)}
+            className="text-sm font-semibold border-none bg-transparent px-0 h-auto focus-visible:ring-0 max-w-[140px] sm:max-w-xs"
+            aria-label="Nome do projeto"
+          />
 
-            {/* Status de save */}
-            <span
-              className={`text-xs px-2 py-0.5 rounded-full whitespace-nowrap inline-block min-w-[90px] text-center ${
-                saveStatus === "saved"
-                  ? "bg-green-100 text-green-700"
-                  : saveStatus === "saving"
-                  ? "bg-yellow-100 text-yellow-700"
-                  : "bg-red-100 text-red-700"
-              }`}
-            >
-              {saveStatus === "saved" ? "✓ Salvo" : saveStatus === "saving" ? "Salvando..." : "● Não salvo"}
+          {/* Save status */}
+          <div className="flex items-center gap-1">
+            <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
+              saveStatus === "saved"   ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" :
+              saveStatus === "saving"  ? "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400" :
+                                         "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
+            }`}>
+              {saveStatus === "saved" ? "✓ Salvo" : saveStatus === "saving" ? "Salvando…" : "● Não salvo"}
             </span>
             {saveStatus === "unsaved" && (
-              <button
-                onClick={handleSave}
-                className="text-xs px-2 py-0.5 rounded-md bg-primary text-primary-foreground hover:opacity-90"
-                title="Salvar (Ctrl+S)"
-              >
+              <button onClick={handleSave} className="text-[10px] px-2 py-0.5 rounded bg-primary text-primary-foreground hover:opacity-90" title="Salvar (Ctrl+S)">
                 Salvar
               </button>
             )}
-
-            {/* ── CONTROLES DE ÁUDIO ─────────────────────────────────────── */}
-            <div className="flex items-center gap-1.5 border-l pl-3 ml-1">
-
-              {/* BPM input */}
-              <div className="flex items-center gap-1">
-                <label htmlFor="bpm-input" className="text-xs text-muted-foreground whitespace-nowrap">
-                  BPM:
-                </label>
-                <input
-                  id="bpm-input"
-                  type="number"
-                  min={20}
-                  max={400}
-                  value={bpmInputValue}
-                  onChange={(e) => handleBpmInputChange(e.target.value)}
-                  onBlur={(e) => handleBpmCommit(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      handleBpmCommit((e.target as HTMLInputElement).value);
-                      (e.target as HTMLInputElement).blur();
-                    }
-                  }}
-                  className="w-14 h-6 text-xs text-center border rounded-md bg-card focus:outline-none focus:ring-1 focus:ring-primary/50"
-                  aria-label="Andamento em BPM (confirme com Enter ou saindo do campo)"
-                />
-              </div>
-
-              {/* Botão Ouvir Partitura / Parar */}
-              <button
-                onClick={handlePlay}
-                disabled={parsedElements.length === 0}
-                className={`flex items-center gap-1 text-xs px-2.5 py-1 rounded-md font-medium transition-colors disabled:opacity-40 ${
-                  isPlaying
-                    ? "bg-red-500 text-white hover:bg-red-600"
-                    : "bg-primary text-primary-foreground hover:opacity-90"
-                }`}
-                title={isPlaying ? "Parar (clique para parar)" : "Ouvir Partitura"}
-                aria-label={isPlaying ? "Parar reprodução" : "Ouvir partitura completa"}
-              >
-                {isPlaying ? (
-                  <><Square className="w-3 h-3" /> Parar</>
-                ) : (
-                  <><Play className="w-3 h-3" /> Ouvir Partitura</>
-                )}
-              </button>
-            </div>
           </div>
 
-          {/* Lado direito: compasso, importar, referência, exportar */}
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <div className="flex items-center gap-1 border rounded-lg px-2 py-1 bg-card">
-              <span className="text-xs text-muted-foreground">Compasso:</span>
-              <select
-                value={beatsPerMeasure}
-                onChange={(e) => setBeatsPerMeasure(Number(e.target.value))}
-                className="text-xs bg-transparent border-none focus:outline-none cursor-pointer"
-              >
-                <option value={2}>2/4</option>
-                <option value={3}>3/4</option>
-                <option value={4}>4/4</option>
-                <option value={6}>6/8</option>
-              </select>
+          <div className="h-4 w-px bg-border mx-0.5" />
+
+          {/* Player */}
+          <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1">
+              <label htmlFor="bpm-inp" className="text-[10px] text-muted-foreground">BPM</label>
+              <input
+                id="bpm-inp"
+                type="number" min={20} max={400}
+                value={bpmInputValue}
+                onChange={e => handleBpmInputChange(e.target.value)}
+                onBlur={e  => handleBpmCommit(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter") { handleBpmCommit((e.target as HTMLInputElement).value); (e.target as HTMLInputElement).blur(); } }}
+                className="w-12 h-6 text-center text-xs border rounded bg-card focus:outline-none focus:ring-1 focus:ring-primary/50"
+              />
             </div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={importing}
+            <button
+              onClick={handlePlay}
+              disabled={parsedElements.length === 0}
+              className={`flex items-center gap-1 text-xs px-2 py-1 rounded font-medium transition-colors disabled:opacity-40 ${
+                isPlaying ? "bg-red-500 text-white hover:bg-red-600" : "bg-primary text-primary-foreground hover:opacity-90"
+              }`}
+              title={isPlaying ? "Parar" : "Ouvir partitura"}
             >
-              <Upload className="w-3.5 h-3.5 mr-1" />
-              {importing ? '...' : 'Importar'}
-            </Button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".brf,.musicxml,.xml,.mxl"
-              onChange={handleImportFile}
-              className="hidden"
-            />
-            <Button variant="outline" size="sm" onClick={() => setShowReference(!showReference)}>
-              <Info className="w-3.5 h-3.5 mr-1" />
-              Ref.
-            </Button>
-            <div className="flex border rounded-lg overflow-hidden">
-              <button
-                onClick={() => handleExport("brf")}
-                className="px-2 py-1 text-xs flex items-center gap-1 bg-card text-card-foreground hover:bg-accent transition-colors"
-                title="Exportar como BRF"
-              >
-                <Download className="w-3 h-3" />
-                .brf
-              </button>
-              <button
-                onClick={() => handleExport("txt")}
-                className="px-2 py-1 text-xs bg-card text-card-foreground hover:bg-accent transition-colors border-l"
-                title="Exportar como TXT"
-              >
-                .txt
-              </button>
-            </div>
+              {isPlaying ? <><Square className="w-3 h-3" /> Parar</> : <><Play className="w-3 h-3" /> Ouvir</>}
+            </button>
           </div>
-        </div>
 
-        {/* Referência Rápida */}
-        {showReference && (
-          <Card>
-            <CardHeader className="py-2">
-              <CardTitle className="text-sm">Referência Rápida de Símbolos</CardTitle>
-            </CardHeader>
-            <CardContent className="pt-0">
-              <QuickReferencePanel onInsert={insertCharAtCursor} />
-            </CardContent>
-          </Card>
-        )}
+          <div className="h-4 w-px bg-border mx-0.5" />
 
-        {/* ── PAINEL 1: PARTITURA (largura total) ──────────────────────────── */}
-        <Card>
-          <CardHeader className="py-2">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-sm flex items-center gap-2">
-                <Music className="w-4 h-4" />
-                Partitura
-                <span className="text-[10px] font-normal text-muted-foreground">
-                  (Linha {currentLineNum} de {lines.length})
-                </span>
-              </CardTitle>
-              <span className="text-xs text-muted-foreground hidden sm:inline">
-                {noteCount} notas · {restCount} pausas · {barCount} compassos · {beatsPerMeasure}/4
-              </span>
+          {/* Layout controls */}
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setLayoutMode("horizontal")}
+              className={`p-1.5 rounded transition-colors ${layoutMode === "horizontal" ? "bg-primary/15 text-primary" : "text-muted-foreground hover:text-foreground"}`}
+              title="Layout horizontal"
+            >
+              <LayoutTemplate className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={() => setLayoutMode("vertical")}
+              className={`p-1.5 rounded transition-colors ${layoutMode === "vertical" ? "bg-primary/15 text-primary" : "text-muted-foreground hover:text-foreground"}`}
+              title="Layout vertical"
+            >
+              <FlipVertical2 className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={() => setPanelOrder(v => v === "braille-first" ? "score-first" : "braille-first")}
+              className="p-1.5 rounded text-muted-foreground hover:text-foreground transition-colors"
+              title="Inverter posição dos painéis"
+            >
+              {layoutMode === "horizontal" ? <FlipHorizontal2 className="w-3.5 h-3.5" /> : <FlipVertical2 className="w-3.5 h-3.5" />}
+            </button>
+          </div>
+
+          <div className="h-4 w-px bg-border mx-0.5" />
+
+          {/* Import / Export dropdowns */}
+          <div className="flex items-center gap-1">
+            <Dropdown
+              label="Importar"
+              icon={<Upload className="w-3.5 h-3.5" />}
+              items={[
+                { label: "MusicXML (.xml / .musicxml)", icon: <FileText className="w-3 h-3" />, onClick: () => fileInputRef.current?.click() },
+                { label: "MIDI (.mid)",                 icon: <Music    className="w-3 h-3" />, onClick: handleImportMidi },
+              ]}
+              disabled={importing}
+            />
+            <Dropdown
+              label="Exportar"
+              icon={<Download className="w-3.5 h-3.5" />}
+              items={[
+                { label: "Impressora Braille (BRF)",    icon: <FileText className="w-3 h-3" />, onClick: handleExportBRF },
+                { label: "PDF com Tradução Síncrona",   icon: <FileText className="w-3 h-3" />, onClick: handleExportPDF,   locked: isExportLocked },
+                { label: "Áudio MIDI / WAV",            icon: <Volume2  className="w-3 h-3" />, onClick: handleExportAudio, locked: isExportLocked },
+              ]}
+            />
+          </div>
+
+          <input ref={fileInputRef}     type="file" accept=".brf,.musicxml,.xml,.mxl" onChange={handleImportFile} className="hidden" />
+          <input ref={midiFileInputRef} type="file" accept=".mid,.midi"               onChange={() => handleImportMidi()} className="hidden" />
+        </header>
+
+        {/* ── ÁREA DE PAINÉIS ─────────────────────────────────────────────── */}
+        <main className="flex-1 min-h-0 overflow-hidden">
+          {layoutMode === "horizontal" ? (
+            <div className="flex h-full">
+              <div className="flex-1 min-w-0 border-r border-border overflow-hidden">
+                {firstPanel}
+              </div>
+              <div className="flex-1 min-w-0 overflow-hidden">
+                {secondPanel}
+              </div>
             </div>
-          </CardHeader>
-          <CardContent className="pt-0 pb-2">
-            <div ref={scoreContainerRef} className="min-h-[140px]">
-              {parsedElements.length > 0 ? (
-                <ScoreRenderer
-                  elements={parsedElements}
-                  width={scoreWidth}
-                  height={180}
-                  onMeasureClick={(sourceIndex) => {
-                    const textarea = brailleTextareaRef.current;
-                    if (!textarea) return;
-                    textarea.focus();
-                    textarea.setSelectionRange(sourceIndex, sourceIndex);
-                    const lineHeight = 20;
-                    const text = textarea.value;
-                    const linesBeforeCursor = text.substring(0, sourceIndex).split('\n').length - 1;
-                    textarea.scrollTop = linesBeforeCursor * lineHeight;
-                  }}
-                />
-              ) : (
-                <div className="flex flex-col items-center justify-center h-[140px] text-muted-foreground">
-                  <Music className="w-10 h-10 mb-2 opacity-30" />
-                  <p className="text-sm">Digite em Braille musical para ver a partitura aqui</p>
-                  <p className="text-xs mt-1 font-mono">
-                    Ex: ⠐⠹⠱⠫⠻ (Sinal de 4ª oitava + C D E F semínimas)
-                  </p>
-                </div>
-              )}
+          ) : (
+            <div className="flex flex-col h-full">
+              <div className="flex-1 min-h-0 border-b border-border overflow-hidden">
+                {firstPanel}
+              </div>
+              <div className="flex-1 min-h-0 overflow-hidden">
+                {secondPanel}
+              </div>
             </div>
-          </CardContent>
-        </Card>
-
-        {/* ── PAINÉIS 2 e 3: BRAILLE + ROMANO (lado a lado) ────────────────── */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-
-          {/* Painel 2: Texto em Braille (Teclado Perkins) */}
-          <Card className={`transition-all ${activePanel === "braille" ? "ring-2 ring-primary/50" : ""}`}>
-            <CardHeader className="py-2">
-              <div className="flex items-center justify-between flex-wrap gap-1">
-                <CardTitle className="text-sm flex items-center gap-2">
-                  <Keyboard className="w-4 h-4" />
-                  Texto em Braille
-                </CardTitle>
-                <div className="flex items-center gap-2">
-                  {/* ── SWITCH "Som ao Digitar" ─────────────────────────── */}
-                  <label
-                    htmlFor="sound-on-type"
-                    className="flex items-center gap-1.5 cursor-pointer select-none"
-                    title={soundOnType ? "Desativar feedback sonoro ao digitar" : "Ativar feedback sonoro ao digitar"}
-                  >
-                    {soundOnType ? (
-                      <Volume2 className="w-3.5 h-3.5 text-primary" />
-                    ) : (
-                      <VolumeX className="w-3.5 h-3.5 text-muted-foreground" />
-                    )}
-                    <span className="text-[10px] text-muted-foreground whitespace-nowrap">
-                      Som ao Digitar
-                    </span>
-                    <div className="relative inline-flex">
-                      <input
-                        id="sound-on-type"
-                        type="checkbox"
-                        checked={soundOnType}
-                        onChange={(e) => setSoundOnType(e.target.checked)}
-                        className="sr-only"
-                        aria-label="Ativar feedback sonoro ao digitar"
-                      />
-                      <div
-                        onClick={() => setSoundOnType(v => !v)}
-                        className={`w-7 h-4 rounded-full transition-colors cursor-pointer ${
-                          soundOnType ? "bg-primary" : "bg-muted-foreground/30"
-                        }`}
-                      >
-                        <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-transform ${
-                          soundOnType ? "translate-x-3.5" : "translate-x-0.5"
-                        }`} />
-                      </div>
-                    </div>
-                  </label>
-                  <span className="text-[10px] text-muted-foreground bg-muted px-2 py-0.5 rounded">
-                    Teclado Perkins (F,D,S / J,K,L)
-                  </span>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-2 pt-0">
-              {activePanel === "braille" && (
-                <PerkinsKeyboard
-                  onChar={insertCharAtCursor}
-                  onSpace={insertSpaceAtCursor}
-                  onBackspace={handleBackspaceAtCursor}
-                  onNewline={insertNewlineAtCursor}
-                />
-              )}
-
-              <textarea
-                ref={brailleTextareaRef}
-                value={brailleContent}
-                onChange={(e) => handleBrailleChange(e.target.value)}
-                onFocus={() => setActivePanel("braille")}
-                onSelect={(e) => updateCursorPosition(e.currentTarget)}
-                onClick={(e) => updateCursorPosition(e.currentTarget)}
-                onKeyUp={(e) => updateCursorPosition(e.currentTarget)}
-                className="w-full h-48 p-3 border rounded-lg bg-card text-card-foreground font-mono text-2xl leading-relaxed resize-none focus:outline-none focus:ring-2 focus:ring-primary/50"
-                placeholder="Clique aqui e use o teclado Perkins (F,D,S,J,K,L)..."
-                aria-label="Área de entrada em Braille musical — use teclado Perkins"
-                spellCheck={false}
-              />
-              <div className="flex justify-between text-[10px] text-muted-foreground">
-                <span>{brailleContent.length} caracteres Braille · Linha {currentLineNum}</span>
-                <span>Documento oficial para impressão</span>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Painel 3: Texto em Romano (teclado padrão) */}
-          <Card className={`transition-all ${activePanel === "romano" ? "ring-2 ring-primary/50" : ""}`}>
-            <CardHeader className="py-2">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-sm flex items-center gap-2">
-                  <FileText className="w-4 h-4" />
-                  Texto em Romano
-                </CardTitle>
-                <button
-                  onClick={() => setShowRomanHelp(!showRomanHelp)}
-                  className="text-muted-foreground hover:text-foreground transition-colors"
-                  title="Ajuda sobre o formato Romano"
-                >
-                  <HelpCircle className="w-4 h-4" />
-                </button>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-2 pt-0">
-              {showRomanHelp && (
-                <div className="bg-muted rounded-lg p-3 text-xs text-muted-foreground whitespace-pre-line mb-2">
-                  {getRomanFormatHelp()}
-                </div>
-              )}
-
-              <textarea
-                ref={romanTextareaRef}
-                value={romanContent}
-                onChange={(e) => handleRomanChange(e.target.value)}
-                onFocus={() => setActivePanel("romano")}
-                className="w-full h-48 p-3 border rounded-lg bg-card text-card-foreground font-mono text-base leading-relaxed resize-none focus:outline-none focus:ring-2 focus:ring-primary/50"
-                placeholder="Clique aqui e digite com teclado padrão (letras ASCII Braille)..."
-                aria-label="Área de entrada em texto Romano — use teclado padrão"
-                spellCheck={false}
-              />
-              <div className="flex justify-between text-[10px] text-muted-foreground">
-                <span>{romanContent.length} caracteres</span>
-                <span>Teclado padrão · Correspondência alfabética</span>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
+          )}
+        </main>
       </div>
     </SiteLayout>
   );
