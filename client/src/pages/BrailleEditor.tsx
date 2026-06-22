@@ -16,6 +16,7 @@ import {
   type ParseOptions,
 } from "@/lib/brailleMusic";
 import { brailleToRoman } from "@/lib/brailleRomano";
+import { playScore, stopScore, setBpm as setScoreBpmFn } from "@/lib/scoreAudioPlayer";
 import { asciiToUnicodeBraille, detectBrailleFormat } from "@/lib/brailleAscii";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -500,16 +501,8 @@ export default function BrailleEditor() {
   useEffect(() => { return () => { audioCtxRef.current?.close(); }; }, []);
 
   // ── Stop player on unmount ────────────────────────────────────────────────
-  const { stopScore, setBpm: setScoreBpm, playScore } = useMemo(() => {
-    // Dynamic import para evitar dependência circular
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const mod = require("@/lib/scoreAudioPlayer") as {
-      stopScore: () => void;
-      setBpm:    (n: number) => void;
-      playScore: (els: ParsedElement[], bpm: number, onFinish?: () => void) => void;
-    };
-    return mod;
-  }, []);
+  // scoreAudioPlayer: importado estaticamente no topo (evita require() em ESM)
+  const setScoreBpm = setScoreBpmFn;
 
   useEffect(() => { return () => stopScore(); }, [stopScore]);
 
