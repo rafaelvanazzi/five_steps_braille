@@ -44,6 +44,12 @@ interface ScoreRendererProps {
   maxLevel?: 1 | 2 | 3;
   /** Forçar modo de pauta dupla (grand staff) independente da detecção automática */
   grandStaff?: boolean;
+  /**
+   * Fator de escala do canvas VexFlow (padrão: 0.8).
+   * Valores menores = partitura mais compacta; maiores = mais legível.
+   * Range recomendado: 0.4–1.5
+   */
+  scaleRatio?: number;
   /** Chamado quando o usuário clica em uma nota — recebe sourceIndex */
   onNoteClick?: (sourceIndex: number) => void;
   /** @deprecated Use onNoteClick */
@@ -652,6 +658,7 @@ export default function ScoreRenderer({
   beatsPerMeasure = 4,
   maxLevel = 3,
   grandStaff: grandStaffProp,
+  scaleRatio = 0.8,
   onNoteClick,
   onMeasureClick,
 }: ScoreRendererProps) {
@@ -787,9 +794,15 @@ export default function ScoreRenderer({
     renderer.resize(totalWidth, Math.max(totalHeight, 160));
     const ctx = renderer.getContext();
 
-    // Escala 0.5 para renderização mais compacta e nítida
-    ctx.scale(0.5, 0.5);
-    renderer.resize(totalWidth * 2, Math.max(totalHeight * 2, 320));
+    // Aplicar escala configurável (padrão 0.8, range 0.4–1.5)
+    // O canvas é criado em coordenadas físicas (1/scaleRatio do tamanho lógico)
+    // e as chamadas VexFlow usam coordenadas lógicas multiplicadas por (1/scaleRatio)
+    const invScale = 1 / scaleRatio;
+    ctx.scale(scaleRatio, scaleRatio);
+    renderer.resize(Math.ceil(totalWidth * invScale), Math.ceil(Math.max(totalHeight * invScale, 160)));
+
+    const logicAvailW = AVAIL_WIDTH * invScale;
+    const logicSysH   = SYSTEM_H   * invScale;
 
     // ── Pauta treble ──────────────────────────────────────────────────────
     const { staves: trebleStaves } = renderStaveSystem(
@@ -799,22 +812,22 @@ export default function ScoreRenderer({
       keySignature, timeSignatureEl, timeSignature,
       noteHitAreas.current,
       true,
-      AVAIL_WIDTH * 2, // escala 0.5 duplica as coordenadas
-      SYSTEM_H * 2,
+      logicAvailW,
+      logicSysH,
     );
 
     // ── Pauta bass (grand staff) ──────────────────────────────────────────
     let bassStaves: Stave[] = [];
     if (hasBothHands && bassMeasures.length > 0) {
-      const bassY0 = trebleTotalH * 2 + GRAND_GAP;
+      const bassY0 = trebleTotalH * invScale + GRAND_GAP;
       const { staves: bs } = renderStaveSystem(
         ctx, bassMeasures, 30, bassY0, staveWidths,
         'bass', 'ascending',
         keySignature, timeSignatureEl, timeSignature,
         noteHitAreas.current,
         false,
-        AVAIL_WIDTH * 2,
-        SYSTEM_H * 2,
+        logicAvailW,
+        logicSysH,
       );
       bassStaves = bs;
     }
@@ -837,7 +850,7 @@ export default function ScoreRenderer({
   }, [
     elements, filteredElements, trebleMeasures, bassMeasures, staveWidths,
     width, height, activeClef, intervalDirection, hasBothHands,
-    keySignature, timeSignatureEl, timeSignature, bassStartY, grandStaffProp, maxLevel,
+    keySignature, timeSignatureEl, timeSignature, bassStartY, grandStaffProp, maxLevel, scaleRatio,
   ]);
 
   // ── Click listener ────────────────────────────────────────────────────────

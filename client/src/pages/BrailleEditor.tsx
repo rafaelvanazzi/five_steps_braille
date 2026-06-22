@@ -41,124 +41,137 @@ import {
   FlipVertical2,
   Lock,
   ChevronDown,
+  ZoomIn,
+  ZoomOut,
 } from "lucide-react";
 
 // ─── TIPOS ────────────────────────────────────────────────────────────────────
 
-type LayoutMode   = "horizontal" | "vertical";
-type PanelOrder   = "braille-first" | "score-first";
-type ExportFormat = "brf" | "pdf" | "audio";
-type ImportFormat = "musicxml" | "midi";
+type LayoutMode = "horizontal" | "vertical";
+type PanelOrder = "braille-first" | "score-first";
+type InputMode  = "braille" | "romano"; // modo do painel braille
+
+interface EditorMetadata {
+  brailleFontSize: number;
+  scoreFontSize:   number;
+  refFontSize:     number;
+  layoutMode:      LayoutMode;
+  panelOrder:      PanelOrder;
+  splitPct:        number;
+}
 
 // ─── MAPA DE AMOSTRAS DE PIANO (SF2/WAV) ─────────────────────────────────────
-// URLs das amostras .wav organizadas por número MIDI.
-// Popule com os arquivos reais extraídos do SoundFont desejado.
-// O player faz fallback silencioso quando a URL ainda está carregando.
 
 const PIANO_SAMPLE_MAP: Partial<Record<number, string>> = {
-  // Oitava 3 (exemplos — substituir por URLs reais)
-  48: "/audio/piano/C3.wav",
-  50: "/audio/piano/D3.wav",
-  52: "/audio/piano/E3.wav",
-  53: "/audio/piano/F3.wav",
-  55: "/audio/piano/G3.wav",
-  57: "/audio/piano/A3.wav",
+  48: "/audio/piano/C3.wav", 50: "/audio/piano/D3.wav",
+  52: "/audio/piano/E3.wav", 53: "/audio/piano/F3.wav",
+  55: "/audio/piano/G3.wav", 57: "/audio/piano/A3.wav",
   59: "/audio/piano/B3.wav",
-  // Oitava 4
-  60: "/audio/piano/C4.wav",
-  62: "/audio/piano/D4.wav",
-  64: "/audio/piano/E4.wav",
-  65: "/audio/piano/F4.wav",
-  67: "/audio/piano/G4.wav",
-  69: "/audio/piano/A4.wav",
+  60: "/audio/piano/C4.wav", 62: "/audio/piano/D4.wav",
+  64: "/audio/piano/E4.wav", 65: "/audio/piano/F4.wav",
+  67: "/audio/piano/G4.wav", 69: "/audio/piano/A4.wav",
   71: "/audio/piano/B4.wav",
-  // Oitava 5
-  72: "/audio/piano/C5.wav",
-  74: "/audio/piano/D5.wav",
-  76: "/audio/piano/E5.wav",
-  77: "/audio/piano/F5.wav",
-  79: "/audio/piano/G5.wav",
-  81: "/audio/piano/A5.wav",
+  72: "/audio/piano/C5.wav", 74: "/audio/piano/D5.wav",
+  76: "/audio/piano/E5.wav", 77: "/audio/piano/F5.wav",
+  79: "/audio/piano/G5.wav", 81: "/audio/piano/A5.wav",
   83: "/audio/piano/B5.wav",
 };
 
-// Cache de AudioBuffer decodificados (MIDI → buffer)
 const audioBufferCache = new Map<number, AudioBuffer | null>();
-// null = carregando ou falhou; AudioBuffer = pronto
 
-async function loadPianoSample(
-  audioCtx: AudioContext,
-  midi: number
-): Promise<AudioBuffer | null> {
+async function loadPianoSample(audioCtx: AudioContext, midi: number): Promise<AudioBuffer | null> {
   if (audioBufferCache.has(midi)) return audioBufferCache.get(midi) ?? null;
-
-  // Encontrar a amostra mais próxima disponível no mapa
   const keys = Object.keys(PIANO_SAMPLE_MAP).map(Number);
   if (keys.length === 0) return null;
-  const closest = keys.reduce((a, b) =>
-    Math.abs(b - midi) < Math.abs(a - midi) ? b : a
-  );
+  const closest = keys.reduce((a, b) => Math.abs(b - midi) < Math.abs(a - midi) ? b : a);
   const url = PIANO_SAMPLE_MAP[closest];
   if (!url) return null;
-
-  audioBufferCache.set(midi, null); // marcar como carregando
+  audioBufferCache.set(midi, null);
   try {
     const resp = await fetch(url);
     if (!resp.ok) { audioBufferCache.set(midi, null); return null; }
-    const arrayBuf = await resp.arrayBuffer();
-    const buf = await audioCtx.decodeAudioData(arrayBuf);
+    const buf = await audioCtx.decodeAudioData(await resp.arrayBuffer());
     audioBufferCache.set(midi, buf);
     return buf;
-  } catch {
-    audioBufferCache.set(midi, null);
-    return null;
-  }
+  } catch { audioBufferCache.set(midi, null); return null; }
 }
 
 function playPianoBuffer(
-  audioCtx: AudioContext,
-  buffer: AudioBuffer,
-  midi: number,
-  closestMidi: number,
-  startTime: number,
-  duration: number,
-  velocity = 0.75
+  audioCtx: AudioContext, buffer: AudioBuffer, midi: number,
+  closestMidi: number, startTime: number, duration: number, velocity = 0.75
 ): void {
   const src  = audioCtx.createBufferSource();
   const gain = audioCtx.createGain();
   src.buffer = buffer;
-  // Transpor pelo desvio de semitom em relação à nota base da amostra
   src.playbackRate.value = Math.pow(2, (midi - closestMidi) / 12);
-
   gain.gain.setValueAtTime(velocity, startTime);
   gain.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
+  src.connect(gain); gain.connect(audioCtx.destination);
+  src.start(startTime); src.stop(startTime + duration + 0.05);
+}
 
-  src.connect(gain);
-  gain.connect(audioCtx.destination);
-  src.start(startTime);
-  src.stop(startTime + duration + 0.05);
+// ─── FONT SIZE CONTROL ────────────────────────────────────────────────────────
+
+function FontSizeControl({
+  label, value, onChange, min = 10, max = 48, step = 2,
+}: {
+  label: string; value: number; onChange: (v: number) => void;
+  min?: number; max?: number; step?: number;
+}) {
+  return (
+    <div className="flex items-center gap-1" title={label}>
+      <span className="text-[9px] text-muted-foreground hidden sm:inline">{label}</span>
+      <button
+        onClick={() => onChange(Math.max(min, value - step))}
+        className="p-0.5 rounded hover:bg-accent transition-colors text-muted-foreground hover:text-foreground"
+        aria-label={`Diminuir ${label}`}
+      >
+        <ZoomOut className="w-3 h-3" />
+      </button>
+      <span className="text-[10px] text-muted-foreground w-6 text-center">{value}</span>
+      <button
+        onClick={() => onChange(Math.min(max, value + step))}
+        className="p-0.5 rounded hover:bg-accent transition-colors text-muted-foreground hover:text-foreground"
+        aria-label={`Aumentar ${label}`}
+      >
+        <ZoomIn className="w-3 h-3" />
+      </button>
+    </div>
+  );
 }
 
 // ─── PERKINS KEYBOARD ─────────────────────────────────────────────────────────
+// Teclado Perkins virtual — totalmente clicável/tocável para mobile.
+// Os botões acumulam pontos (dots) e emitem a célula ao liberar todos.
 
 function PerkinsKeyboard({
-  onChar,
-  onSpace,
-  onBackspace,
-  onNewline,
+  onChar, onSpace, onBackspace, onNewline,
 }: {
   onChar: (char: string) => void;
   onSpace: () => void;
   onBackspace: () => void;
   onNewline: () => void;
 }) {
-  const [pressed, setPressed]   = useState<Set<string>>(new Set());
-  const pressedRef              = useRef<Set<string>>(new Set());
-  const activeDotsRef           = useRef<PerkinsKeyState>({
+  // Estado dos pontos pressionados (físico + virtual)
+  const [pressed,   setPressed]   = useState<Set<string>>(new Set());
+  const pressedRef                = useRef<Set<string>>(new Set());
+  const activeDotsRef             = useRef<PerkinsKeyState>({
     dot1: false, dot2: false, dot3: false,
     dot4: false, dot5: false, dot6: false,
   });
 
+  // Commit: emite célula quando todos os pontos são liberados
+  const commitIfDone = useCallback(() => {
+    if (pressedRef.current.size === 0) {
+      const dots = { ...activeDotsRef.current };
+      if (dots.dot1 || dots.dot2 || dots.dot3 || dots.dot4 || dots.dot5 || dots.dot6) {
+        onChar(perkinsDotsToUnicode(dots));
+      }
+      activeDotsRef.current = { dot1: false, dot2: false, dot3: false, dot4: false, dot5: false, dot6: false };
+    }
+  }, [onChar]);
+
+  // ── Teclado físico ────────────────────────────────────────────────────────
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
       const key = e.key.toLowerCase();
@@ -184,74 +197,109 @@ function PerkinsKeyboard({
         e.preventDefault();
         pressedRef.current.delete(key);
         setPressed(new Set(pressedRef.current));
-        if (pressedRef.current.size === 0) {
-          const dots = { ...activeDotsRef.current };
-          if (dots.dot1 || dots.dot2 || dots.dot3 || dots.dot4 || dots.dot5 || dots.dot6) {
-            onChar(perkinsDotsToUnicode(dots));
-          }
-          activeDotsRef.current = {
-            dot1: false, dot2: false, dot3: false,
-            dot4: false, dot5: false, dot6: false,
-          };
-        }
+        commitIfDone();
       }
     };
     window.addEventListener("keydown", down);
     window.addEventListener("keyup",   up);
-    return () => {
-      window.removeEventListener("keydown", down);
-      window.removeEventListener("keyup",   up);
-    };
-  }, [onChar, onSpace, onBackspace, onNewline]);
+    return () => { window.removeEventListener("keydown", down); window.removeEventListener("keyup", up); };
+  }, [onSpace, onBackspace, onNewline, commitIfDone]);
 
-  const keys = [
-    { label: "S", sub: "Ponto 3", key: "s" },
-    { label: "D", sub: "Ponto 2", key: "d" },
-    { label: "F", sub: "Ponto 1", key: "f" },
-    { label: "J", sub: "Ponto 4", key: "j" },
-    { label: "K", sub: "Ponto 5", key: "k" },
-    { label: "L", sub: "Ponto 6", key: "l" },
+  // ── Botões virtuais (touch/click) ─────────────────────────────────────────
+  // Cada botão usa pointerdown/pointerup para suportar touch e mouse uniformemente.
+
+  const handleVirtualDown = useCallback((dotKey: string, dotField: keyof PerkinsKeyState) => {
+    activeDotsRef.current[dotField] = true;
+    pressedRef.current.add(dotKey);
+    setPressed(new Set(pressedRef.current));
+  }, []);
+
+  const handleVirtualUp = useCallback((dotKey: string) => {
+    pressedRef.current.delete(dotKey);
+    setPressed(new Set(pressedRef.current));
+    commitIfDone();
+  }, [commitIfDone]);
+
+  const keys: Array<{ label: string; sub: string; key: string; field: keyof PerkinsKeyState }> = [
+    { label: "S", sub: "•3", key: "s", field: "dot3" },
+    { label: "D", sub: "•2", key: "d", field: "dot2" },
+    { label: "F", sub: "•1", key: "f", field: "dot1" },
+    { label: "J", sub: "•4", key: "j", field: "dot4" },
+    { label: "K", sub: "•5", key: "k", field: "dot5" },
+    { label: "L", sub: "•6", key: "l", field: "dot6" },
   ];
 
   return (
-    <div className="flex flex-col items-center gap-1.5 py-1">
+    <div className="flex flex-col items-center gap-1.5 py-1 select-none">
       <div className="flex gap-1.5 items-center">
         {keys.map((k, idx) => (
           <div key={k.key} className="flex items-center">
-            {idx === 3 && <span className="inline-block w-4" />}
+            {idx === 3 && <span className="inline-block w-3" />}
             <button
-              className={`w-11 h-13 rounded-lg border-2 flex flex-col items-center justify-center font-bold text-sm transition-colors ${
+              onPointerDown={(e) => { e.preventDefault(); handleVirtualDown(k.key, k.field); }}
+              onPointerUp={(e)   => { e.preventDefault(); handleVirtualUp(k.key); }}
+              onPointerLeave={(e) => { e.preventDefault(); if (pressedRef.current.has(k.key)) { handleVirtualUp(k.key); } }}
+              onPointerCancel={(e) => { e.preventDefault(); handleVirtualUp(k.key); }}
+              className={`w-11 h-12 rounded-xl border-2 flex flex-col items-center justify-center font-bold text-sm transition-all touch-none ${
                 pressed.has(k.key)
-                  ? "bg-primary text-primary-foreground border-primary"
-                  : "bg-card text-card-foreground border-border hover:border-primary/50"
+                  ? "bg-primary text-primary-foreground border-primary scale-95 shadow-inner"
+                  : "bg-card text-card-foreground border-border hover:border-primary/60 hover:bg-accent active:scale-95"
               }`}
-              aria-label={`${k.label} – ${k.sub}`}
-              tabIndex={-1}
+              aria-label={`Perkins ${k.label} – Ponto ${k.field.replace("dot","")}`}
             >
-              <span>{k.label}</span>
-              <span className="text-[8px] font-normal opacity-60">{k.sub}</span>
+              <span className="leading-none">{k.label}</span>
+              <span className="text-[9px] font-normal opacity-60 mt-0.5">{k.sub}</span>
             </button>
           </div>
         ))}
       </div>
-      <p className="text-[9px] text-muted-foreground text-center leading-tight">
-        Espaço = barra · Enter = nova linha · Backspace = apagar
-      </p>
+      {/* Barra de ações */}
+      <div className="flex gap-1.5 mt-0.5">
+        <button
+          onPointerDown={e => e.preventDefault()}
+          onClick={onSpace}
+          className="px-4 py-1 text-[10px] rounded-lg border border-border bg-card hover:bg-accent transition-colors text-muted-foreground"
+          aria-label="Barra de compasso (espaço)"
+        >
+          ␣ Barra
+        </button>
+        <button
+          onPointerDown={e => e.preventDefault()}
+          onClick={onNewline}
+          className="px-3 py-1 text-[10px] rounded-lg border border-border bg-card hover:bg-accent transition-colors text-muted-foreground"
+          aria-label="Nova linha"
+        >
+          ↵ Linha
+        </button>
+        <button
+          onPointerDown={e => e.preventDefault()}
+          onClick={onBackspace}
+          className="px-3 py-1 text-[10px] rounded-lg border border-border bg-card hover:bg-accent transition-colors text-muted-foreground"
+          aria-label="Apagar"
+        >
+          ⌫ Apagar
+        </button>
+      </div>
     </div>
   );
 }
 
 // ─── REFERÊNCIA RÁPIDA ────────────────────────────────────────────────────────
 
-function QuickReferencePanel({ onInsert }: { onInsert: (char: string) => void }) {
+function QuickReferencePanel({
+  onInsert, fontSize = 24,
+}: {
+  onInsert: (char: string) => void;
+  fontSize?: number;
+}) {
   const ref      = useMemo(() => getQuickReference(), []);
   const [filter, setFilter] = useState<string>("note-whole");
 
   const categories = [
-    { key: "note-whole",   label: "Sb / Sc" },
-    { key: "note-half",    label: "Mín / Fu" },
-    { key: "note-quarter", label: "Sem / Sf" },
-    { key: "note-eighth",  label: "Col / Qt" },
+    { key: "note-whole",   label: "Sb/Sc" },
+    { key: "note-half",    label: "Mín/Fu" },
+    { key: "note-quarter", label: "Sem/Sf" },
+    { key: "note-eighth",  label: "Col/Qt" },
     { key: "rest",         label: "Pausas" },
     { key: "octave",       label: "Oitavas" },
     { key: "accidental",   label: "Alters." },
@@ -288,15 +336,15 @@ function QuickReferencePanel({ onInsert }: { onInsert: (char: string) => void })
           </button>
         ))}
       </div>
-      <div className="grid grid-cols-4 sm:grid-cols-5 gap-1 max-h-36 overflow-y-auto">
+      <div className="grid grid-cols-4 sm:grid-cols-5 gap-1 max-h-44 overflow-y-auto">
         {filtered.map((entry, i) => (
           <button
             key={i}
             onClick={() => onInsert(entry.char)}
-            className="flex flex-col items-center p-1 rounded border border-border hover:bg-accent transition-colors"
+            className="flex flex-col items-center p-1.5 rounded border border-border hover:bg-accent transition-colors"
             title={`${entry.description} (${entry.dots})`}
           >
-            <span className="text-2xl leading-none">{entry.char}</span>
+            <span style={{ fontSize }} className="leading-none">{entry.char}</span>
             <span className="text-[8px] text-muted-foreground mt-0.5 truncate w-full text-center leading-tight">
               {entry.description}
             </span>
@@ -307,13 +355,10 @@ function QuickReferencePanel({ onInsert }: { onInsert: (char: string) => void })
   );
 }
 
-// ─── DROPDOWN COMPONENT ───────────────────────────────────────────────────────
+// ─── DROPDOWN ─────────────────────────────────────────────────────────────────
 
 function Dropdown({
-  label,
-  icon,
-  items,
-  disabled = false,
+  label, icon, items, disabled = false,
 }: {
   label: string;
   icon: React.ReactNode;
@@ -343,15 +388,13 @@ function Dropdown({
         <ChevronDown className="w-3 h-3 opacity-60" />
       </button>
       {open && (
-        <div className="absolute z-50 top-full mt-1 left-0 bg-popover border border-border rounded-lg shadow-lg py-1 min-w-[180px]">
+        <div className="absolute z-50 top-full mt-1 left-0 bg-popover border border-border rounded-lg shadow-lg py-1 min-w-[200px]">
           {items.map((item, i) => (
             <button
               key={i}
               onClick={() => { if (!item.locked) { item.onClick(); setOpen(false); } }}
               className={`flex items-center gap-2 w-full px-3 py-1.5 text-xs text-left transition-colors ${
-                item.locked
-                  ? "text-muted-foreground cursor-not-allowed"
-                  : "hover:bg-accent"
+                item.locked ? "text-muted-foreground cursor-not-allowed" : "hover:bg-accent"
               }`}
             >
               {item.locked ? <Lock className="w-3 h-3" /> : (item.icon ?? null)}
@@ -389,22 +432,62 @@ export default function BrailleEditor() {
   const isUndoRedo = useRef(false);
 
   // ── UI state ──────────────────────────────────────────────────────────────
-  const [showProjects,   setShowProjects]   = useState(true);
-  const [showReference,  setShowReference]  = useState(false);
-  const [showRomano,     setShowRomano]     = useState(false);
-  const [layoutMode,     setLayoutMode]     = useState<LayoutMode>("horizontal");
-  const [panelOrder,     setPanelOrder]     = useState<PanelOrder>("braille-first");
-  const [saveStatus,     setSaveStatus]     = useState<"saved" | "saving" | "unsaved">("saved");
-  const [importing,      setImporting]      = useState(false);
+  const [showProjects,  setShowProjects]  = useState(true);
+  const [showReference, setShowReference] = useState(false);
+  const [showRomano,    setShowRomano]    = useState(false);
+  const [inputMode,     setInputMode]     = useState<InputMode>("braille");
+  const [layoutMode,    setLayoutMode]    = useState<LayoutMode>("horizontal");
+  const [panelOrder,    setPanelOrder]    = useState<PanelOrder>("braille-first");
+  const [saveStatus,    setSaveStatus]    = useState<"saved" | "saving" | "unsaved">("saved");
+  const [importing,     setImporting]     = useState(false);
+
+  // ── Font sizes ────────────────────────────────────────────────────────────
+  const [brailleFontSize, setBrailleFontSize] = useState(28);
+  const [scoreFontSize,   setScoreFontSize]   = useState(14);
+  const [refFontSize,     setRefFontSize]     = useState(24);
+
+  // ── Split pane ────────────────────────────────────────────────────────────
+  // splitPct: percentagem do primeiro painel (0–100); default 50%
+  const [splitPct,    setSplitPct]    = useState(50);
+  const isDragging                    = useRef(false);
+  const containerRef                  = useRef<HTMLDivElement>(null);
+
+  const handleDividerMouseDown = useCallback((e: React.MouseEvent | React.TouchEvent) => {
+    e.preventDefault();
+    isDragging.current = true;
+
+    const move = (ev: MouseEvent | TouchEvent) => {
+      if (!isDragging.current || !containerRef.current) return;
+      const rect = containerRef.current.getBoundingClientRect();
+      const clientX = "touches" in ev ? ev.touches[0].clientX : ev.clientX;
+      const clientY = "touches" in ev ? ev.touches[0].clientY : ev.clientY;
+      const pct = layoutMode === "horizontal"
+        ? ((clientX - rect.left) / rect.width) * 100
+        : ((clientY - rect.top)  / rect.height) * 100;
+      setSplitPct(Math.max(20, Math.min(80, pct)));
+    };
+    const up = () => { isDragging.current = false; };
+
+    window.addEventListener("mousemove", move as EventListener);
+    window.addEventListener("touchmove", move as EventListener, { passive: false });
+    window.addEventListener("mouseup",   up);
+    window.addEventListener("touchend",  up);
+    return () => {
+      window.removeEventListener("mousemove", move as EventListener);
+      window.removeEventListener("touchmove", move as EventListener);
+      window.removeEventListener("mouseup",   up);
+      window.removeEventListener("touchend",  up);
+    };
+  }, [layoutMode]);
 
   // ── Audio state ───────────────────────────────────────────────────────────
   const [isPlaying,     setIsPlaying]     = useState(false);
   const [playerBpm,     setPlayerBpm]     = useState(120);
   const [bpmInputValue, setBpmInputValue] = useState("120");
-  const [soundOnType,   setSoundOnType]   = useState(true);  // feedback sonoro ativo por padrão
+  const [soundOnType,   setSoundOnType]   = useState(true);
   const audioCtxRef = useRef<AudioContext | null>(null);
 
-  // ── Partitura ─────────────────────────────────────────────────────────────
+  // ── Score ─────────────────────────────────────────────────────────────────
   const [parsedElements, setParsedElements] = useState<ParsedElement[]>([]);
   const [cursorPos,      setCursorPos]      = useState(0);
   const [selectionRange, setSelectionRange] = useState<[number, number] | null>(null);
@@ -413,16 +496,13 @@ export default function BrailleEditor() {
   // ── Refs ──────────────────────────────────────────────────────────────────
   const syncSourceRef      = useRef<"braille" | "romano" | "none">("none");
   const brailleTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const romanTextareaRef   = useRef<HTMLTextAreaElement>(null);
   const scoreContainerRef  = useRef<HTMLDivElement>(null);
   const fileInputRef       = useRef<HTMLInputElement>(null);
   const midiFileInputRef   = useRef<HTMLInputElement>(null);
 
-  // ── parseOptions (sem beatsPerMeasure: detectado pelo parser) ────────────
   const parseOptions = useMemo<ParseOptions>(() => ({}), []);
-
-  // ── Export locked (nível básico não tem PDF/Audio) ────────────────────────
-  // Em produção, derivar do plano do usuário.
-  const isExportLocked = false; // false = PRO ativo; true = bloqueia PDF/Audio
+  const isExportLocked = false;
 
   // ── Parse ─────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -430,25 +510,19 @@ export default function BrailleEditor() {
     try {
       const lines = brailleContent.split("\n");
       const firstLine = lines[0] ?? "";
-      let charCount = 0;
-      let cursorLineIdx = 0;
+      let charCount = 0, cursorLineIdx = 0;
       for (let li = 0; li < lines.length; li++) {
         if (cursorPos <= charCount + lines[li].length) { cursorLineIdx = li; break; }
         charCount += lines[li].length + 1;
       }
-
       let result;
       if (selectionRange && selectionRange[0] !== selectionRange[1]) {
         result = parseBrailleSelection(brailleContent, selectionRange[0], selectionRange[1], parseOptions);
       } else {
         result = parseBrailleLine(brailleContent, cursorPos, parseOptions);
       }
-
       if (cursorLineIdx > 0 && firstLine.trim()) {
-        const fullResult = parseBrailleMusic(
-          lines.slice(0, Math.max(1, cursorLineIdx)).join("\n"),
-          parseOptions
-        );
+        const fullResult = parseBrailleMusic(lines.slice(0, Math.max(1, cursorLineIdx)).join("\n"), parseOptions);
         let lastClef: ParsedElement | null = null;
         let lastKS:   ParsedElement | null = null;
         for (const el of fullResult.elements) {
@@ -462,11 +536,8 @@ export default function BrailleEditor() {
         if (!hasOwnKS   && lastKS)   prefix.push(lastKS);
         if (prefix.length) result = { ...result, elements: [...prefix, ...result.elements] };
       }
-
       setParsedElements(result.elements);
-    } catch {
-      setParsedElements([]);
-    }
+    } catch { setParsedElements([]); }
   }, [brailleContent, cursorPos, selectionRange, parseOptions]);
 
   // ── Sync braille → romano ─────────────────────────────────────────────────
@@ -477,39 +548,58 @@ export default function BrailleEditor() {
     }
   }, [brailleContent]);
 
-  // ── Score container width ─────────────────────────────────────────────────
+  // ── Score width via ResizeObserver ────────────────────────────────────────
   useEffect(() => {
     if (!scoreContainerRef.current) return;
     const obs = new ResizeObserver(entries => {
-      for (const entry of entries) {
+      for (const entry of entries)
         setScoreWidth(Math.max(300, entry.contentRect.width - 8));
-      }
     });
     obs.observe(scoreContainerRef.current);
     return () => obs.disconnect();
   }, []);
 
-  // ── Player: AudioContext lazy init ────────────────────────────────────────
+  // ── Persistência de metadados ─────────────────────────────────────────────
+  // Os metadados de UI são salvos junto com o projeto como JSON no contentBraille
+  // prefixado com "::META::{...}\n" para não interferir com o conteúdo braille.
+  const META_PREFIX = "::META::";
+
+  const encodeWithMeta = useCallback((braille: string): string => {
+    const meta: EditorMetadata = {
+      brailleFontSize, scoreFontSize, refFontSize, layoutMode, panelOrder, splitPct,
+    };
+    return `${META_PREFIX}${JSON.stringify(meta)}\n${braille}`;
+  }, [brailleFontSize, scoreFontSize, refFontSize, layoutMode, panelOrder, splitPct]);
+
+  const decodeWithMeta = useCallback((raw: string): string => {
+    if (!raw.startsWith(META_PREFIX)) return raw;
+    const nl = raw.indexOf("\n");
+    if (nl < 0) return "";
+    try {
+      const meta = JSON.parse(raw.slice(META_PREFIX.length, nl)) as EditorMetadata;
+      if (meta.brailleFontSize) setBrailleFontSize(meta.brailleFontSize);
+      if (meta.scoreFontSize)   setScoreFontSize(meta.scoreFontSize);
+      if (meta.refFontSize)     setRefFontSize(meta.refFontSize);
+      if (meta.layoutMode)      setLayoutMode(meta.layoutMode);
+      if (meta.panelOrder)      setPanelOrder(meta.panelOrder);
+      if (meta.splitPct)        setSplitPct(meta.splitPct);
+    } catch { /* ignora metadata corrompida */ }
+    return raw.slice(nl + 1);
+  }, []);
+
+  // ── AudioContext ──────────────────────────────────────────────────────────
   function getAudioCtx(): AudioContext {
-    if (!audioCtxRef.current) {
-      audioCtxRef.current = new (window.AudioContext ||
-        (window as any).webkitAudioContext)();
-    }
+    if (!audioCtxRef.current)
+      audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
     return audioCtxRef.current;
   }
-
   useEffect(() => { return () => { audioCtxRef.current?.close(); }; }, []);
 
-  // ── Stop player on unmount ────────────────────────────────────────────────
-  // scoreAudioPlayer: importado estaticamente no topo (evita require() em ESM)
+  // ── Player ────────────────────────────────────────────────────────────────
   const setScoreBpm = setScoreBpmFn;
+  useEffect(() => { return () => stopScore(); }, []);
 
-  useEffect(() => { return () => stopScore(); }, [stopScore]);
-
-  const handleStop = useCallback(() => {
-    stopScore();
-    setIsPlaying(false);
-  }, [stopScore]);
+  const handleStop = useCallback(() => { stopScore(); setIsPlaying(false); }, []);
 
   const handlePlay = useCallback(() => {
     if (parsedElements.length === 0) return;
@@ -517,38 +607,33 @@ export default function BrailleEditor() {
     setScoreBpm(playerBpm);
     playScore(parsedElements, playerBpm, () => setIsPlaying(false));
     setIsPlaying(true);
-  }, [parsedElements, isPlaying, playerBpm, handleStop, setScoreBpm, playScore]);
+  }, [parsedElements, isPlaying, playerBpm, handleStop, setScoreBpm]);
 
   const handleBpmInputChange = useCallback((raw: string) => setBpmInputValue(raw), []);
   const handleBpmCommit = useCallback((raw: string) => {
-    const parsed = parseInt(raw, 10);
+    const parsed  = parseInt(raw, 10);
     const clamped = Number.isNaN(parsed) ? 120 : Math.max(20, Math.min(400, parsed));
     setBpmInputValue(String(clamped));
     setPlayerBpm(clamped);
     setScoreBpm(clamped);
   }, [setScoreBpm]);
 
-  // ── Feedback sonoro ao digitar (AudioBufferSourceNode) ────────────────────
+  // ── Feedback sonoro ───────────────────────────────────────────────────────
   const tryPlayFeedback = useCallback((char: string) => {
     if (!soundOnType) return;
     try {
-      const r = parseBrailleMusic(char, parseOptions);
+      const r      = parseBrailleMusic(char, parseOptions);
       const noteEl = r.elements.find(e => e.type === "note") as ParsedNote | undefined;
       if (!noteEl) return;
-
       const PITCH_CLASS: Record<string, number> = { C:0,D:2,E:4,F:5,G:7,A:9,B:11 };
       const midi = 12 * (noteEl.octave + 1) + (PITCH_CLASS[noteEl.pitch] ?? 0);
-
-      const ctx = getAudioCtx();
-      // Tentar usar amostra real; fallback para oscilador simples
+      const ctx  = getAudioCtx();
       loadPianoSample(ctx, midi).then(buf => {
         if (buf) {
-          const closestKey = Object.keys(PIANO_SAMPLE_MAP)
-            .map(Number)
+          const closestKey = Object.keys(PIANO_SAMPLE_MAP).map(Number)
             .reduce((a, b) => Math.abs(b - midi) < Math.abs(a - midi) ? b : a);
           playPianoBuffer(ctx, buf, midi, closestKey, ctx.currentTime + 0.01, 0.28, 0.7);
         } else {
-          // Fallback: oscilador FM leve
           const osc  = ctx.createOscillator();
           const gain = ctx.createGain();
           osc.type = "triangle";
@@ -567,13 +652,13 @@ export default function BrailleEditor() {
     if (!currentProjectId) return;
     setSaveStatus("saving");
     updateMutation.mutate(
-      { id: currentProjectId, contentBraille: brailleContent, title: projectTitle },
+      { id: currentProjectId, contentBraille: encodeWithMeta(brailleContent), title: projectTitle },
       {
         onSuccess: () => { setSaveStatus("saved"); utils.editor.list.invalidate(); },
         onError:   () => setSaveStatus("unsaved"),
       }
     );
-  }, [currentProjectId, brailleContent, projectTitle, updateMutation, utils]);
+  }, [currentProjectId, brailleContent, projectTitle, updateMutation, utils, encodeWithMeta]);
 
   useEffect(() => {
     if (currentProjectId && brailleContent) setSaveStatus("unsaved");
@@ -589,7 +674,7 @@ export default function BrailleEditor() {
     return () => window.removeEventListener("beforeunload", handler);
   }, [saveStatus, currentProjectId, handleSave]);
 
-  // ── Undo/Redo/Ctrl+S ─────────────────────────────────────────────────────
+  // ── Undo / Redo / Ctrl+S ─────────────────────────────────────────────────
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const isMac = navigator.platform.toUpperCase().includes("MAC");
@@ -640,7 +725,7 @@ export default function BrailleEditor() {
         if (undoStack.current.length > 100) undoStack.current.shift();
         redoStack.current = [];
       }
-      isUndoRedo.current = false;
+      isUndoRedo.current    = false;
       syncSourceRef.current = "braille";
       setBrailleContent(newContent);
       setCursorPos(newPos);
@@ -665,10 +750,17 @@ export default function BrailleEditor() {
       if (undoStack.current.length > 100) undoStack.current.shift();
       redoStack.current = [];
     }
-    isUndoRedo.current = false;
+    isUndoRedo.current    = false;
     syncSourceRef.current = "braille";
     setBrailleContent(newContent);
   }, [brailleContent]);
+
+  // Modo romano: textarea comum, sync braille → roman
+  const handleRomanChange = useCallback((newContent: string) => {
+    setRomanContent(newContent);
+    // Reversão: tentar converter romano de volta para braille
+    // (implementação básica — pode ser expandida)
+  }, []);
 
   const insertSpace    = useCallback(() => insertCharAtCursor(" "),  [insertCharAtCursor]);
   const insertNewline  = useCallback(() => insertCharAtCursor("\n"), [insertCharAtCursor]);
@@ -679,16 +771,12 @@ export default function BrailleEditor() {
       if (s !== e) {
         const nc = brailleContent.slice(0, s) + brailleContent.slice(e);
         syncSourceRef.current = "braille";
-        setBrailleContent(nc);
-        setCursorPos(s);
-        setSelectionRange(null);
+        setBrailleContent(nc); setCursorPos(s); setSelectionRange(null);
         requestAnimationFrame(() => { ta.selectionStart = ta.selectionEnd = s; ta.focus(); });
       } else if (s > 0) {
         const nc = brailleContent.slice(0, s - 1) + brailleContent.slice(s);
         syncSourceRef.current = "braille";
-        setBrailleContent(nc);
-        setCursorPos(s - 1);
-        setSelectionRange(null);
+        setBrailleContent(nc); setCursorPos(s - 1); setSelectionRange(null);
         requestAnimationFrame(() => { ta.selectionStart = ta.selectionEnd = s - 1; ta.focus(); });
       }
     } else {
@@ -697,7 +785,7 @@ export default function BrailleEditor() {
     }
   }, [brailleContent]);
 
-  // ── Export handlers ───────────────────────────────────────────────────────
+  // ── Export ────────────────────────────────────────────────────────────────
   const handleExportBRF = useCallback(async () => {
     if (!currentProjectId) return;
     try {
@@ -722,13 +810,13 @@ export default function BrailleEditor() {
     toast.info("Exportação de áudio em desenvolvimento");
   }, [isExportLocked]);
 
-  // ── Import handlers ───────────────────────────────────────────────────────
+  // ── Import ────────────────────────────────────────────────────────────────
   const handleImportFile = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const fileName  = file.name.toLowerCase();
-    const isBrf     = fileName.endsWith(".brf");
-    const isXML     = fileName.endsWith(".musicxml") || fileName.endsWith(".xml") || fileName.endsWith(".mxl");
+    const fileName = file.name.toLowerCase();
+    const isBrf    = fileName.endsWith(".brf");
+    const isXML    = fileName.endsWith(".musicxml") || fileName.endsWith(".xml") || fileName.endsWith(".mxl");
     if (!isBrf && !isXML) {
       toast.error("Formato não suportado. Use .brf ou .musicxml");
       if (fileInputRef.current) fileInputRef.current.value = "";
@@ -738,13 +826,13 @@ export default function BrailleEditor() {
     try {
       const text = await file.text();
       if (isBrf) {
-        const fmt = detectBrailleFormat(text);
-        let braille = (fmt === "ascii" || fmt === "mixed") ? asciiToUnicodeBraille(text) : text;
-        braille = braille.replace(/\n{3,}/g, "\n\n").trim();
+        const fmt    = detectBrailleFormat(text);
+        let braille  = (fmt === "ascii" || fmt === "mixed") ? asciiToUnicodeBraille(text) : text;
+        braille      = decodeWithMeta(braille.replace(/\n{3,}/g, "\n\n").trim());
         if (!braille) { toast.error("BRF vazio"); return; }
         if (!currentProjectId) {
           const title = file.name.replace(/\.brf$/i, "");
-          const proj  = await createMutation.mutateAsync({ title, language: "pt", contentBraille: braille });
+          const proj  = await createMutation.mutateAsync({ title, language: "pt", contentBraille: encodeWithMeta(braille) });
           setCurrentProjectId(proj.id); setProjectTitle(title);
           syncSourceRef.current = "braille";
           setBrailleContent(braille); setRomanContent(brailleToRoman(braille));
@@ -763,7 +851,7 @@ export default function BrailleEditor() {
           const res     = await importMusicXMLMutation.mutateAsync({ projectId: proj.id, xmlContent: text, fileName: file.name });
           if (res.metadata?.title) setProjectTitle(res.metadata.title);
           const updated = await utils.editor.get.fetch({ id: proj.id });
-          const braille = updated?.contentBraille || "";
+          const braille = decodeWithMeta(updated?.contentBraille || "");
           syncSourceRef.current = "braille";
           setBrailleContent(braille); setRomanContent(brailleToRoman(braille));
           toast.success(`MusicXML importado: ${res.metadata?.notesCount || 0} notas`);
@@ -771,7 +859,7 @@ export default function BrailleEditor() {
           const res     = await importMusicXMLMutation.mutateAsync({ projectId: currentProjectId, xmlContent: text, fileName: file.name });
           if (res.metadata?.title) setProjectTitle(res.metadata.title);
           const updated = await utils.editor.get.fetch({ id: currentProjectId });
-          const braille = updated?.contentBraille || "";
+          const braille = decodeWithMeta(updated?.contentBraille || "");
           syncSourceRef.current = "braille";
           setBrailleContent(braille); setRomanContent(brailleToRoman(braille));
           utils.editor.list.invalidate();
@@ -784,7 +872,7 @@ export default function BrailleEditor() {
       setImporting(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
-  }, [currentProjectId, createMutation, importMusicXMLMutation, utils]);
+  }, [currentProjectId, createMutation, importMusicXMLMutation, utils, encodeWithMeta, decodeWithMeta]);
 
   const handleImportMidi = useCallback(() => {
     toast.info("Importação de MIDI em desenvolvimento");
@@ -804,12 +892,13 @@ export default function BrailleEditor() {
 
   const handleOpenProject = useCallback((proj: { id: number; title: string; contentBraille: string | null }) => {
     setCurrentProjectId(proj.id); setProjectTitle(proj.title);
-    const braille = proj.contentBraille || "";
+    const raw    = proj.contentBraille || "";
+    const braille = decodeWithMeta(raw);
     syncSourceRef.current = "braille";
     setBrailleContent(braille); setRomanContent(brailleToRoman(braille));
     setShowProjects(false); setSaveStatus("saved");
     setCursorPos(0); setSelectionRange(null);
-  }, []);
+  }, [decodeWithMeta]);
 
   const handleDeleteProject = useCallback(async (id: number) => {
     if (!confirm("Excluir este projeto?")) return;
@@ -868,7 +957,7 @@ export default function BrailleEditor() {
                 icon={<Upload className="w-3.5 h-3.5" />}
                 items={[
                   { label: "MusicXML (.xml / .musicxml)", icon: <FileText className="w-3 h-3" />, onClick: () => fileInputRef.current?.click() },
-                  { label: "MIDI (.mid)", icon: <Music className="w-3 h-3" />, onClick: handleImportMidi },
+                  { label: "MIDI (.mid)",                  icon: <Music    className="w-3 h-3" />, onClick: handleImportMidi },
                 ]}
               />
               <Button onClick={handleCreateProject} disabled={createMutation.isPending}>
@@ -877,8 +966,8 @@ export default function BrailleEditor() {
             </div>
           </div>
 
-          <input ref={fileInputRef} type="file" accept=".brf,.musicxml,.xml,.mxl" onChange={handleImportFile} className="hidden" />
-          <input ref={midiFileInputRef} type="file" accept=".mid,.midi" onChange={() => handleImportMidi()} className="hidden" />
+          <input ref={fileInputRef}     type="file" accept=".brf,.musicxml,.xml,.mxl" onChange={handleImportFile} className="hidden" />
+          <input ref={midiFileInputRef} type="file" accept=".mid,.midi"               onChange={() => handleImportMidi()} className="hidden" />
 
           <p className="text-muted-foreground text-sm">
             Escreva em Braille musical com o teclado Perkins (F,D,S / J,K,L) ou importe arquivos BRF e MusicXML.
@@ -925,31 +1014,32 @@ export default function BrailleEditor() {
 
   // ─── EDITOR VIEW ──────────────────────────────────────────────────────────
 
-  const lines          = brailleContent.split("\n");
-  const fullParse      = parseBrailleMusic(brailleContent, parseOptions);
-  const noteCount      = fullParse.elements.filter(e => e.type === "note").length;
-  const barCount       = fullParse.elements.filter(e => e.type === "barline").length + 1;
+  const lines       = brailleContent.split("\n");
+  const fullParse   = parseBrailleMusic(brailleContent, parseOptions);
+  const noteCount   = fullParse.elements.filter(e => e.type === "note").length;
+  const barCount    = fullParse.elements.filter(e => e.type === "barline").length + 1;
 
-  // Calcular linha atual do cursor
   let charCount = 0, currentLineNum = 1;
   for (let li = 0; li < lines.length; li++) {
     if (cursorPos <= charCount + lines[li].length) { currentLineNum = li + 1; break; }
     charCount += lines[li].length + 1;
   }
 
-  // ─── PAINÉIS ────────────────────────────────────────────────────────────────
-
-  // Painel da partitura (VexFlow)
+  // ── Painel da Partitura (VexFlow) ─────────────────────────────────────────
   const scorePanel = (
-    <div className="flex flex-col h-full min-h-0 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm mx-2">
-      <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-card/50">
+    <div className="flex flex-col h-full min-h-0 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm mx-1">
+      {/* Cabeçalho */}
+      <div className="flex items-center justify-between px-3 py-1.5 border-b border-border bg-card/50 flex-wrap gap-1 shrink-0">
         <span className="text-xs font-medium flex items-center gap-1.5 text-muted-foreground">
           <Music className="w-3.5 h-3.5" />
           Partitura
+          <span className="text-[9px] opacity-60">{noteCount} notas · {barCount} compassos</span>
         </span>
-        <span className="text-[10px] text-muted-foreground">{noteCount} notas · {barCount} compassos</span>
+        {/* Seletor de tamanho da partitura VexFlow */}
+        <FontSizeControl label="Partitura" value={scoreFontSize} onChange={setScoreFontSize} min={8} max={24} step={1} />
       </div>
-      <div ref={scoreContainerRef} className="flex-1 overflow-auto p-2 min-h-[140px]">
+      {/* Área da partitura */}
+      <div ref={scoreContainerRef} className="flex-1 overflow-auto p-1 min-h-[140px]">
         {parsedElements.length > 0 ? (
           <ScoreRenderer
             elements={parsedElements}
@@ -972,33 +1062,51 @@ export default function BrailleEditor() {
     </div>
   );
 
-  // Painel do editor Braille
+  // ── Painel do Editor Braille ───────────────────────────────────────────────
   const braillePanel = (
-    <div className="flex flex-col h-full min-h-0 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm mx-2">
-      {/* Cabeçalho do painel Braille */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-card/50 flex-wrap gap-1">
+    <div className="flex flex-col h-full min-h-0 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm mx-1">
+      {/* Cabeçalho */}
+      <div className="flex items-center justify-between px-3 py-1.5 border-b border-border bg-card/50 flex-wrap gap-1 shrink-0">
         <span className="text-xs font-medium flex items-center gap-1.5 text-muted-foreground">
           <Keyboard className="w-3.5 h-3.5" />
-          Braille Musical
+          {inputMode === "braille" ? "Braille Musical" : "Notação Romana"}
           <span className="text-[9px] opacity-60">Linha {currentLineNum}</span>
         </span>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {/* Seletor de tamanho do Braille */}
+          <FontSizeControl label="Braille" value={brailleFontSize} onChange={setBrailleFontSize} min={12} max={60} step={2} />
           {/* Som ao digitar */}
           <label className="flex items-center gap-1 cursor-pointer" title={soundOnType ? "Desativar feedback sonoro" : "Ativar feedback sonoro"}>
-            {soundOnType ? <Volume2 className="w-3.5 h-3.5 text-primary" /> : <VolumeX className="w-3.5 h-3.5 text-muted-foreground" />}
+            {soundOnType
+              ? <Volume2 className="w-3.5 h-3.5 text-primary" />
+              : <VolumeX className="w-3.5 h-3.5 text-muted-foreground" />}
             <div className="relative" onClick={() => setSoundOnType(v => !v)}>
               <div className={`w-7 h-4 rounded-full transition-colors ${soundOnType ? "bg-primary" : "bg-muted-foreground/30"}`} />
               <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-transform ${soundOnType ? "translate-x-3.5" : "translate-x-0.5"}`} />
             </div>
           </label>
-          {/* Mostrar Romano */}
+          {/* Toggle Abc — troca entre modo Braille e Romano */}
           <button
-            onClick={() => setShowRomano(v => !v)}
-            className={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${showRomano ? "bg-primary/20 text-primary" : "text-muted-foreground hover:text-foreground"}`}
-            title="Mostrar notação romana"
+            onClick={() => setInputMode(v => v === "braille" ? "romano" : "braille")}
+            className={`text-[10px] px-2 py-0.5 rounded-md border transition-colors ${
+              inputMode === "romano"
+                ? "bg-primary text-primary-foreground border-primary"
+                : "border-border text-muted-foreground hover:text-foreground hover:border-primary/50"
+            }`}
+            title={inputMode === "braille" ? "Mudar para entrada Romana (teclado padrão)" : "Mudar para entrada Braille (Perkins)"}
           >
             Abc
           </button>
+          {/* Mostrar romano (sobreposição) quando em modo braille */}
+          {inputMode === "braille" && (
+            <button
+              onClick={() => setShowRomano(v => !v)}
+              className={`text-[9px] px-1.5 py-0.5 rounded transition-colors ${showRomano ? "bg-primary/20 text-primary" : "text-muted-foreground hover:text-foreground"}`}
+              title="Mostrar mapeamento romano abaixo"
+            >
+              ~Abc
+            </button>
+          )}
           {/* Referência */}
           <button
             onClick={() => setShowReference(v => !v)}
@@ -1010,51 +1118,70 @@ export default function BrailleEditor() {
         </div>
       </div>
 
-      {/* Teclado Perkins */}
-      <div className="px-2 py-1 border-b border-border/50">
-        <PerkinsKeyboard
-          onChar={insertCharAtCursor}
-          onSpace={insertSpace}
-          onBackspace={handleBackspace}
-          onNewline={insertNewline}
-        />
-      </div>
-
-      {/* Referência rápida (colapsável) */}
-      {showReference && (
-        <div className="px-3 py-2 border-b border-border/50 bg-muted/20">
-          <QuickReferencePanel onInsert={insertCharAtCursor} />
+      {/* Teclado Perkins virtual — só em modo braille */}
+      {inputMode === "braille" && (
+        <div className="px-2 py-1 border-b border-border/50 shrink-0">
+          <PerkinsKeyboard
+            onChar={insertCharAtCursor}
+            onSpace={insertSpace}
+            onBackspace={handleBackspace}
+            onNewline={insertNewline}
+          />
         </div>
       )}
 
-      {/* Área de texto Braille */}
-      <textarea
-        ref={brailleTextareaRef}
-        value={brailleContent}
-        onChange={e => handleBrailleChange(e.target.value)}
-        onSelect={e => updateCursor(e.currentTarget)}
-        onClick={e  => updateCursor(e.currentTarget)}
-        onKeyUp={e  => updateCursor(e.currentTarget)}
-        className="flex-1 p-3 font-mono text-2xl leading-relaxed resize-none focus:outline-none bg-transparent min-h-[120px]"
-        placeholder="⠐⠹⠱⠫⠻⠳⠪⠺"
-        aria-label="Área de entrada em Braille musical"
-        spellCheck={false}
-      />
+      {/* Referência rápida (colapsável) */}
+      {showReference && (
+        <div className="px-3 py-2 border-b border-border/50 bg-muted/20 shrink-0">
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Referência Rápida</span>
+            <FontSizeControl label="Símbolos" value={refFontSize} onChange={setRefFontSize} min={14} max={48} step={2} />
+          </div>
+          <QuickReferencePanel onInsert={insertCharAtCursor} fontSize={refFontSize} />
+        </div>
+      )}
 
-      {/* Romano (opcional) */}
-      {showRomano && (
-        <div className="border-t border-slate-200 dark:border-slate-700 p-2 bg-slate-50 dark:bg-slate-900/30">
+      {/* Área de texto — muda conforme o modo */}
+      {inputMode === "braille" ? (
+        <textarea
+          ref={brailleTextareaRef}
+          value={brailleContent}
+          onChange={e => handleBrailleChange(e.target.value)}
+          onSelect={e => updateCursor(e.currentTarget)}
+          onClick={e  => updateCursor(e.currentTarget)}
+          onKeyUp={e  => updateCursor(e.currentTarget)}
+          style={{ fontSize: brailleFontSize }}
+          className="flex-1 p-3 font-mono leading-relaxed resize-none focus:outline-none bg-transparent min-h-[120px]"
+          placeholder="⠐⠹⠱⠫⠻⠳⠪⠺"
+          aria-label="Área de entrada em Braille musical"
+          spellCheck={false}
+        />
+      ) : (
+        <textarea
+          ref={romanTextareaRef}
+          value={romanContent}
+          onChange={e => handleRomanChange(e.target.value)}
+          style={{ fontSize: scoreFontSize + 2 }}
+          className="flex-1 p-3 font-mono leading-relaxed resize-none focus:outline-none bg-transparent min-h-[120px]"
+          placeholder="Notação romana (teclado padrão)"
+          aria-label="Área de entrada em Notação Romana"
+          spellCheck={false}
+        />
+      )}
+
+      {/* Romano síncrono (sobreposição, só em modo braille) */}
+      {inputMode === "braille" && showRomano && (
+        <div className="border-t border-slate-200 dark:border-slate-700 p-2 bg-slate-50 dark:bg-slate-900/30 shrink-0">
           <p className="text-[9px] text-muted-foreground mb-1 font-medium uppercase tracking-wide select-none">
-            Notação Romana (mapeamento síncrono)
+            Mapeamento síncrono (Romano)
           </p>
-          {/* Mapeamento caractere a caractere: cada célula braille → seu equivalente romano */}
-          <div className="font-mono text-xs text-foreground/80 leading-relaxed whitespace-pre-wrap break-all max-h-24 overflow-y-auto select-text">
+          <div className="font-mono text-xs text-foreground/80 leading-relaxed whitespace-pre-wrap break-all max-h-20 overflow-y-auto select-text">
             {romanContent
-              ? romanContent.split('').map((char, idx) => (
+              ? romanContent.split("").map((char, idx) => (
                   <span
                     key={idx}
                     className="inline-block hover:bg-primary/10 rounded transition-colors px-px"
-                    title={`U+${brailleContent.charCodeAt(idx).toString(16).toUpperCase().padStart(4,'0')}`}
+                    title={`U+${brailleContent.charCodeAt(idx).toString(16).toUpperCase().padStart(4, "0")}`}
                   >
                     {char}
                   </span>
@@ -1065,15 +1192,15 @@ export default function BrailleEditor() {
         </div>
       )}
 
-      {/* Rodapé do painel */}
-      <div className="flex justify-between px-3 py-1 border-t border-border/50 text-[9px] text-muted-foreground">
-        <span>{brailleContent.length} chars</span>
+      {/* Rodapé */}
+      <div className="flex justify-between px-3 py-1 border-t border-border/50 text-[9px] text-muted-foreground shrink-0">
+        <span>{brailleContent.length} chars · {inputMode === "braille" ? "Perkins F,D,S/J,K,L" : "Teclado padrão"}</span>
         <span>Ctrl+Z desfaz · Ctrl+S salva</span>
       </div>
     </div>
   );
 
-  // Ordem dos painéis conforme layout e preferência
+  // ── Ordem dos painéis ─────────────────────────────────────────────────────
   const firstPanel  = panelOrder === "braille-first" ? braillePanel : scorePanel;
   const secondPanel = panelOrder === "braille-first" ? scorePanel   : braillePanel;
 
@@ -1081,7 +1208,7 @@ export default function BrailleEditor() {
     <SiteLayout>
       <div className="flex flex-col h-screen overflow-hidden">
 
-        {/* ── BARRA DE FERRAMENTAS PRINCIPAL ─────────────────────────────── */}
+        {/* ── BARRA DE FERRAMENTAS ─────────────────────────────────────────── */}
         <header className="flex items-center gap-2 px-3 py-2 border-b border-border bg-card shrink-0 flex-wrap">
 
           {/* Voltar */}
@@ -1097,21 +1224,27 @@ export default function BrailleEditor() {
           <Input
             value={projectTitle}
             onChange={e => setProjectTitle(e.target.value)}
-            className="text-sm font-semibold border-none bg-transparent px-0 h-auto focus-visible:ring-0 max-w-[140px] sm:max-w-xs"
+            className="text-sm font-semibold border-none bg-transparent px-0 h-auto focus-visible:ring-0 max-w-[120px] sm:max-w-xs"
             aria-label="Nome do projeto"
           />
 
-          {/* Save status */}
+          {/* Status de save */}
           <div className="flex items-center gap-1">
             <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
-              saveStatus === "saved"   ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" :
-              saveStatus === "saving"  ? "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400" :
-                                         "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
+              saveStatus === "saved"
+                ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
+                : saveStatus === "saving"
+                ? "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400"
+                : "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
             }`}>
               {saveStatus === "saved" ? "✓ Salvo" : saveStatus === "saving" ? "Salvando…" : "● Não salvo"}
             </span>
             {saveStatus === "unsaved" && (
-              <button onClick={handleSave} className="text-[10px] px-2 py-0.5 rounded bg-primary text-primary-foreground hover:opacity-90" title="Salvar (Ctrl+S)">
+              <button
+                onClick={handleSave}
+                className="text-[10px] px-2 py-0.5 rounded bg-primary text-primary-foreground hover:opacity-90"
+                title="Salvar (Ctrl+S)"
+              >
                 Salvar
               </button>
             )}
@@ -1168,20 +1301,22 @@ export default function BrailleEditor() {
               className="p-1.5 rounded text-muted-foreground hover:text-foreground transition-colors"
               title="Inverter posição dos painéis"
             >
-              {layoutMode === "horizontal" ? <FlipHorizontal2 className="w-3.5 h-3.5" /> : <FlipVertical2 className="w-3.5 h-3.5" />}
+              {layoutMode === "horizontal"
+                ? <FlipHorizontal2 className="w-3.5 h-3.5" />
+                : <FlipVertical2 className="w-3.5 h-3.5" />}
             </button>
           </div>
 
           <div className="h-4 w-px bg-border mx-0.5" />
 
-          {/* Import / Export dropdowns */}
+          {/* Import / Export */}
           <div className="flex items-center gap-1">
             <Dropdown
               label="Importar"
               icon={<Upload className="w-3.5 h-3.5" />}
               items={[
                 { label: "MusicXML (.xml / .musicxml)", icon: <FileText className="w-3 h-3" />, onClick: () => fileInputRef.current?.click() },
-                { label: "MIDI (.mid)",                 icon: <Music    className="w-3 h-3" />, onClick: handleImportMidi },
+                { label: "MIDI (.mid)",                  icon: <Music    className="w-3 h-3" />, onClick: handleImportMidi },
               ]}
               disabled={importing}
             />
@@ -1189,9 +1324,9 @@ export default function BrailleEditor() {
               label="Exportar"
               icon={<Download className="w-3.5 h-3.5" />}
               items={[
-                { label: "Impressora Braille (BRF)",    icon: <FileText className="w-3 h-3" />, onClick: handleExportBRF },
-                { label: "PDF com Tradução Síncrona",   icon: <FileText className="w-3 h-3" />, onClick: handleExportPDF,   locked: isExportLocked },
-                { label: "Áudio MIDI / WAV",            icon: <Volume2  className="w-3 h-3" />, onClick: handleExportAudio, locked: isExportLocked },
+                { label: "Impressora Braille (BRF)",  icon: <FileText className="w-3 h-3" />, onClick: handleExportBRF },
+                { label: "PDF com Tradução Síncrona", icon: <FileText className="w-3 h-3" />, onClick: handleExportPDF,   locked: isExportLocked },
+                { label: "Áudio MIDI / WAV",          icon: <Volume2  className="w-3 h-3" />, onClick: handleExportAudio, locked: isExportLocked },
               ]}
             />
           </div>
@@ -1200,23 +1335,60 @@ export default function BrailleEditor() {
           <input ref={midiFileInputRef} type="file" accept=".mid,.midi"               onChange={() => handleImportMidi()} className="hidden" />
         </header>
 
-        {/* ── ÁREA DE PAINÉIS ─────────────────────────────────────────────── */}
-        <main className="flex-1 min-h-0 overflow-hidden">
+        {/* ── ÁREA DE PAINÉIS COM DIVISOR ARRASTÁVEL ───────────────────────── */}
+        <main
+          ref={containerRef}
+          className="flex-1 min-h-0 overflow-hidden"
+          style={{ userSelect: isDragging.current ? "none" : "auto" }}
+        >
           {layoutMode === "horizontal" ? (
             <div className="flex h-full">
-              <div className="flex-1 min-w-0 border-r border-border overflow-hidden">
+              {/* Primeiro painel */}
+              <div className="min-w-0 overflow-hidden" style={{ width: `${splitPct}%` }}>
                 {firstPanel}
               </div>
-              <div className="flex-1 min-w-0 overflow-hidden">
+
+              {/* Divisor arrastável horizontal */}
+              <div
+                onMouseDown={handleDividerMouseDown}
+                onTouchStart={handleDividerMouseDown}
+                className="w-1.5 shrink-0 cursor-col-resize bg-border hover:bg-primary/40 active:bg-primary/60 transition-colors touch-none relative group"
+                aria-label="Arrastar para redimensionar painéis"
+              >
+                {/* Alça visual */}
+                <div className="absolute inset-y-0 -left-1 -right-1 group-hover:bg-primary/10 transition-colors" />
+                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 flex flex-col gap-0.5 opacity-40 group-hover:opacity-80">
+                  {[0,1,2,3,4].map(i => <div key={i} className="w-0.5 h-1 bg-border rounded-full" />)}
+                </div>
+              </div>
+
+              {/* Segundo painel */}
+              <div className="min-w-0 overflow-hidden flex-1">
                 {secondPanel}
               </div>
             </div>
           ) : (
             <div className="flex flex-col h-full">
-              <div className="flex-1 min-h-0 border-b border-border overflow-hidden">
+              {/* Primeiro painel */}
+              <div className="min-h-0 overflow-hidden" style={{ height: `${splitPct}%` }}>
                 {firstPanel}
               </div>
-              <div className="flex-1 min-h-0 overflow-hidden">
+
+              {/* Divisor arrastável vertical */}
+              <div
+                onMouseDown={handleDividerMouseDown}
+                onTouchStart={handleDividerMouseDown}
+                className="h-1.5 shrink-0 cursor-row-resize bg-border hover:bg-primary/40 active:bg-primary/60 transition-colors touch-none relative group"
+                aria-label="Arrastar para redimensionar painéis"
+              >
+                <div className="absolute inset-x-0 -top-1 -bottom-1 group-hover:bg-primary/10 transition-colors" />
+                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 flex flex-row gap-0.5 opacity-40 group-hover:opacity-80">
+                  {[0,1,2,3,4].map(i => <div key={i} className="h-0.5 w-1 bg-border rounded-full" />)}
+                </div>
+              </div>
+
+              {/* Segundo painel */}
+              <div className="min-h-0 overflow-hidden flex-1">
                 {secondPanel}
               </div>
             </div>
