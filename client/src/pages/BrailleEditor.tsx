@@ -55,6 +55,7 @@ interface EditorMetadata {
   brailleFontSize: number;
   scoreFontSize:   number;
   refFontSize:     number;
+  scoreScaleStep:  number;
   layoutMode:      LayoutMode;
   panelOrder:      PanelOrder;
   splitPct:        number;
@@ -174,6 +175,14 @@ function PerkinsKeyboard({
   // ── Teclado físico ────────────────────────────────────────────────────────
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
+      // Guard: não interceptar Perkins quando o foco está em um campo de texto
+      // (título do projeto, BPM, busca, etc.) — apenas a textarea braille é permitida.
+      const active = document.activeElement;
+      const isTextInput =
+        active instanceof HTMLInputElement ||
+        (active instanceof HTMLTextAreaElement && active !== brailleTextareaRef.current);
+      if (isTextInput) return; // deixar o browser tratar normalmente
+
       const key = e.key.toLowerCase();
       if (["f","d","s","j","k","l"].includes(key)) {
         e.preventDefault();
@@ -189,6 +198,13 @@ function PerkinsKeyboard({
       if (key === " " || key === "backspace" || key === "enter") e.preventDefault();
     };
     const up = (e: KeyboardEvent) => {
+      // Guard idêntico ao keydown
+      const active = document.activeElement;
+      const isTextInput =
+        active instanceof HTMLInputElement ||
+        (active instanceof HTMLTextAreaElement && active !== brailleTextareaRef.current);
+      if (isTextInput) return;
+
       const key = e.key.toLowerCase();
       if (key === " ")         { e.preventDefault(); onSpace();     return; }
       if (key === "backspace") { e.preventDefault(); onBackspace(); return; }
@@ -344,8 +360,11 @@ function QuickReferencePanel({
             className="flex flex-col items-center p-1.5 rounded border border-border hover:bg-accent transition-colors"
             title={`${entry.description} (${entry.dots})`}
           >
-            <span style={{ fontSize }} className="leading-none">{entry.char}</span>
-            <span className="text-[8px] text-muted-foreground mt-0.5 truncate w-full text-center leading-tight">
+            <span style={{ fontSize }} className="leading-none block">{entry.char}</span>
+            <span
+              style={{ fontSize: Math.max(8, Math.round(fontSize * 0.35)) }}
+              className="text-muted-foreground mt-0.5 truncate w-full text-center leading-tight block"
+            >
               {entry.description}
             </span>
           </button>
@@ -444,6 +463,11 @@ export default function BrailleEditor() {
   // ── Font sizes ────────────────────────────────────────────────────────────
   const [brailleFontSize, setBrailleFontSize] = useState(28);
   const [scoreFontSize,   setScoreFontSize]   = useState(14);
+  // Seletor de escala VexFlow: step 1–6 → escala 0.5–1.0
+  // Mapa: 1→0.5, 2→0.6, 3→0.7, 4→0.8 (padrão), 5→0.9, 6→1.0
+  const SCALE_STEPS: Record<number, number> = { 1: 0.5, 2: 0.6, 3: 0.7, 4: 0.8, 5: 0.9, 6: 1.0 };
+  const [scoreScaleStep, setScoreScaleStep] = useState(4); // 4 = 0.8 (padrão)
+  const scoreScaleRatio = SCALE_STEPS[scoreScaleStep] ?? 0.8;
   const [refFontSize,     setRefFontSize]     = useState(24);
 
   // ── Split pane ────────────────────────────────────────────────────────────
@@ -566,10 +590,10 @@ export default function BrailleEditor() {
 
   const encodeWithMeta = useCallback((braille: string): string => {
     const meta: EditorMetadata = {
-      brailleFontSize, scoreFontSize, refFontSize, layoutMode, panelOrder, splitPct,
+      brailleFontSize, scoreFontSize, refFontSize, scoreScaleStep, layoutMode, panelOrder, splitPct,
     };
     return `${META_PREFIX}${JSON.stringify(meta)}\n${braille}`;
-  }, [brailleFontSize, scoreFontSize, refFontSize, layoutMode, panelOrder, splitPct]);
+  }, [brailleFontSize, scoreFontSize, refFontSize, scoreScaleStep, layoutMode, panelOrder, splitPct]);
 
   const decodeWithMeta = useCallback((raw: string): string => {
     if (!raw.startsWith(META_PREFIX)) return raw;
@@ -579,6 +603,7 @@ export default function BrailleEditor() {
       const meta = JSON.parse(raw.slice(META_PREFIX.length, nl)) as EditorMetadata;
       if (meta.brailleFontSize) setBrailleFontSize(meta.brailleFontSize);
       if (meta.scoreFontSize)   setScoreFontSize(meta.scoreFontSize);
+      if (meta.scoreScaleStep)  setScoreScaleStep(meta.scoreScaleStep);
       if (meta.refFontSize)     setRefFontSize(meta.refFontSize);
       if (meta.layoutMode)      setLayoutMode(meta.layoutMode);
       if (meta.panelOrder)      setPanelOrder(meta.panelOrder);
@@ -1030,13 +1055,33 @@ export default function BrailleEditor() {
     <div className="flex flex-col h-full min-h-0 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm mx-1">
       {/* Cabeçalho */}
       <div className="flex items-center justify-between px-3 py-1.5 border-b border-border bg-card/50 flex-wrap gap-1 shrink-0">
-        <span className="text-xs font-medium flex items-center gap-1.5 text-muted-foreground">
-          <Music className="w-3.5 h-3.5" />
+        <span className="text-sm font-semibold flex items-center gap-1.5 text-slate-800 dark:text-slate-100">
+          <Music className="w-4 h-4 text-primary" />
           Partitura
-          <span className="text-[9px] opacity-60">{noteCount} notas · {barCount} compassos</span>
+          <span className="text-[10px] font-normal text-muted-foreground opacity-80">{noteCount} notas · {barCount} compassos</span>
         </span>
-        {/* Seletor de tamanho da partitura VexFlow */}
-        <FontSizeControl label="Partitura" value={scoreFontSize} onChange={setScoreFontSize} min={8} max={24} step={1} />
+        {/* Seletor de escala VexFlow: 1=menor (0.5) … 6=maior (1.0), padrão 4=0.8 */}
+        <div className="flex items-center gap-1.5" title="Escala da partitura VexFlow">
+          <span className="text-[9px] text-muted-foreground hidden sm:inline">Escala</span>
+          <div className="flex items-center gap-0.5">
+            {([1,2,3,4,5,6] as const).map(step => (
+              <button
+                key={step}
+                onClick={() => setScoreScaleStep(step)}
+                className={`w-5 h-5 text-[9px] rounded transition-colors font-mono ${
+                  scoreScaleStep === step
+                    ? "bg-primary text-primary-foreground font-bold"
+                    : "bg-muted text-muted-foreground hover:bg-accent"
+                }`}
+                title={`Escala ${SCALE_STEPS[step]} (${step === 4 ? "padrão" : ""})`}
+                aria-label={`Escala ${SCALE_STEPS[step]}`}
+                aria-pressed={scoreScaleStep === step}
+              >
+                {step}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
       {/* Área da partitura */}
       <div ref={scoreContainerRef} className="flex-1 overflow-auto p-1 min-h-[140px]">
@@ -1045,6 +1090,7 @@ export default function BrailleEditor() {
             elements={parsedElements}
             width={scoreWidth}
             height={layoutMode === "vertical" ? 160 : 200}
+            scaleRatio={scoreScaleRatio}
             onMeasureClick={(srcIdx) => {
               const ta = brailleTextareaRef.current;
               if (!ta) return;
@@ -1067,10 +1113,10 @@ export default function BrailleEditor() {
     <div className="flex flex-col h-full min-h-0 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm mx-1">
       {/* Cabeçalho */}
       <div className="flex items-center justify-between px-3 py-1.5 border-b border-border bg-card/50 flex-wrap gap-1 shrink-0">
-        <span className="text-xs font-medium flex items-center gap-1.5 text-muted-foreground">
-          <Keyboard className="w-3.5 h-3.5" />
+        <span className="text-sm font-semibold flex items-center gap-1.5 text-slate-800 dark:text-slate-100">
+          <Keyboard className="w-4 h-4 text-primary" />
           {inputMode === "braille" ? "Braille Musical" : "Notação Romana"}
-          <span className="text-[9px] opacity-60">Linha {currentLineNum}</span>
+          <span className="text-[10px] font-normal text-muted-foreground opacity-80">Linha {currentLineNum}</span>
         </span>
         <div className="flex items-center gap-1.5 flex-wrap">
           {/* Seletor de tamanho do Braille */}
