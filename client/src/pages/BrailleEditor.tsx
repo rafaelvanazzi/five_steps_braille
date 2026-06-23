@@ -3,7 +3,7 @@
  * * Implementa o Split Pane arrastável, Modo ABC Híbrido, e o gancho do Piano Real SF2.
  */
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import SiteLayout from "@/components/SiteLayout";
 import ScoreRenderer from "@/components/ScoreRenderer";
 import { parseBrailleMusic, getQuickReference, type ParsedElement } from "@/lib/brailleMusic";
