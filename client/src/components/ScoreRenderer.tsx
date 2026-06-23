@@ -24,6 +24,7 @@ import {
   Accidental,
   Dot,
   Beam,
+  StaveTie,
 } from 'vexflow';
 import type {
   ParsedElement,
@@ -623,6 +624,58 @@ function renderStaveSystem(
     } catch (e) {
       console.warn(`[ScoreRenderer] format/draw error (measure ${i}):`, e);
       x += staveW; continue;
+    }
+
+    // ── Arcos de ligadura (StaveTie / Slur) ────────────────────────────
+    // Percorrer os srcIdxs para montar pares de notas ligadas
+    {
+      let slurStart: StaveNote | null = null;
+      let tieStart:  StaveNote | null = null;
+
+      for (let j = 0; j < vexNotes.length; j++) {
+        const srcIdx = srcIdxs[j];
+        if (srcIdx === undefined) continue;
+
+        // Encontrar o elemento ParsedNote correspondente pelo sourceIndex
+        const sourceEl = mNotes.find(el => (el as any).sourceIndex === srcIdx) as any;
+        if (!sourceEl || sourceEl.type !== 'note') continue;
+
+        const slurRole: string | undefined = sourceEl.slurRole;
+        const isTie:    boolean             = !!sourceEl.isTie;
+
+        // ── Tie (prolongação) ─────────────────────────────────────────────
+        if (isTie && tieStart) {
+          try {
+            new StaveTie({
+              first_note:  tieStart,
+              last_note:   vexNotes[j],
+              first_indices: [0],
+              last_indices:  [0],
+            }).setContext(ctx).draw();
+          } catch { /* ignora se VexFlow não suportar */ }
+          tieStart = null;
+        }
+        if (isTie && !tieStart) {
+          // A nota anterior era o start implícito; usar a vexNote anterior se existir
+          if (j > 0) tieStart = vexNotes[j - 1];
+        }
+
+        // ── Slur (expressão) ──────────────────────────────────────────────
+        if (slurRole === 'start' || slurRole === 'single') {
+          slurStart = vexNotes[j];
+        }
+        if ((slurRole === 'end' || slurRole === 'single') && slurStart && slurStart !== vexNotes[j]) {
+          try {
+            new StaveTie({
+              first_note:  slurStart,
+              last_note:   vexNotes[j],
+              first_indices: [0],
+              last_indices:  [0],
+            }).setContext(ctx).draw();
+          } catch { /* ignora */ }
+          slurStart = null;
+        }
+      }
     }
 
     // ── Hit areas para click ─────────────────────────────────────────────

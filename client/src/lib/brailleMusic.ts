@@ -337,10 +337,20 @@ export interface ParsedNote {
   sourceIndex: number;
   measureIndex?: number;
   grade: PedagogicGrade;
-  /** Nível cognitivo de leitura: notas simples = Nível 1 */
   level: ReadingLevel;
-  /** Elemento de conteúdo premium (staccato, dinâmica, ornamento, etc.) */
   isPremium: boolean;
+  /**
+   * Ligadura de expressão (slur): curva visual sobre a nota sem re-ataque.
+   * 'start' = início do arco · 'middle' = continuação · 'end' = fim do arco
+   */
+  slurRole?: 'start' | 'middle' | 'end' | 'single';
+  /**
+   * Tie (ligadura de prolongação, Regra MIMB 6-2):
+   * esta nota é a continuação de uma tie — não re-atacar no áudio.
+   */
+  isTie?: boolean;
+  /** Duração somada da tie (se isTie=true): durações da nota anterior + esta */
+  tieDuration?: number;
 }
 
 export interface ParsedRest {
@@ -1057,6 +1067,13 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
     let pendingOctave: number | undefined;
     let pendingAccidental: Accidental | undefined;
     let pendingStaccato = false;
+    // Escopo de ligadura e tie
+    // pendingSlur: 'start' quando ⠉ foi visto antes desta nota
+    //              'long'  quando ⠉⠉ ou PHRASE_START foi visto (escopo longo)
+    let pendingSlurKind: 'simple' | 'double' | null = null;
+    let longSlurActive = false; // true quando escopo longo está aberto (⠉⠉ / ⠰⠃)
+    // Para tie: guardar a última nota emitida para comparar pitch+octave
+    let lastNoteForTie: { pitch: string; octave: number; duration: Duration; dotted: boolean; dotted2: boolean } | null = null;
     /** Duração da última nota emitida neste compasso — herdada pelos intervalos do acorde. */
     let lastNoteDuration: Duration | null = null;
 
@@ -1115,9 +1132,33 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
       if (tk.kind === 'quialtera')     { elements.push({ type: 'quialtera', name: (tk as any).name, sourceIndex: (tk as any).idx, level: 1 as const, isPremium: true }); continue; }
       if (tk.kind === 'repetition')    { elements.push({ type: 'repetition', name: (tk as any).name, sourceIndex: (tk as any).idx, level: 1 as const, isPremium: true }); continue; }
       if (tk.kind === 'text')           { /* texto literário: não emite elemento musical */ continue; }
-      if (tk.kind === 'slur')          { elements.push({ type: 'slur', slurType: (tk as any).slurType, sourceIndex: (tk as any).idx, level: 1 as const, isPremium: true }); continue; }
+      if (tk.kind === 'slur') {
+        // ⠉ isolado → pendingSlur simples; ⠉⠉ (double) → inicia escopo longo
+        const slurTk = tk as { kind: 'slur'; slurType: 'simple' | 'double'; idx: number };
+        if (slurTk.slurType === 'double') {
+          longSlurActive    = true;
+          pendingSlurKind   = 'double';
+        } else {
+          // simple: se escopo longo ativo, é 'fim'; senão, é início de slur local
+          if (longSlurActive) {
+            pendingSlurKind = null; // fim do arco longo será resolvido na próxima nota
+          } else {
+            pendingSlurKind = 'simple';
+          }
+        }
+        // Emitir também o elemento ParsedSlur para uso externo (VexFlow)
+        elements.push({ type: 'slur', slurType: slurTk.slurType, sourceIndex: slurTk.idx, level: 1 as const, isPremium: true });
+        continue;
+      }
       if (tk.kind === 'tie')     { elements.push({ type: 'tie', sourceIndex: (tk as any).idx, level: 1 as const, isPremium: true }); continue; }
-      if (tk.kind === 'phrase')  { elements.push({ type: 'phrase', phraseType: (tk as any).phraseType, sourceIndex: (tk as any).idx, level: 1 as const, isPremium: true }); continue; }
+      if (tk.kind === 'phrase') {
+        // ⠰⠃ = início ligadura longa; ⠘⠆ = fim
+        const phTk = tk as { kind: 'phrase'; phraseType: 'start' | 'end'; idx: number };
+        if (phTk.phraseType === 'start') { longSlurActive = true; pendingSlurKind = 'double'; }
+        else                              { longSlurActive = false; pendingSlurKind = null; }
+        elements.push({ type: 'phrase', phraseType: phTk.phraseType, sourceIndex: phTk.idx, level: 1 as const, isPremium: true });
+        continue;
+      }
       if (tk.kind === 'interval') {
         if (inNoteContext) {
           const intTk = tk as {
@@ -1166,6 +1207,40 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
         else if (prevPitch !== null) { octave = inferOctave(prevPitch, prevOctave, n.pitch); currentOctave = octave; }
         else { octave = currentOctave; }
 
+        // ── Resolver tie vs slur (Regra MIMB 6-2) ────────────────────────────
+        // Tie: ⠉ antes de nota com mesmo pitch+octave → prolongação, não slur
+        let resolvedSlurRole: 'start' | 'middle' | 'end' | 'single' | undefined = undefined;
+        let resolvedIsTie    = false;
+        let resolvedTieDuration: number | undefined = undefined;
+
+        if (pendingSlurKind !== null) {
+          const samePitchOctave =
+            lastNoteForTie !== null &&
+            lastNoteForTie.pitch  === n.pitch &&
+            lastNoteForTie.octave === octave;
+
+          if (samePitchOctave && pendingSlurKind === 'simple') {
+            // MIMB 6-2: mesma altura + ⠉ = tie de prolongação
+            resolvedIsTie = true;
+            const BEAT_MAP: Record<string, number> = {
+              w: 4, h: 2, q: 1, '8': 0.5, '16': 0.25, '32': 0.125, '64': 0.0625, '128': 0.03125,
+            };
+            const prevPulses = (BEAT_MAP[lastNoteForTie.duration] ?? 1) * (lastNoteForTie.dotted ? 1.5 : 1);
+            const thisPulses = (BEAT_MAP[dur] ?? 1) * (n.dotted ? 1.5 : 1);
+            resolvedTieDuration = prevPulses + thisPulses;
+          } else {
+            // Pitches diferentes → slur de expressão
+            if (longSlurActive) {
+              resolvedSlurRole = pendingSlurKind === 'double' ? 'start' : 'end';
+            } else {
+              resolvedSlurRole = 'start';
+            }
+          }
+          pendingSlurKind = null;
+        } else if (longSlurActive) {
+          resolvedSlurRole = 'middle';
+        }
+
         elements.push({
           type: 'note', pitch: n.pitch, octave, duration: dur,
           dotted: n.dotted, dotted2: n.dotted2,
@@ -1178,7 +1253,12 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
           grade: gradeForNote(pendingOctave !== undefined, !!pendingAccidental),
           level: 1 as const,
           isPremium: false,
+          slurRole:    resolvedSlurRole,
+          isTie:       resolvedIsTie || undefined,
+          tieDuration: resolvedTieDuration,
         });
+        lastNoteForTie = { pitch: n.pitch, octave, duration: dur, dotted: n.dotted, dotted2: n.dotted2 };
+        lastNoteDuration = dur;
         prevPitch = n.pitch; prevOctave = octave;
         pendingAccidental = undefined; pendingStaccato = false;
         firstNoteInDoc = false; inNoteContext = true; continue;
@@ -1383,11 +1463,11 @@ export function getQuickReference(): QuickRefEntry[] {
   ref.push({ char: AUGMENTATION_DOT2,     dots: '3,3',     description: 'Ponto duplo de aumento', category: 'other' });
 
   // Ligaduras
-  ref.push({ char: SLUR_SIMPLE,           dots: '1,4',     description: 'Ligadura simples',        category: 'ligadura' });
-  ref.push({ char: SLUR_DOUBLE,           dots: '1,4 1,4', description: 'Ligadura dupla',          category: 'ligadura' });
+  ref.push({ char: SLUR_SIMPLE,           dots: '1,4',     description: 'Ligadura',                category: 'ligadura' });
+  ref.push({ char: SLUR_DOUBLE,           dots: '1,4 1,4', description: 'Início de Ligadura',      category: 'ligadura' });
   ref.push({ char: TIE,                   dots: '4 1,4',   description: 'Lig. prolongação',        category: 'ligadura' });
-  ref.push({ char: PHRASE_START,          dots: '5,6 1,2', description: 'Lig. frase início',       category: 'ligadura' });
-  ref.push({ char: PHRASE_END,            dots: '4,5 2,3', description: 'Lig. frase fim',          category: 'ligadura' });
+  ref.push({ char: PHRASE_START,          dots: '5,6 1,2', description: 'Início de Ligadura Longa', category: 'ligadura' });
+  ref.push({ char: PHRASE_END,            dots: '4,5 2,3', description: 'Fim de Ligadura Longa',   category: 'ligadura' });
 
   // Articulação
   ref.push({ char: STACCATO,                            dots: '2,3,6',          description: 'Staccato',          category: 'articulacao' });

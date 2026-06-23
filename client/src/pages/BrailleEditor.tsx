@@ -61,54 +61,141 @@ interface EditorMetadata {
   splitPct:        number;
 }
 
-// ─── MAPA DE AMOSTRAS DE PIANO (SF2/WAV) ─────────────────────────────────────
+// ─── MOTOR DE ÁUDIO PIANO SF2 ────────────────────────────────────────────────
+//
+// Arquitetura:
+//  1. Tenta carregar amostras do SoundFont Equinox_Grand_Pianos.sf2
+//     (ou WAV individuais se o SF2 não estiver disponível).
+//  2. Fallback silencioso: oscilador FM se nenhuma amostra carregou.
+//  3. Regras de articulação:
+//     - Staccato: duração do áudio cortada pela metade.
+//     - Tie (prolongação): canal mantido aberto pelo tempo somado das duas notas.
 
+// Mapa de amostras WAV individuais (fallback ou alternativa ao SF2)
+// Popule com os paths reais do servidor — ex: extraídos do Equinox SF2
 const PIANO_SAMPLE_MAP: Partial<Record<number, string>> = {
-  48: "/audio/piano/C3.wav", 50: "/audio/piano/D3.wav",
-  52: "/audio/piano/E3.wav", 53: "/audio/piano/F3.wav",
-  55: "/audio/piano/G3.wav", 57: "/audio/piano/A3.wav",
-  59: "/audio/piano/B3.wav",
-  60: "/audio/piano/C4.wav", 62: "/audio/piano/D4.wav",
-  64: "/audio/piano/E4.wav", 65: "/audio/piano/F4.wav",
-  67: "/audio/piano/G4.wav", 69: "/audio/piano/A4.wav",
-  71: "/audio/piano/B4.wav",
-  72: "/audio/piano/C5.wav", 74: "/audio/piano/D5.wav",
-  76: "/audio/piano/E5.wav", 77: "/audio/piano/F5.wav",
-  79: "/audio/piano/G5.wav", 81: "/audio/piano/A5.wav",
-  83: "/audio/piano/B5.wav",
+  // Notas de C2 a C6 com espaçamento por terça (o player interpola com playbackRate)
+  36: "/audio/piano/sf2/C2.wav",
+  40: "/audio/piano/sf2/E2.wav",
+  43: "/audio/piano/sf2/G2.wav",
+  48: "/audio/piano/sf2/C3.wav",
+  52: "/audio/piano/sf2/E3.wav",
+  55: "/audio/piano/sf2/G3.wav",
+  60: "/audio/piano/sf2/C4.wav",
+  64: "/audio/piano/sf2/E4.wav",
+  67: "/audio/piano/sf2/G4.wav",
+  72: "/audio/piano/sf2/C5.wav",
+  76: "/audio/piano/sf2/E5.wav",
+  79: "/audio/piano/sf2/G5.wav",
+  84: "/audio/piano/sf2/C6.wav",
 };
 
+/** Cache de AudioBuffer decodificados. null = carregando/falhou. */
 const audioBufferCache = new Map<number, AudioBuffer | null>();
 
-async function loadPianoSample(audioCtx: AudioContext, midi: number): Promise<AudioBuffer | null> {
-  if (audioBufferCache.has(midi)) return audioBufferCache.get(midi) ?? null;
+/** Carrega a amostra mais próxima ao MIDI solicitado e armazena em cache. */
+async function loadPianoSample(audioCtx: AudioContext, midi: number): Promise<{ buffer: AudioBuffer; closestMidi: number } | null> {
   const keys = Object.keys(PIANO_SAMPLE_MAP).map(Number);
   if (keys.length === 0) return null;
+
   const closest = keys.reduce((a, b) => Math.abs(b - midi) < Math.abs(a - midi) ? b : a);
+
+  if (audioBufferCache.has(closest)) {
+    const cached = audioBufferCache.get(closest);
+    return cached ? { buffer: cached, closestMidi: closest } : null;
+  }
+
   const url = PIANO_SAMPLE_MAP[closest];
   if (!url) return null;
-  audioBufferCache.set(midi, null);
+
+  audioBufferCache.set(closest, null); // marcar como "carregando"
   try {
     const resp = await fetch(url);
-    if (!resp.ok) { audioBufferCache.set(midi, null); return null; }
+    if (!resp.ok) return null;
     const buf = await audioCtx.decodeAudioData(await resp.arrayBuffer());
-    audioBufferCache.set(midi, buf);
-    return buf;
-  } catch { audioBufferCache.set(midi, null); return null; }
+    audioBufferCache.set(closest, buf);
+    return { buffer: buf, closestMidi: closest };
+  } catch {
+    audioBufferCache.set(closest, null);
+    return null;
+  }
 }
 
+/**
+ * Agenda a reprodução de uma nota via AudioBufferSourceNode.
+ *
+ * @param options.staccato  true → duração cortada pela metade
+ * @param options.isTie     true → nota não re-ataca (canal contínuo); duração = tieDuration
+ * @param options.tieDuration  duração em pulsos da nota + nota prolongada
+ * @param options.bpm       BPM para converter pulsos em segundos
+ */
 function playPianoBuffer(
-  audioCtx: AudioContext, buffer: AudioBuffer, midi: number,
-  closestMidi: number, startTime: number, duration: number, velocity = 0.75
+  audioCtx: AudioContext,
+  buffer:   AudioBuffer,
+  midi:     number,
+  closestMidi: number,
+  startTime: number,
+  durationSec: number,
+  options: {
+    velocity?:    number;
+    staccato?:    boolean;
+    isTie?:       boolean;
+    tieDuration?: number; // em pulsos
+    bpm?:         number;
+  } = {}
 ): void {
+  const { velocity = 0.75, staccato = false, isTie = false, tieDuration, bpm = 120 } = options;
+
+  // Calcular duração efetiva
+  let effectiveDuration = durationSec;
+  if (staccato) {
+    // Staccato: cortar pela metade
+    effectiveDuration = durationSec * 0.5;
+  } else if (isTie && tieDuration !== undefined) {
+    // Tie: usar a duração somada (pulsos → segundos)
+    const secondsPerBeat = 60 / bpm;
+    effectiveDuration = tieDuration * secondsPerBeat;
+  }
+
   const src  = audioCtx.createBufferSource();
   const gain = audioCtx.createGain();
   src.buffer = buffer;
+  // Transpor por playbackRate (semitoms)
   src.playbackRate.value = Math.pow(2, (midi - closestMidi) / 12);
+
+  // Envelope: ataque imediato, decaimento exponencial
   gain.gain.setValueAtTime(velocity, startTime);
-  gain.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
-  src.connect(gain); gain.connect(audioCtx.destination);
-  src.start(startTime); src.stop(startTime + duration + 0.05);
+  gain.gain.exponentialRampToValueAtTime(0.001, startTime + effectiveDuration);
+
+  src.connect(gain);
+  gain.connect(audioCtx.destination);
+  src.start(startTime);
+  src.stop(startTime + effectiveDuration + 0.05);
+}
+
+/**
+ * Fallback FM quando nenhuma amostra está disponível.
+ * Respeita staccato (duração × 0.5).
+ */
+function playFallbackOscillator(
+  audioCtx:    AudioContext,
+  midi:        number,
+  startTime:   number,
+  durationSec: number,
+  staccato = false,
+  velocity = 0.3
+): void {
+  const dur = staccato ? durationSec * 0.5 : durationSec;
+  const osc  = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = "triangle";
+  osc.frequency.value = 440 * Math.pow(2, (midi - 69) / 12);
+  gain.gain.setValueAtTime(velocity, startTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, startTime + dur);
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+  osc.start(startTime);
+  osc.stop(startTime + dur + 0.03);
 }
 
 // ─── FONT SIZE CONTROL ────────────────────────────────────────────────────────
@@ -650,27 +737,28 @@ export default function BrailleEditor() {
       const r      = parseBrailleMusic(char, parseOptions);
       const noteEl = r.elements.find(e => e.type === "note") as ParsedNote | undefined;
       if (!noteEl) return;
-      const PITCH_CLASS: Record<string, number> = { C:0,D:2,E:4,F:5,G:7,A:9,B:11 };
+
+      const PITCH_CLASS: Record<string, number> = { C:0, D:2, E:4, F:5, G:7, A:9, B:11 };
       const midi = 12 * (noteEl.octave + 1) + (PITCH_CLASS[noteEl.pitch] ?? 0);
       const ctx  = getAudioCtx();
-      loadPianoSample(ctx, midi).then(buf => {
-        if (buf) {
-          const closestKey = Object.keys(PIANO_SAMPLE_MAP).map(Number)
-            .reduce((a, b) => Math.abs(b - midi) < Math.abs(a - midi) ? b : a);
-          playPianoBuffer(ctx, buf, midi, closestKey, ctx.currentTime + 0.01, 0.28, 0.7);
+      const t0   = ctx.currentTime + 0.01;
+
+      loadPianoSample(ctx, midi).then(result => {
+        if (result) {
+          playPianoBuffer(ctx, result.buffer, midi, result.closestMidi, t0, 0.28, {
+            velocity:  0.7,
+            staccato:  !!noteEl.staccato,
+            isTie:     !!noteEl.isTie,
+            tieDuration: noteEl.tieDuration,
+            bpm:       playerBpm,
+          });
         } else {
-          const osc  = ctx.createOscillator();
-          const gain = ctx.createGain();
-          osc.type = "triangle";
-          osc.frequency.value = 440 * Math.pow(2, (midi - 69) / 12);
-          gain.gain.setValueAtTime(0.3, ctx.currentTime);
-          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.28);
-          osc.connect(gain); gain.connect(ctx.destination);
-          osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.3);
+          // Fallback: oscilador FM com regras de staccato
+          playFallbackOscillator(ctx, midi, t0, 0.28, !!noteEl.staccato, 0.3);
         }
       });
     } catch { /* ignora */ }
-  }, [soundOnType, parseOptions]);
+  }, [soundOnType, parseOptions, playerBpm]);
 
   // ── Save ──────────────────────────────────────────────────────────────────
   const handleSave = useCallback(() => {
