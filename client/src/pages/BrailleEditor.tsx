@@ -591,6 +591,14 @@ export default function BrailleEditor() {
     };
   }, [layoutMode]);
 
+  // ── Refs ──────────────────────────────────────────────────────────────────
+  const syncSourceRef      = useRef<"braille" | "romano" | "none">("none");
+  const brailleTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const romanTextareaRef   = useRef<HTMLTextAreaElement>(null);
+  const scoreContainerRef  = useRef<HTMLDivElement>(null);
+  const fileInputRef       = useRef<HTMLInputElement>(null);
+  const midiFileInputRef   = useRef<HTMLInputElement>(null);
+
   // ── Audio state ───────────────────────────────────────────────────────────
   const [isPlaying,     setIsPlaying]     = useState(false);
   const [playerBpm,     setPlayerBpm]     = useState(120);
@@ -603,14 +611,6 @@ export default function BrailleEditor() {
   const [cursorPos,      setCursorPos]      = useState(0);
   const [selectionRange, setSelectionRange] = useState<[number, number] | null>(null);
   const [scoreWidth,     setScoreWidth]     = useState(800);
-
-  // ── Refs ──────────────────────────────────────────────────────────────────
-  const syncSourceRef      = useRef<"braille" | "romano" | "none">("none");
-  const brailleTextareaRef = useRef<HTMLTextAreaElement>(null);
-  const romanTextareaRef   = useRef<HTMLTextAreaElement>(null);
-  const scoreContainerRef  = useRef<HTMLDivElement>(null);
-  const fileInputRef       = useRef<HTMLInputElement>(null);
-  const midiFileInputRef   = useRef<HTMLInputElement>(null);
 
   const parseOptions = useMemo<ParseOptions>(() => ({}), []);
   const isExportLocked = false;

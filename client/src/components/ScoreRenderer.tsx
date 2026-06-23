@@ -64,7 +64,7 @@ interface NoteHitArea {
 
 interface MeasureInfo {
   notes: ParsedElement[];
-  barlineType: 'single' | 'end' | 'repeat-begin' | 'repeat-end' | 'repeat-both';
+  barlineType: 'single' | 'end' | 'end-section' | 'repeat-begin' | 'repeat-end' | 'repeat-both';
   begBarlineType?: 'repeat-begin';
   sourceIndex?: number;
 }
@@ -109,6 +109,7 @@ function groupIntoMeasures(elements: ParsedElement[]): MeasureInfo[] {
 
       let barType: MeasureInfo['barlineType'] = 'single';
       if      (bt === 'end')          barType = 'end';
+      else if (bt === 'end-section')  barType = 'end-section';
       else if (bt === 'repeat-end')   barType = 'repeat-end';
       else if (bt === 'repeat-begin') barType = 'repeat-begin';
 
@@ -484,7 +485,7 @@ function renderStaveSystem(
     );
     // Compasso sem notas reais: ignorar (não criar stave vazio) a menos que seja barra final
     const hasRealNotes = mNotes.some(n => n.type === 'note' || n.type === 'rest');
-    if (!hasRealNotes && measure.barlineType !== 'end' && measure.barlineType !== 'end-section') {
+    if (!hasRealNotes && (measure.barlineType as string) !== 'end' && (measure.barlineType as string) !== 'end-section') {
       x += staveW; continue;
     }
 
@@ -514,8 +515,8 @@ function renderStaveSystem(
     if (measure.begBarlineType === 'repeat-begin') stave.setBegBarType(4);
     // Barra final: aplica o tipo correto na pauta atual (treble ou bass)
     // A sincronização é garantida pois splitByHand propaga barlines para ambas as pautas
-    if      (measure.barlineType === 'end')          stave.setEndBarType(3); // barra dupla final
-    else if (measure.barlineType === 'end-section')  stave.setEndBarType(3); // barra dupla de seção
+    if      ((measure.barlineType as string) === 'end')          stave.setEndBarType(3); // barra dupla final
+    else if ((measure.barlineType as string) === 'end-section')  stave.setEndBarType(3); // barra dupla de seção
     else if (measure.barlineType === 'repeat-end')   stave.setEndBarType(5);
     else if (measure.barlineType === 'repeat-begin') stave.setEndBarType(4);
     else if (measure.barlineType === 'repeat-both')  stave.setEndBarType(6);
@@ -647,8 +648,8 @@ function renderStaveSystem(
         if (isTie && tieStart) {
           try {
             new StaveTie({
-              first_note:  tieStart,
-              last_note:   vexNotes[j],
+              first_note:  tieStart as any,
+              last_note:   vexNotes[j] as any,
               first_indices: [0],
               last_indices:  [0],
             }).setContext(ctx).draw();
@@ -667,8 +668,8 @@ function renderStaveSystem(
         if ((slurRole === 'end' || slurRole === 'single') && slurStart && slurStart !== vexNotes[j]) {
           try {
             new StaveTie({
-              first_note:  slurStart,
-              last_note:   vexNotes[j],
+              first_note:  slurStart as any,
+              last_note:   vexNotes[j] as any,
               first_indices: [0],
               last_indices:  [0],
             }).setContext(ctx).draw();

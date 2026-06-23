@@ -700,10 +700,10 @@ function tryReadTimeSignature(
   // Verificar atalhos C (⠨⠉ = \u2828\u2809) e C-cortado (⠸⠉ = \u2838\u2809) primeiro
   const twoCell = input.substring(i, i + 2);
   if (twoCell === '\u2828\u2809') {
-    return { numerator: 4, denominator: 4, abbreviated: 'C'  as const, advance: 2 };
+    return { numerator: 4, denominator: 4, advance: 2, _abbreviated: 'C' };
   }
   if (twoCell === '\u2838\u2809') {
-    return { numerator: 2, denominator: 2, abbreviated: 'C|' as const, advance: 2 };
+    return { numerator: 2, denominator: 2, advance: 2, _abbreviated: 'C|' };
   }
 
   // Ler numerador (1 ou 2 dígitos)
