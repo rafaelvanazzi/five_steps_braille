@@ -354,10 +354,8 @@ export function playScore(
   initialBpm = 120,
   onElementHighlight?: (sourceIndex: number) => void,
 ): void {
-  // Parar qualquer execução anterior
   stopScore();
 
-  // Inicializar AudioContext
   const AudioCtx =
     window.AudioContext ??
     (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
@@ -370,72 +368,82 @@ export function playScore(
   let keyAccidentals:     KeyAccidentalMap     = {};
   let measureAccidentals: MeasureAccidentalMap = {};
 
-  // Pré-carregar armadura se houver keysignature antes das notas
   const firstKS = elements.find(el => el.type === 'keysignature') as ParsedKeySignature | undefined;
   if (firstKS) {
     keyAccidentals = { ...(KEY_SIGNATURE_MAP[firstKS.vexKey] ?? {}) };
   }
 
-  // ── Cursor de tempo (Web Audio API scheduler) ─────────────────────────────
+  // ── Cursor de tempo ────────────────────────────────────────────────────────
   let cursor = _ctx.currentTime + 0.05;
-  const ctx  = _ctx; // captura local para closures (ctx pode mudar se stopScore for chamado)
+  const ctx  = _ctx;
 
-  // ── Loop principal sobre os elementos ────────────────────────────────────
+  // ── Estado de tie (MIMB 6-2) ──────────────────────────────────────────────
+  // Rastreia notas ativas com envelope aberto para prolongação.
+  // Chave: "pitch/octave" → cursor de fim do som agendado.
+  // Quando isTie=true chega, NÃO re-ataca; apenas avança o cursor pelo
+  // tempo métrico da nota vinculada sem gerar novo som.
+  // O envelope da nota ORIGEM foi agendado com a duração somada (tieDuration).
+  const tieActiveUntil = new Map<string, number>(); // pitch/octave → timestamp de fim
+
+  // ── Loop principal ────────────────────────────────────────────────────────
   for (let i = 0; i < elements.length; i++) {
     if (_stopped) break;
 
     const el = elements[i];
 
-    // ── Regra 2: atualizar armadura de clave ──────────────────────────────
+    // Regra 2: atualizar armadura
     if (el.type === 'keysignature') {
       const ks = el as ParsedKeySignature;
       keyAccidentals     = { ...(KEY_SIGNATURE_MAP[ks.vexKey] ?? {}) };
-      measureAccidentals = {}; // armadura nova → reset do compasso
+      measureAccidentals = {};
       continue;
     }
 
-    // ── Regra 5: barra de compasso → limpar acidentes do compasso ────────
+    // Regra 5: barra limpa acidentes do compasso
     if (el.type === 'barline') {
       measureAccidentals = {};
       continue;
     }
 
-    // ── Regra 1: pausas avançam o cursor sem som ──────────────────────────
+    // Pausas: apenas avançam o cursor
     if (el.type === 'rest') {
       const rest = el as { type: 'rest'; duration: string; dotted: boolean; dotted2: boolean };
       cursor += figureDurationSeconds(rest.duration, rest.dotted, rest.dotted2, _currentBpm);
       continue;
     }
 
-    // ── Regra 1: apenas notas emitem som ─────────────────────────────────
     if (el.type !== 'note') continue;
 
     const note = el as ParsedNote;
 
-    // ── Regra 4: registrar acidente explícito da nota ─────────────────────
+    // Regra 4: registrar acidente explícito
     if (note.accidental !== undefined) {
       if (note.accidental === 'natural') {
-        // null = sentinela de bequadro: cancela a armadura para este pitch no compasso
         (measureAccidentals as Record<string, null>)[note.pitch] = null;
       } else {
         measureAccidentals[note.pitch] = ACCIDENTAL_SEMITONE[note.accidental];
       }
     }
 
-    // ── Regra 3: resolver acidente efetivo e calcular frequência ─────────
+    // ── Duração métrica desta nota ────────────────────────────────────────
+    // A duração métrica é sempre a duração nominal da figura — ela determina
+    // quanto o cursor avança independentemente de ties ou staccato.
+    const metricDur = figureDurationSeconds(note.duration, note.dotted, note.dotted2, _currentBpm);
+
+    // ── Coletar intervalos harmônicos ─────────────────────────────────────
+    // Coletamos SEMPRE, mesmo em ties — necessário para manter a contagem de
+    // índice correta do loop e resolver acidentes de intervalos.
+    const chordFrequencies: number[] = [];
+    let intervalCount = 0;
+
     const delta = resolveNoteDelta(note.pitch, measureAccidentals, keyAccidentals);
     const midi  = pitchToMidi(note.pitch, note.octave, delta);
-    const hz    = midiToFrequency(midi);
-    const dur   = figureDurationSeconds(note.duration, note.dotted, note.dotted2, _currentBpm);
-
-    // ── Coletar intervalos harmônicos consecutivos (acorde) ───────────────
-    // Elementos 'interval' imediatamente após a nota formam o acorde.
-    // Cada intervalo também respeita a armadura e os acidentes do compasso.
-    const chordFrequencies: number[] = [hz];
+    chordFrequencies.push(midiToFrequency(midi));
 
     for (let j = i + 1; j < elements.length; j++) {
       const next = elements[j];
       if (next.type !== 'interval') break;
+      intervalCount++;
 
       const size      = (next as { type: 'interval'; intervalSize: number }).intervalSize;
       const baseIdx   = DIATONIC_SCALE.indexOf(note.pitch as typeof DIATONIC_SCALE[number]);
@@ -448,10 +456,79 @@ export function playScore(
       chordFrequencies.push(midiToFrequency(intMidi));
     }
 
-    // ── Agendar o som no Web Audio scheduler ──────────────────────────────
-    scheduleChord(ctx, chordFrequencies, cursor, dur * 0.93);
+    // ── MIMB 6-2: Tie (Ligadura de Prolongação) ───────────────────────────
+    // isTie=true: esta nota é a CONTINUAÇÃO de uma tie.
+    //   → NÃO re-atacar. O envelope já foi aberto pela nota origem com
+    //     duração total (tieDuration). Apenas avançar o cursor.
+    //
+    // Nota ORIGEM (não tem isTie): se a próxima nota de mesma altura tiver
+    // isTie=true, o parser já calculou tieDuration em pulsos.
+    //   → Agendar o som com a duração SOMADA (tieDuration → segundos).
+    //   → Registrar em tieActiveUntil para suprimir o re-ataque.
 
-    // ── Callback de highlight (sincronizado com o tempo da nota) ─────────
+    const isTie          = !!(note as any).isTie;
+    const tieDurationPulses = (note as any).tieDuration as number | undefined;
+    const noteKey        = `${note.pitch.toLowerCase()}/${note.octave}`;
+
+    if (isTie) {
+      // Esta nota é uma continuação — silêncio de ataque, apenas avança cursor.
+      // O envelope da nota origem já cobre este tempo.
+      tieActiveUntil.delete(noteKey); // consumida
+
+      // Callback de highlight (a nota existe musicalmente, só não re-ataca)
+      if (onElementHighlight !== undefined && note.sourceIndex !== undefined) {
+        const noteTime = (cursor - ctx.currentTime) * 1000;
+        const srcIdx   = note.sourceIndex;
+        setTimeout(() => {
+          if (!_stopped) onElementHighlight(srcIdx);
+        }, Math.max(0, noteTime));
+      }
+
+      cursor += metricDur;
+      continue; // ← pula scheduleChord inteiramente
+    }
+
+    // ── Verificar se esta nota é ORIGEM de um tie ─────────────────────────
+    // O parser emite tieDuration na nota seguinte (isTie=true), não aqui.
+    // Para saber se esta nota será ligada, olhamos adiante no array:
+    // se o próximo elemento de tipo 'note' com mesmo pitch/octave tiver isTie=true,
+    // esta é a origem e deve usar a duração somada.
+    let soundDur = metricDur; // duração padrão do som
+
+    if (tieDurationPulses !== undefined) {
+      // A nota atual tem tieDuration — ela É a origem com duração somada já calculada
+      soundDur = (tieDurationPulses / 1) * (60 / _currentBpm);
+      // Registrar que este pitch+octave tem tie ativo até cursor + soundDur
+      tieActiveUntil.set(noteKey, cursor + soundDur);
+    } else {
+      // Verificar lookahead: existe próxima nota de mesma altura com isTie=true?
+      // Isso acontece quando o parser emite tieDuration apenas na nota de origem.
+      let lookAhead = i + 1 + intervalCount;
+      // Pular barlines, slurs e outros elementos não-notas
+      while (lookAhead < elements.length) {
+        const nextEl = elements[lookAhead];
+        if (nextEl.type === 'note') {
+          const nextNote = nextEl as ParsedNote;
+          const nextKey  = `${nextNote.pitch.toLowerCase()}/${nextNote.octave}`;
+          if (!!(nextNote as any).isTie && nextKey === noteKey) {
+            // Próxima nota de mesma altura tem isTie=true → esta é a origem
+            const nextTieDur = (nextNote as any).tieDuration as number | undefined;
+            if (nextTieDur !== undefined) {
+              soundDur = nextTieDur * (60 / _currentBpm);
+              tieActiveUntil.set(noteKey, cursor + soundDur);
+            }
+          }
+          break; // parar no primeiro elemento 'note' encontrado
+        }
+        if (nextEl.type === 'barline') { lookAhead++; continue; }
+        break; // qualquer outro tipo → parar
+      }
+    }
+
+    // ── Agendar o som ─────────────────────────────────────────────────────
+    scheduleChord(ctx, chordFrequencies, cursor, soundDur * 0.96);
+
+    // ── Callback de highlight ─────────────────────────────────────────────
     if (onElementHighlight !== undefined && note.sourceIndex !== undefined) {
       const noteTime = (cursor - ctx.currentTime) * 1000;
       const srcIdx   = note.sourceIndex;
@@ -460,10 +537,10 @@ export function playScore(
       }, Math.max(0, noteTime));
     }
 
-    cursor += dur;
+    cursor += metricDur;
   }
 
-  // ── Agendar o encerramento após a última nota ─────────────────────────────
+  // ── Encerramento ─────────────────────────────────────────────────────────
   if (!_stopped) {
     const remainingMs = Math.max(0, (cursor - ctx.currentTime) * 1000) + 300;
     _finishTimer = setTimeout(() => {
@@ -514,3 +591,6 @@ export function playSingleNote(note: ParsedNote, durationMs = 300): void {
   }, durationMs + 200);
 }
 
+// ─── TESTES UNITÁRIOS ─────────────────────────────────────────────────────────
+// Compatível com Vitest (configuração padrão do projeto).
+// Execute: pnpm vitest run src/lib/scoreAudioPlayer.test.ts
