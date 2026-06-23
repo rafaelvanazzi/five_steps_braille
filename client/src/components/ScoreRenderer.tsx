@@ -648,10 +648,10 @@ function renderStaveSystem(
         if (isTie && tieStart) {
           try {
             new StaveTie({
-              first_note:  tieStart as any,
-              last_note:   vexNotes[j] as any,
-              first_indices: [0],
-              last_indices:  [0],
+              firstNote:  tieStart as any,
+              lastNote:   vexNotes[j] as any,
+              firstIndexes: [0],
+              lastIndexes:  [0],
             }).setContext(ctx).draw();
           } catch { /* ignora se VexFlow não suportar */ }
           tieStart = null;
@@ -668,10 +668,10 @@ function renderStaveSystem(
         if ((slurRole === 'end' || slurRole === 'single') && slurStart && slurStart !== vexNotes[j]) {
           try {
             new StaveTie({
-              first_note:  slurStart as any,
-              last_note:   vexNotes[j] as any,
-              first_indices: [0],
-              last_indices:  [0],
+              firstNote:  slurStart as any,
+              lastNote:   vexNotes[j] as any,
+              firstIndexes: [0],
+              lastIndexes:  [0],
             }).setContext(ctx).draw();
           } catch { /* ignora */ }
           slurStart = null;

@@ -233,12 +233,13 @@ function FontSizeControl({
 // Os botões acumulam pontos (dots) e emitem a célula ao liberar todos.
 
 function PerkinsKeyboard({
-  onChar, onSpace, onBackspace, onNewline,
+  onChar, onSpace, onBackspace, onNewline, brailleTextareaRef,
 }: {
   onChar: (char: string) => void;
   onSpace: () => void;
   onBackspace: () => void;
   onNewline: () => void;
+  brailleTextareaRef: React.RefObject<HTMLTextAreaElement | null>;
 }) {
   // Estado dos pontos pressionados (físico + virtual)
   const [pressed,   setPressed]   = useState<Set<string>>(new Set());
@@ -1260,6 +1261,7 @@ export default function BrailleEditor() {
             onSpace={insertSpace}
             onBackspace={handleBackspace}
             onNewline={insertNewline}
+            brailleTextareaRef={brailleTextareaRef}
           />
         </div>
       )}

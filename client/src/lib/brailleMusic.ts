@@ -694,7 +694,7 @@ function gradeForNote(hasOctave: boolean, hasAccidental: boolean): PedagogicGrad
 function tryReadTimeSignature(
   input: string,
   i: number,
-): { numerator: number; denominator: number; advance: number } | null {
+): { numerator: number; denominator: number; advance: number; _abbreviated?: 'C' | 'C|' } | null {
   if (input[i] !== NUMBER_SIGN) return null;
 
   // Verificar atalhos C (⠨⠉ = \u2828\u2809) e C-cortado (⠸⠉ = \u2838\u2809) primeiro
@@ -1085,7 +1085,7 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
         inNoteContext = false; continue;
       }
       if (tk.kind === 'ks') {
-        elements.push({ type: 'keysignature', fifths: (tk as any).fifths, vexKey: (tk as any).vexKey, sourceIndex: (tk as any).idx });
+        elements.push({ type: 'keysignature', fifths: (tk as any).fifths, vexKey: (tk as any).vexKey, sourceIndex: (tk as any).idx, level: 1 as const, isPremium: false });
         inNoteContext = false; continue;
       }
       if (tk.kind === 'clef') {
@@ -1095,6 +1095,8 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
           clefType: clefTk.clefType,
           intervalDirection: clefTk.intervalDirection,
           sourceIndex: clefTk.idx,
+          level: 1 as const,
+          isPremium: false,
         });
         inNoteContext = false; continue;
       }
@@ -1219,7 +1221,7 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
             lastNoteForTie.pitch  === n.pitch &&
             lastNoteForTie.octave === octave;
 
-          if (samePitchOctave && pendingSlurKind === 'simple') {
+          if (samePitchOctave && pendingSlurKind === 'simple' && lastNoteForTie !== null) {
             // MIMB 6-2: mesma altura + ⠉ = tie de prolongação
             resolvedIsTie = true;
             const BEAT_MAP: Record<string, number> = {
@@ -1440,7 +1442,7 @@ export function getQuickReference(): QuickRefEntry[] {
     { char: '\u2838\u2809',       desc: 'C cortado — 2/2' },
   ];
   commonTimeSigs.forEach(({ char, desc }) => {
-    ref.push({ char, dots: [...char].map(c => unicodeToDots(c).join(',')).join(' '), description: desc, category: 'timesig' });
+    ref.push({ char, dots: Array.from(char).map(c => unicodeToDots(c).join(',')).join(' '), description: desc, category: 'timesig' });
   });
 
   // Barras
@@ -1449,7 +1451,7 @@ export function getQuickReference(): QuickRefEntry[] {
     'repeat-begin': 'Ritornelo início', 'repeat-end': 'Ritornelo fim', dotted: 'Barra pontilhada',
   };
   Object.entries(BARLINE_TWO_CELL).forEach(([char, type]) => {
-    ref.push({ char, dots: [...char].map(c => unicodeToDots(c).join(',')).join(' '), description: barDescs[type] ?? type, category: 'barline' });
+    ref.push({ char, dots: Array.from(char).map(c => unicodeToDots(c).join(',')).join(' '), description: barDescs[type] ?? type, category: 'barline' });
   });
 
   // Intervalos

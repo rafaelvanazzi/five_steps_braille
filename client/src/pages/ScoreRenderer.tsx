@@ -54,7 +54,7 @@ interface NoteHitArea {
 
 interface MeasureInfo {
   notes: ParsedElement[];
-  barlineType: 'single' | 'end' | 'repeat-begin' | 'repeat-end' | 'repeat-both';
+  barlineType: 'single' | 'end' | 'end-section' | 'repeat-begin' | 'repeat-end' | 'repeat-both';
   begBarlineType?: 'repeat-begin';
   sourceIndex?: number;
 }
@@ -99,6 +99,7 @@ function groupIntoMeasures(elements: ParsedElement[]): MeasureInfo[] {
 
       let barType: MeasureInfo['barlineType'] = 'single';
       if      (bt === 'end')          barType = 'end';
+      else if (bt === 'end-section')  barType = 'end-section';
       else if (bt === 'repeat-end')   barType = 'repeat-end';
       else if (bt === 'repeat-begin') barType = 'repeat-begin';
 
