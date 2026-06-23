@@ -694,16 +694,16 @@ function gradeForNote(hasOctave: boolean, hasAccidental: boolean): PedagogicGrad
 function tryReadTimeSignature(
   input: string,
   i: number,
-): { numerator: number; denominator: number; advance: number; _abbreviated?: 'C' | 'C|' } | null {
+): { numerator: number; denominator: number; advance: number; abbreviated?: 'C' | 'C|' } | null {
   if (input[i] !== NUMBER_SIGN) return null;
 
   // Verificar atalhos C (⠨⠉ = \u2828\u2809) e C-cortado (⠸⠉ = \u2838\u2809) primeiro
   const twoCell = input.substring(i, i + 2);
   if (twoCell === '\u2828\u2809') {
-    return { numerator: 4, denominator: 4, advance: 2, _abbreviated: 'C' };
+    return { numerator: 4, denominator: 4, abbreviated: 'C'  as const, advance: 2 };
   }
   if (twoCell === '\u2838\u2809') {
-    return { numerator: 2, denominator: 2, advance: 2, _abbreviated: 'C|' };
+    return { numerator: 2, denominator: 2, abbreviated: 'C|' as const, advance: 2 };
   }
 
   // Ler numerador (1 ou 2 dígitos)
@@ -1067,11 +1067,14 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
     let pendingOctave: number | undefined;
     let pendingAccidental: Accidental | undefined;
     let pendingStaccato = false;
-    // Escopo de ligadura e tie
-    // pendingSlur: 'start' quando ⠉ foi visto antes desta nota
-    //              'long'  quando ⠉⠉ ou PHRASE_START foi visto (escopo longo)
+    // Sinalizadores de ligadura — modelo de acumulação estável (Gemini/MIMB):
+    // São setados ao encontrar o token e consumidos apenas ao processar a próxima nota.
+    // Isso garante que barras de compasso e quebras de linha não percam a referência.
+    let pendingSlur = false;       // ⠉ simples antes da próxima nota
+    let pendingTie  = false;       // ⠈⠉ antes da próxima nota
+    let longSlurActive = false;    // escopo longo aberto (⠉⠉ / ⠰⠃)
+    // Compatibilidade com código que ainda usa pendingSlurKind (token de intervalo)
     let pendingSlurKind: 'simple' | 'double' | null = null;
-    let longSlurActive = false; // true quando escopo longo está aberto (⠉⠉ / ⠰⠃)
     // Para tie: guardar a última nota emitida para comparar pitch+octave
     let lastNoteForTie: { pitch: string; octave: number; duration: Duration; dotted: boolean; dotted2: boolean } | null = null;
     /** Duração da última nota emitida neste compasso — herdada pelos intervalos do acorde. */
@@ -1135,29 +1138,30 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
       if (tk.kind === 'repetition')    { elements.push({ type: 'repetition', name: (tk as any).name, sourceIndex: (tk as any).idx, level: 1 as const, isPremium: true }); continue; }
       if (tk.kind === 'text')           { /* texto literário: não emite elemento musical */ continue; }
       if (tk.kind === 'slur') {
-        // ⠉ isolado → pendingSlur simples; ⠉⠉ (double) → inicia escopo longo
+        // Sinalizador estável: não resolve aqui, apenas acumula.
+        // A resolução (start / middle / end / tie) acontece ao processar a NOTA seguinte.
         const slurTk = tk as { kind: 'slur'; slurType: 'simple' | 'double'; idx: number };
         if (slurTk.slurType === 'double') {
-          longSlurActive    = true;
-          pendingSlurKind   = 'double';
+          longSlurActive = true;  // abre escopo longo imediatamente
+          pendingSlurKind = 'double';
         } else {
-          // simple: se escopo longo ativo, é 'fim'; senão, é início de slur local
-          if (longSlurActive) {
-            pendingSlurKind = null; // fim do arco longo será resolvido na próxima nota
-          } else {
-            pendingSlurKind = 'simple';
-          }
+          pendingSlur = true;     // ⠉ simples → aguarda a próxima nota para decidir
+          pendingSlurKind = 'simple';
         }
-        // Emitir também o elemento ParsedSlur para uso externo (VexFlow)
         elements.push({ type: 'slur', slurType: slurTk.slurType, sourceIndex: slurTk.idx, level: 1 as const, isPremium: true });
         continue;
       }
-      if (tk.kind === 'tie')     { elements.push({ type: 'tie', sourceIndex: (tk as any).idx, level: 1 as const, isPremium: true }); continue; }
+      if (tk.kind === 'tie') {
+        // ⠈⠉ = sinalizador de prolongação — aguarda a próxima nota
+        pendingTie = true;
+        elements.push({ type: 'tie', sourceIndex: (tk as any).idx, level: 1 as const, isPremium: true });
+        continue;
+      }
       if (tk.kind === 'phrase') {
-        // ⠰⠃ = início ligadura longa; ⠘⠆ = fim
         const phTk = tk as { kind: 'phrase'; phraseType: 'start' | 'end'; idx: number };
-        if (phTk.phraseType === 'start') { longSlurActive = true; pendingSlurKind = 'double'; }
-        else                              { longSlurActive = false; pendingSlurKind = null; }
+        if (phTk.phraseType === 'start') { longSlurActive = true; pendingSlur = false; }
+        else                              { longSlurActive = false; pendingSlur = false; }
+        pendingSlurKind = phTk.phraseType === 'start' ? 'double' : null;
         elements.push({ type: 'phrase', phraseType: phTk.phraseType, sourceIndex: phTk.idx, level: 1 as const, isPremium: true });
         continue;
       }
@@ -1209,37 +1213,56 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
         else if (prevPitch !== null) { octave = inferOctave(prevPitch, prevOctave, n.pitch); currentOctave = octave; }
         else { octave = currentOctave; }
 
-        // ── Resolver tie vs slur (Regra MIMB 6-2) ────────────────────────────
-        // Tie: ⠉ antes de nota com mesmo pitch+octave → prolongação, não slur
+        // ── Resolver tie vs slur — modelo de sinalizadores estáveis (Gemini/MIMB) ──
+        // pendingTie: ⠈⠉ foi visto → SEMPRE tie (independente do pitch)
+        // pendingSlur: ⠉ simples → verificar pitch para decidir tie vs slur de expressão
+        // Sinalizadores são consumidos aqui e limpos para a próxima nota.
         let resolvedSlurRole: 'start' | 'middle' | 'end' | 'single' | undefined = undefined;
         let resolvedIsTie    = false;
         let resolvedTieDuration: number | undefined = undefined;
 
-        if (pendingSlurKind !== null) {
+        const BEAT_MAP: Record<string, number> = {
+          w: 4, h: 2, q: 1, '8': 0.5, '16': 0.25, '32': 0.125, '64': 0.0625, '128': 0.03125,
+        };
+
+        if (pendingTie) {
+          // ⠈⠉ = prolongação forçada, independente do pitch
+          resolvedIsTie = true;
+          if (lastNoteForTie !== null) {
+            const prevPulses = (BEAT_MAP[lastNoteForTie.duration] ?? 1) * (lastNoteForTie.dotted ? 1.5 : 1);
+            const thisPulses = (BEAT_MAP[dur] ?? 1) * (n.dotted ? 1.5 : 1);
+            resolvedTieDuration = prevPulses + thisPulses;
+          }
+          pendingTie = false;      // consumido
+
+        } else if (pendingSlur) {
+          // ⠉ simples: mesma altura = tie; alturas diferentes = slur de expressão
           const samePitchOctave =
             lastNoteForTie !== null &&
             lastNoteForTie.pitch  === n.pitch &&
             lastNoteForTie.octave === octave;
 
-          if (samePitchOctave && pendingSlurKind === 'simple' && lastNoteForTie !== null) {
-            // MIMB 6-2: mesma altura + ⠉ = tie de prolongação
+          if (samePitchOctave) {
+            // MIMB 6-2: mesma altura + ⠉ = ligadura de prolongação (tie)
             resolvedIsTie = true;
-            const BEAT_MAP: Record<string, number> = {
-              w: 4, h: 2, q: 1, '8': 0.5, '16': 0.25, '32': 0.125, '64': 0.0625, '128': 0.03125,
-            };
-            const prevPulses = (BEAT_MAP[lastNoteForTie.duration] ?? 1) * (lastNoteForTie.dotted ? 1.5 : 1);
+            const prevPulses = (BEAT_MAP[lastNoteForTie!.duration] ?? 1) * (lastNoteForTie!.dotted ? 1.5 : 1);
             const thisPulses = (BEAT_MAP[dur] ?? 1) * (n.dotted ? 1.5 : 1);
             resolvedTieDuration = prevPulses + thisPulses;
           } else {
-            // Pitches diferentes → slur de expressão
+            // Pitches diferentes → ligadura de expressão (slur)
             if (longSlurActive) {
-              resolvedSlurRole = pendingSlurKind === 'double' ? 'start' : 'end';
+              resolvedSlurRole = 'end';
+              longSlurActive   = false;
             } else {
               resolvedSlurRole = 'start';
+              longSlurActive   = true;
             }
           }
-          pendingSlurKind = null;
+          pendingSlur     = false;  // consumido
+          pendingSlurKind = null;   // limpar alias
+
         } else if (longSlurActive) {
+          // Dentro do arco longo (⠉⠉ / ⠰⠃) → nota intermediária
           resolvedSlurRole = 'middle';
         }
 
@@ -1263,6 +1286,7 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
         lastNoteDuration = dur;
         prevPitch = n.pitch; prevOctave = octave;
         pendingAccidental = undefined; pendingStaccato = false;
+        pendingSlurKind   = null; // garantia de limpeza do alias
         firstNoteInDoc = false; inNoteContext = true; continue;
       }
     }
