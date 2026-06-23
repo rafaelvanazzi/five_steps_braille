@@ -24,6 +24,8 @@ import {
   Accidental,
   Dot,
   Beam,
+  Curve,
+  StaveTie,
 } from 'vexflow';
 import type {
   ParsedElement,
@@ -31,6 +33,7 @@ import type {
   ParsedRest,
   ParsedKeySignature,
 } from '../lib/brailleMusic';
+import { PREMIUM_CONTENT_ENABLED } from '../lib/brailleMusic';
 
 // ─── INTERFACES LOCAIS ────────────────────────────────────────────────────────
 
@@ -39,8 +42,16 @@ interface ScoreRendererProps {
   width?: number;
   height?: number;
   beatsPerMeasure?: number;
+  /** Nível máximo de leitura a renderizar (1=básico, 2=intervalos, 3=grand staff) */
+  maxLevel?: 1 | 2 | 3;
   /** Forçar modo de pauta dupla (grand staff) independente da detecção automática */
   grandStaff?: boolean;
+  /**
+   * Fator de escala do canvas VexFlow (padrão: 0.8).
+   * Valores menores = partitura mais compacta; maiores = mais legível.
+   * Range recomendado: 0.4–1.5
+   */
+  scaleRatio?: number;
   /** Chamado quando o usuário clica em uma nota — recebe sourceIndex */
   onNoteClick?: (sourceIndex: number) => void;
   /** @deprecated Use onNoteClick */
@@ -176,10 +187,39 @@ function calcNoteWidth(el: ParsedElement, base: number): number {
  * @returns keys    — array 'pitch/octave' ordenado grave→agudo
  * @returns accMods — mapa índice-na-key → string acidente VexFlow
  */
+/**
+ * Mapa de armadura de clave → pitch → acidente implícito.
+ * Usado para filtrar acidentes redundantes: se o acidente local é igual
+ * ao da armadura, o VexFlow já o aplica — não adicionar novamente.
+ */
+const KEY_PITCH_ACCIDENTALS: Record<string, Record<string, string>> = {
+  G:  { F: '#' },
+  D:  { F: '#', C: '#' },
+  A:  { F: '#', C: '#', G: '#' },
+  E:  { F: '#', C: '#', G: '#', D: '#' },
+  B:  { F: '#', C: '#', G: '#', D: '#', A: '#' },
+  'F#': { F: '#', C: '#', G: '#', D: '#', A: '#', E: '#' },
+  'C#': { F: '#', C: '#', G: '#', D: '#', A: '#', E: '#', B: '#' },
+  F:  { B: 'b' },
+  Bb: { B: 'b', E: 'b' },
+  Eb: { B: 'b', E: 'b', A: 'b' },
+  Ab: { B: 'b', E: 'b', A: 'b', D: 'b' },
+  Db: { B: 'b', E: 'b', A: 'b', D: 'b', G: 'b' },
+  Gb: { B: 'b', E: 'b', A: 'b', D: 'b', G: 'b', C: 'b' },
+  Cb: { B: 'b', E: 'b', A: 'b', D: 'b', G: 'b', C: 'b', F: 'b' },
+};
+
 function buildChordKeys(
   baseNote: ParsedNote,
-  intervalEls: Array<{ intervalSize: number; accidental?: string; explicitOctave?: number }>,
+  intervalEls: Array<{
+    intervalSize:   number;
+    accidental?:    string;
+    explicitOctave?: number;
+    staccato?:      boolean;
+    slur?:          boolean;
+  }>,
   direction: 'ascending' | 'descending',
+  activeKeySignature: string | null = null,
 ): { keys: string[]; accMods: Map<number, string> } {
 
   const SEMITONES: Record<DiatonicPitch, number> = { C:0, D:2, E:4, F:5, G:7, A:9, B:11 };
@@ -238,12 +278,79 @@ function buildChordKeys(
   const keys:    string[]            = [];
   const accMods: Map<number, string> = new Map();
 
+  const keyPitchMap = activeKeySignature ? (KEY_PITCH_ACCIDENTALS[activeKeySignature] ?? {}) : {};
+
   entries.forEach((e, idx) => {
     keys.push(`${e.pitch.toLowerCase()}/${e.octave}`);
-    if (e.acc) accMods.set(idx, e.acc);
+    if (e.acc) {
+      const implicitAcc = keyPitchMap[e.pitch.toUpperCase()];
+      // Incluir o acidente em accMods SOMENTE se for diferente do implícito pela armadura.
+      // Acidentes iguais à armadura são aplicados automaticamente pelo VexFlow — não duplicar.
+      // Bequadro (n) sempre é explícito — cancela a armadura.
+      if (e.acc === 'n' || e.acc !== implicitAcc) {
+        accMods.set(idx, e.acc);
+      }
+    }
   });
 
   return { keys, accMods };
+}
+
+// ─── MAPA MATRICIAL DE COMPASSOS ─────────────────────────────────────────────
+
+/**
+ * Converte um array de MeasureInfo em um Map<number, MeasureInfo> indexado
+ * pelo número de compasso real. Compassos sem notas reais são omitidos do mapa
+ * mas mantêm o índice para preservar o alinhamento com a outra pauta.
+ *
+ * Isso implementa o alinhamento matricial: trebleTrack.get(N) e bassTrack.get(N)
+ * são renderizados na mesma coordenada X.
+ */
+function buildMeasureTrack(measures: MeasureInfo[]): Map<number, MeasureInfo> {
+  const track = new Map<number, MeasureInfo>();
+  measures.forEach((m, idx) => track.set(idx, m));
+  return track;
+}
+
+// ─── NUMERAÇÃO DE COMPASSOS ───────────────────────────────────────────────────
+
+/**
+ * Adiciona o número do compasso no topo de um stave.
+ * Tenta usar StaveText do VexFlow 5 (método oficial).
+ * Fallback: texto SVG nativo para compatibilidade com todos os backends.
+ * O compasso 0 (primeiro) recebe o número 1, conforme notação convencional.
+ */
+function addMeasureNumber(
+  ctx: ReturnType<Renderer['getContext']>,
+  stave: Stave,
+  measureIdx: number,
+): void {
+  const num = String(measureIdx + 1);
+  try {
+    // Tentar StaveText (VexFlow 5 nativo — posicionamento automático)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const VF = (window as any).VexFlow ?? (globalThis as any).VexFlow;
+    if (VF?.StaveText) {
+      const st = new VF.StaveText(num, 'above', { shiftX: 4, shiftY: -12, justification: 1 });
+      stave.addModifier(st);
+    } else {
+      throw new Error('StaveText not available');
+    }
+  } catch {
+    // Fallback: texto SVG posicionado manualmente
+    try {
+      const x = stave.getX() + 4;
+      const y = stave.getY() - 5;
+      ctx.save();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (ctx as any).setFont?.('Arial', 9, '');
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (ctx as any).setFillStyle?.('#555');
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (ctx as any).fillText?.(num, x, y);
+      ctx.restore();
+    } catch { /* ignora se nenhum método funcionar */ }
+  }
 }
 
 // ─── SEPARAÇÃO POR MÃO ────────────────────────────────────────────────────────
@@ -341,16 +448,40 @@ function renderStaveSystem(
   timeSignatureEl: any,
   timeSignature:  { numerator: number; denominator: number },
   hitAreas:       NoteHitArea[],
-): Stave[] {
+  showMeasureNumbers: boolean = false,
+  availableWidth:  number = 900,
+  systemHeight:    number = 110,
+): { staves: Stave[]; totalHeight: number } {
   const staves: Stave[] = [];
+  const MARGIN_RIGHT = 20;
   let x = startX;
+  let y = startY;
+  let systemIdx = 0;
 
-  for (let i = 0; i < measures.length; i++) {
-    const measure = measures[i];
-    const staveW  = staveWidths[i] ?? 200;
-    const isFirst = i === 0;
-    const ksN     = ksAccidentalCount(keySignature);
-    const extraW  = isFirst ? firstMeasureExtra(ksN, !!timeSignatureEl) : 0;
+  // Estado de ligaduras — persistem entre compassos (arcos cruzam barlines)
+  let activeSlurStartNote: StaveNote | null = null;
+  const activeTies = new Map<string, StaveNote>(); // "pitch/octave" → StaveNote
+
+  // Construir mapa matricial para acesso por índice real
+  const measureTrack = buildMeasureTrack(measures);
+  const maxIdx = Math.max(measures.length - 1, 0);
+
+  for (let i = 0; i <= maxIdx; i++) {
+    const measure = measureTrack.get(i) ?? { notes: [], barlineType: 'single' as const };
+    let staveW  = staveWidths[i] ?? 200;
+    // Verificar se o próximo compasso cabe na linha atual ou precisa quebrar
+    const isFirstOfSystem = (i === 0) || (x + staveW > availableWidth - MARGIN_RIGHT);
+    if (isFirstOfSystem && i > 0) {
+      // Quebra de linha: descer para o próximo sistema
+      x = startX;
+      y = startY + (++systemIdx) * systemHeight;
+    }
+    const isFirst  = i === 0;
+    const isSystem = isFirstOfSystem; // primeiro compasso deste sistema
+    const ksN      = ksAccidentalCount(keySignature);
+    // Cabeçalho extra: sempre no início de cada sistema (não só no primeiro compasso global)
+    const extraW   = isSystem ? firstMeasureExtra(ksN, isFirst && !!timeSignatureEl) : 0;
+    if (isSystem) staveW = Math.max(staveW, staveW + extraW);
 
     // Elementos a renderizar (note, rest; interval é consumido com a nota-base)
     // 'text' e outros não-musicais são filtrados aqui para evitar pautas fantasmas
@@ -364,15 +495,17 @@ function renderStaveSystem(
     }
 
     // ── Stave ─────────────────────────────────────────────────────────────
-    const stave = new Stave(x, startY, staveW);
+    const stave = new Stave(x, y, staveW);
     stave.setContext(ctx);
 
-    if (isFirst) {
+    // Reinjetar clave e armadura no início de CADA SISTEMA (não só no primeiro compasso global)
+    if (isSystem) {
       stave.addClef(clef);
       if (keySignature && (VALID_KEYS as readonly string[]).includes(keySignature)) {
         try { stave.addKeySignature(keySignature); } catch { /* ignora */ }
       }
-      if (timeSignatureEl) {
+      // Fórmula de compasso: apenas no primeiro compasso global (início da música)
+      if (isFirst && timeSignatureEl) {
         const abbr = timeSignatureEl._abbreviated;
         const num  = timeSignatureEl.numerator as number;
         const den  = timeSignatureEl.denominator as number;
@@ -396,12 +529,21 @@ function renderStaveSystem(
     stave.draw();
     staves.push(stave);
 
+    // Numeração visual de compassos no topo da pauta superior (primeiro sistema)
+    if (showMeasureNumbers) {
+      addMeasureNumber(ctx, stave, i);
+    }
+
     if (mNotes.length === 0) { x += staveW; continue; }
 
     // ── Construir StaveNotes ─────────────────────────────────────────────
     const vexNotes:  StaveNote[]             = [];
     const srcIdxs:   (number | undefined)[]  = [];
     const skipSet = new Set<number>();
+
+    // Listas de ligaduras a desenhar APÓS o Formatter (necessário para coordenadas corretas)
+    const curvesToDraw:  Curve[]    = [];
+    const tiesToDraw:    StaveTie[] = [];
 
     for (let ni = 0; ni < mNotes.length; ni++) {
       if (skipSet.has(ni)) continue;
@@ -422,8 +564,13 @@ function renderStaveSystem(
       if (el.type === 'note') {
         const noteEl = el as ParsedNote;
 
-        // Coletar intervalos consecutivos imediatos após esta nota
-        const intervalEls: Array<{ intervalSize: number; accidental?: string; explicitOctave?: number }> = [];
+        const intervalEls: Array<{
+          intervalSize:    number;
+          accidental?:     string;
+          explicitOctave?: number;
+          staccato?:       boolean;
+          slur?:           boolean;
+        }> = [];
         for (let ji = ni + 1; ji < mNotes.length; ji++) {
           const nxt = mNotes[ji];
           if (nxt.type !== 'interval') break;
@@ -432,25 +579,54 @@ function renderStaveSystem(
             intervalSize:   intAny.intervalSize as number,
             accidental:     intAny.accidental ? accidentalToVex(String(intAny.accidental)) : undefined,
             explicitOctave: intAny.explicitOctave as number | undefined,
+            staccato:       intAny.staccato as boolean | undefined,
+            slur:           intAny.slur as boolean | undefined,
           });
           skipSet.add(ji);
         }
 
-        // Construir keys ordenadas grave→agudo + mapa de acidentes por índice
-        const { keys, accMods } = buildChordKeys(noteEl, intervalEls, intervalDir);
-
-        // ÚNICO StaveNote para toda a nota + seus intervalos (acorde)
+        const { keys, accMods } = buildChordKeys(noteEl, intervalEls, intervalDir, keySignature);
         const vn = new StaveNote({ keys, duration: noteToVexDuration(noteEl), clef });
 
-        // Aplicar TODOS os acidentes (nota base + intervalos) via accMods
-        // accMods já contém o acidente da nota base com seu índice correto após ordenação
-        // Não aplicar o acidente da nota base separadamente — evita duplicação
         accMods.forEach((vexAcc, keyIdx) => {
           try { vn.addModifier(new Accidental(vexAcc), keyIdx); }
           catch { /* ignora */ }
         });
 
         if (noteEl.dotted) Dot.buildAndAttach([vn], { all: true });
+
+        // ── Ligadura de Expressão (Slur) via Curve ──────────────────────
+        // Instanciada aqui para ser criada ANTES do Formatter — as referências
+        // às StaveNotes são guardadas e o draw acontece após o format().
+        const role = noteEl.slurRole;
+        if (role === 'start' || role === 'single') {
+          activeSlurStartNote = vn;
+        }
+        if ((role === 'end' || role === 'middle') && activeSlurStartNote !== null) {
+          try {
+            curvesToDraw.push(new Curve(activeSlurStartNote, vn, {
+              cps: [{ x: 0, y: 10 }, { x: 0, y: 10 }],
+            }));
+          } catch { /* ignora */ }
+          if (role === 'end')    activeSlurStartNote = null;
+          else                   activeSlurStartNote = vn; // middle: continua
+        }
+
+        // ── Ligadura de Prolongação (Tie) via StaveTie ───────────────────
+        // Regra MIMB 6-2: mesma altura → prolongação sem re-ataque.
+        // activeTies guarda por "pitch/octave" para cruzar compassos.
+        if (noteEl.isTie) {
+          const noteKey = `${noteEl.pitch.toLowerCase()}/${noteEl.octave}`;
+          const prevVn  = activeTies.get(noteKey);
+          if (prevVn) {
+            try {
+              tiesToDraw.push(new StaveTie({ firstNote: prevVn, lastNote: vn } as any));
+            } catch { /* ignora */ }
+            activeTies.delete(noteKey);
+          }
+        }
+        // Registrar esta nota como candidata a inicio de tie
+        activeTies.set(`${noteEl.pitch.toLowerCase()}/${noteEl.octave}`, vn);
 
         vexNotes.push(vn);
         srcIdxs.push((noteEl as any).sourceIndex);
@@ -480,6 +656,9 @@ function renderStaveSystem(
       new Formatter().joinVoices([voice]).format([voice], notesArea);
       voice.draw(ctx, stave);
       beams.forEach(b => { try { b.setContext(ctx).draw(); } catch { /* ignora */ } });
+      // Desenhar ligaduras APÓS format/draw (coordenadas X das notas já estão definidas)
+      curvesToDraw.forEach(c => { try { c.setContext(ctx).draw(); } catch { /* ignora */ } });
+      tiesToDraw.forEach(t  => { try { t.setContext(ctx).draw(); } catch { /* ignora */ } });
     } catch (e) {
       console.warn(`[ScoreRenderer] format/draw error (measure ${i}):`, e);
       x += staveW; continue;
@@ -503,7 +682,10 @@ function renderStaveSystem(
     x += staveW;
   }
 
-  return staves;
+  const totalHeight = systemIdx > 0
+    ? (systemIdx + 1) * systemHeight
+    : systemHeight;
+  return { staves, totalHeight };
 }
 
 // ─── COMPONENTE PRINCIPAL ─────────────────────────────────────────────────────
@@ -513,7 +695,9 @@ export default function ScoreRenderer({
   width = 1000,
   height = 300,
   beatsPerMeasure = 4,
+  maxLevel = 3,
   grandStaff: grandStaffProp,
+  scaleRatio = 0.8,
   onNoteClick,
   onMeasureClick,
 }: ScoreRendererProps) {
@@ -523,9 +707,20 @@ export default function ScoreRenderer({
 
   // ── Derivações estáticas ───────────────────────────────────────────────────
 
+  // Filtrar elementos por nível de leitura e disponibilidade premium
+  const filteredElements = useMemo(() => {
+    return elements.filter(el => {
+      const elAny = el as any;
+      const elLevel: number = elAny.level ?? 1;
+      if (elLevel > maxLevel) return false;
+      if (elAny.isPremium && !PREMIUM_CONTENT_ENABLED) return false;
+      return true;
+    });
+  }, [elements, maxLevel]);
+
   const timeSignatureEl = useMemo(() =>
-    (elements.find(el => el.type === 'timesignature') as any) ?? null,
-  [elements]);
+    (filteredElements.find(el => el.type === 'timesignature') as any) ?? null,
+  [filteredElements]);
 
   const timeSignature = useMemo(() => {
     if (timeSignatureEl) return { numerator: timeSignatureEl.numerator as number, denominator: timeSignatureEl.denominator as number };
@@ -533,16 +728,16 @@ export default function ScoreRenderer({
   }, [timeSignatureEl, beatsPerMeasure]);
 
   const keySignature = useMemo(() => {
-    const el = elements.find(e => e.type === 'keysignature') as ParsedKeySignature | undefined;
+    const el = filteredElements.find(e => e.type === 'keysignature') as ParsedKeySignature | undefined;
     return el?.vexKey ?? null;
-  }, [elements]);
+  }, [filteredElements]);
 
   // ── Clave e direção de intervalos ─────────────────────────────────────────
   // Lê os campos ParsedHand.impliedClef / ParsedClef.intervalDirection
   // emitidos pelo brailleMusic.ts.
   // Fallback seguro: treble + descending quando nenhuma clave está presente.
   const { activeClef, intervalDirection } = useMemo(() => {
-    for (const el of elements) {
+    for (const el of filteredElements) {
       if (el.type === 'hand') {
         const h = el as any;
         return {
@@ -561,12 +756,12 @@ export default function ScoreRenderer({
       if (el.type === 'note') break;
     }
     return { activeClef: 'treble', intervalDirection: 'descending' as const };
-  }, [elements]);
+  }, [filteredElements]);
 
   // ── Grand staff ────────────────────────────────────────────────────────────
   const { trebleEls, bassEls, hasBothHands: detectedBothHands } = useMemo(
-    () => splitByHand(elements),
-    [elements]
+    () => splitByHand(filteredElements),
+    [filteredElements]
   );
   // hasBothHands: auto-detectado OU forçado pela prop grandStaff
   const hasBothHands = grandStaffProp ?? detectedBothHands;
@@ -577,17 +772,20 @@ export default function ScoreRenderer({
   const trebleMeasures = useMemo(() => groupIntoMeasures(trebleEls), [trebleEls]);
   const bassMeasures   = useMemo(() => groupIntoMeasures(bassEls),   [bassEls]);
 
-  // Larguras de compasso: máximo entre treble e bass para cada índice
-  // Garante que compassos simultâneos tenham a mesma largura → alinhamento X perfeito
+  // Larguras de compasso: calculadas por índice matricial (trebleTrack.get(N) ↔ bassTrack.get(N))
+  // Garante alinhamento vertical perfeito: compasso N de ambas as pautas na mesma coordenada X
   const staveWidths = useMemo(() => {
-    const BASE = 50;
-    const MIN  = 200;
-    const ksN  = ksAccidentalCount(keySignature);
-    const nMeasures = Math.max(trebleMeasures.length, bassMeasures.length);
+    const BASE      = 50;
+    const MIN       = 200;
+    const ksN       = ksAccidentalCount(keySignature);
+    // Usar o mapa matricial para indexação correta
+    const tTrack    = buildMeasureTrack(trebleMeasures);
+    const bTrack    = buildMeasureTrack(bassMeasures);
+    const nMeasures = Math.max(tTrack.size, bTrack.size, 1);
 
     return Array.from({ length: nMeasures }, (_, i) => {
-      const tMeasure = trebleMeasures[i];
-      const bMeasure = bassMeasures[i];
+      const tMeasure = tTrack.get(i);
+      const bMeasure = bTrack.get(i);
       const extra    = i === 0 ? firstMeasureExtra(ksN, !!timeSignatureEl) : 0;
 
       const tNotes = tMeasure?.notes.filter(n => n.type === 'note' || n.type === 'rest' || n.type === 'interval') ?? [];
@@ -596,7 +794,7 @@ export default function ScoreRenderer({
       const tW = tNotes.reduce((s, n) => s + calcNoteWidth(n, BASE), 0);
       const bW = bNotes.reduce((s, n) => s + calcNoteWidth(n, BASE), 0);
 
-      // Usar o maior entre treble e bass + espaço de cabeçalho + padding
+      // Largura = máximo entre treble e bass para alinhamento perfeito
       return Math.max(MIN, Math.max(tW, bW) + extra + 40);
     });
   }, [trebleMeasures, bassMeasures, keySignature, timeSignatureEl]);
@@ -608,31 +806,69 @@ export default function ScoreRenderer({
     noteHitAreas.current = [];
 
     // +30 de offset inicial (margem para StaveConnector BRACE) + 20 de padding direito
-    const totalWidth  = Math.max(width, staveWidths.reduce((s, w) => s + w, 30) + 30);
-    const totalHeight = hasBothHands ? height * 2 + GRAND_GAP : height;
+    // Largura disponível para cada sistema (excluindo margem inicial de 30px)
+    const AVAIL_WIDTH = Math.max(width - 10, 400);
+    const SYSTEM_H    = hasBothHands ? GRAND_GAP * 2 + 80 : 110;
+    const totalWidth  = AVAIL_WIDTH;
+
+    // Primeiro passo: estimar a altura total necessária
+    // (quantos sistemas serão necessários para todos os compassos)
+    const ksN        = ksAccidentalCount(keySignature);
+    const firstExtra = firstMeasureExtra(ksN, !!timeSignatureEl);
+    let   lineX      = 30;
+    let   nSystems   = 1;
+    for (let i = 0; i < staveWidths.length; i++) {
+      const sw = i === 0 ? staveWidths[i] + firstExtra : staveWidths[i];
+      if (i > 0 && lineX + sw > AVAIL_WIDTH - 20) {
+        lineX = 30;
+        nSystems++;
+      }
+      lineX += sw;
+    }
+
+    const trebleTotalH = nSystems * SYSTEM_H;
+    const totalHeight  = hasBothHands ? trebleTotalH * 2 + GRAND_GAP : trebleTotalH;
 
     const renderer = new Renderer(containerRef.current, Renderer.Backends.SVG);
-    renderer.resize(totalWidth, totalHeight);
+    renderer.resize(totalWidth, Math.max(totalHeight, 160));
     const ctx = renderer.getContext();
 
+    // Aplicar escala configurável (padrão 0.8, range 0.4–1.5)
+    // O canvas é criado em coordenadas físicas (1/scaleRatio do tamanho lógico)
+    // e as chamadas VexFlow usam coordenadas lógicas multiplicadas por (1/scaleRatio)
+    const invScale = 1 / scaleRatio;
+    ctx.scale(scaleRatio, scaleRatio);
+    renderer.resize(Math.ceil(totalWidth * invScale), Math.ceil(Math.max(totalHeight * invScale, 160)));
+
+    const logicAvailW = AVAIL_WIDTH * invScale;
+    const logicSysH   = SYSTEM_H   * invScale;
+
     // ── Pauta treble ──────────────────────────────────────────────────────
-    const trebleStaves = renderStaveSystem(
+    const { staves: trebleStaves } = renderStaveSystem(
       ctx, trebleMeasures, 30, 40, staveWidths,
       hasBothHands ? 'treble' : activeClef,
       hasBothHands ? 'descending' : intervalDirection,
       keySignature, timeSignatureEl, timeSignature,
       noteHitAreas.current,
+      true,
+      logicAvailW,
+      logicSysH,
     );
 
     // ── Pauta bass (grand staff) ──────────────────────────────────────────
     let bassStaves: Stave[] = [];
     if (hasBothHands && bassMeasures.length > 0) {
-      bassStaves = renderStaveSystem(
-        ctx, bassMeasures, 30, bassStartY, staveWidths,
+      const bassY0 = trebleTotalH * invScale + GRAND_GAP;
+      const { staves: bs } = renderStaveSystem(
+        ctx, bassMeasures, 30, bassY0, staveWidths,
         'bass', 'ascending',
         keySignature, timeSignatureEl, timeSignature,
         noteHitAreas.current,
+        false,
+        logicAvailW,
+        logicSysH,
       );
+      bassStaves = bs;
     }
 
     // ── StaveConnector: BRACE (chave de piano) + linha dupla esquerda ─────
@@ -651,9 +887,9 @@ export default function ScoreRenderer({
     }
 
   }, [
-    elements, trebleMeasures, bassMeasures, staveWidths,
+    elements, filteredElements, trebleMeasures, bassMeasures, staveWidths,
     width, height, activeClef, intervalDirection, hasBothHands,
-    keySignature, timeSignatureEl, timeSignature, bassStartY, grandStaffProp,
+    keySignature, timeSignatureEl, timeSignature, bassStartY, grandStaffProp, maxLevel, scaleRatio,
   ]);
 
   // ── Click listener ────────────────────────────────────────────────────────
@@ -693,10 +929,10 @@ export default function ScoreRenderer({
       ref={containerRef}
       style={{
         cursor:    handleClick ? 'pointer' : 'default',
-        overflowX: 'auto',
-        overflowY: 'hidden',
+        overflowX: 'hidden',
+        overflowY: 'auto',
         width:     '100%',
-        maxHeight: (hasBothHands ? height * 2 + GRAND_GAP : height) + 60,
+        minHeight: 120,
       }}
     />
   );

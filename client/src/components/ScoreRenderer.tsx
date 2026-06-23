@@ -24,6 +24,7 @@ import {
   Accidental,
   Dot,
   Beam,
+  Curve,
   StaveTie,
 } from 'vexflow';
 import type {
@@ -457,6 +458,10 @@ function renderStaveSystem(
   let y = startY;
   let systemIdx = 0;
 
+  // Estado de ligaduras — persistem entre compassos (arcos cruzam barlines)
+  let activeSlurStartNote: StaveNote | null = null;
+  const activeTies = new Map<string, StaveNote>(); // "pitch/octave" → StaveNote
+
   // Construir mapa matricial para acesso por índice real
   const measureTrack = buildMeasureTrack(measures);
   const maxIdx = Math.max(measures.length - 1, 0);
@@ -485,7 +490,7 @@ function renderStaveSystem(
     );
     // Compasso sem notas reais: ignorar (não criar stave vazio) a menos que seja barra final
     const hasRealNotes = mNotes.some(n => n.type === 'note' || n.type === 'rest');
-    if (!hasRealNotes && (measure.barlineType as string) !== 'end' && (measure.barlineType as string) !== 'end-section') {
+    if (!hasRealNotes && measure.barlineType !== 'end' && measure.barlineType !== 'end-section') {
       x += staveW; continue;
     }
 
@@ -515,8 +520,8 @@ function renderStaveSystem(
     if (measure.begBarlineType === 'repeat-begin') stave.setBegBarType(4);
     // Barra final: aplica o tipo correto na pauta atual (treble ou bass)
     // A sincronização é garantida pois splitByHand propaga barlines para ambas as pautas
-    if      ((measure.barlineType as string) === 'end')          stave.setEndBarType(3); // barra dupla final
-    else if ((measure.barlineType as string) === 'end-section')  stave.setEndBarType(3); // barra dupla de seção
+    if      (measure.barlineType === 'end')          stave.setEndBarType(3); // barra dupla final
+    else if (measure.barlineType === 'end-section')  stave.setEndBarType(3); // barra dupla de seção
     else if (measure.barlineType === 'repeat-end')   stave.setEndBarType(5);
     else if (measure.barlineType === 'repeat-begin') stave.setEndBarType(4);
     else if (measure.barlineType === 'repeat-both')  stave.setEndBarType(6);
@@ -535,6 +540,10 @@ function renderStaveSystem(
     const vexNotes:  StaveNote[]             = [];
     const srcIdxs:   (number | undefined)[]  = [];
     const skipSet = new Set<number>();
+
+    // Listas de ligaduras a desenhar APÓS o Formatter (necessário para coordenadas corretas)
+    const curvesToDraw:  Curve[]    = [];
+    const tiesToDraw:    StaveTie[] = [];
 
     for (let ni = 0; ni < mNotes.length; ni++) {
       if (skipSet.has(ni)) continue;
@@ -555,14 +564,12 @@ function renderStaveSystem(
       if (el.type === 'note') {
         const noteEl = el as ParsedNote;
 
-        // Coletar intervalos consecutivos imediatos após esta nota.
-        // Incluir todos os modificadores: acidente, oitava explícita, staccato, slur.
         const intervalEls: Array<{
-          intervalSize:   number;
-          accidental?:    string;
+          intervalSize:    number;
+          accidental?:     string;
           explicitOctave?: number;
-          staccato?:      boolean;
-          slur?:          boolean;
+          staccato?:       boolean;
+          slur?:           boolean;
         }> = [];
         for (let ji = ni + 1; ji < mNotes.length; ji++) {
           const nxt = mNotes[ji];
@@ -578,21 +585,48 @@ function renderStaveSystem(
           skipSet.add(ji);
         }
 
-        // Construir keys ordenadas grave→agudo + mapa de acidentes por índice
         const { keys, accMods } = buildChordKeys(noteEl, intervalEls, intervalDir, keySignature);
-
-        // ÚNICO StaveNote para toda a nota + seus intervalos (acorde)
         const vn = new StaveNote({ keys, duration: noteToVexDuration(noteEl), clef });
 
-        // Aplicar TODOS os acidentes (nota base + intervalos) via accMods
-        // accMods já contém o acidente da nota base com seu índice correto após ordenação
-        // Não aplicar o acidente da nota base separadamente — evita duplicação
         accMods.forEach((vexAcc, keyIdx) => {
           try { vn.addModifier(new Accidental(vexAcc), keyIdx); }
           catch { /* ignora */ }
         });
 
         if (noteEl.dotted) Dot.buildAndAttach([vn], { all: true });
+
+        // ── Ligadura de Expressão (Slur) via Curve ──────────────────────
+        // Instanciada aqui para ser criada ANTES do Formatter — as referências
+        // às StaveNotes são guardadas e o draw acontece após o format().
+        const role = noteEl.slurRole;
+        if (role === 'start' || role === 'single') {
+          activeSlurStartNote = vn;
+        }
+        if ((role === 'end' || role === 'middle') && activeSlurStartNote !== null) {
+          try {
+            curvesToDraw.push(new Curve(activeSlurStartNote, vn, {
+              cps: [{ x: 0, y: 10 }, { x: 0, y: 10 }],
+            }));
+          } catch { /* ignora */ }
+          if (role === 'end')    activeSlurStartNote = null;
+          else                   activeSlurStartNote = vn; // middle: continua
+        }
+
+        // ── Ligadura de Prolongação (Tie) via StaveTie ───────────────────
+        // Regra MIMB 6-2: mesma altura → prolongação sem re-ataque.
+        // activeTies guarda por "pitch/octave" para cruzar compassos.
+        if (noteEl.isTie) {
+          const noteKey = `${noteEl.pitch.toLowerCase()}/${noteEl.octave}`;
+          const prevVn  = activeTies.get(noteKey);
+          if (prevVn) {
+            try {
+              tiesToDraw.push(new StaveTie({ firstNote: prevVn, lastNote: vn } as any));
+            } catch { /* ignora */ }
+            activeTies.delete(noteKey);
+          }
+        }
+        // Registrar esta nota como candidata a inicio de tie
+        activeTies.set(`${noteEl.pitch.toLowerCase()}/${noteEl.octave}`, vn);
 
         vexNotes.push(vn);
         srcIdxs.push((noteEl as any).sourceIndex);
@@ -622,61 +656,12 @@ function renderStaveSystem(
       new Formatter().joinVoices([voice]).format([voice], notesArea);
       voice.draw(ctx, stave);
       beams.forEach(b => { try { b.setContext(ctx).draw(); } catch { /* ignora */ } });
+      // Desenhar ligaduras APÓS format/draw (coordenadas X das notas já estão definidas)
+      curvesToDraw.forEach(c => { try { c.setContext(ctx).draw(); } catch { /* ignora */ } });
+      tiesToDraw.forEach(t  => { try { t.setContext(ctx).draw(); } catch { /* ignora */ } });
     } catch (e) {
       console.warn(`[ScoreRenderer] format/draw error (measure ${i}):`, e);
       x += staveW; continue;
-    }
-
-    // ── Arcos de ligadura (StaveTie / Slur) ────────────────────────────
-    // Percorrer os srcIdxs para montar pares de notas ligadas
-    {
-      let slurStart: StaveNote | null = null;
-      let tieStart:  StaveNote | null = null;
-
-      for (let j = 0; j < vexNotes.length; j++) {
-        const srcIdx = srcIdxs[j];
-        if (srcIdx === undefined) continue;
-
-        // Encontrar o elemento ParsedNote correspondente pelo sourceIndex
-        const sourceEl = mNotes.find(el => (el as any).sourceIndex === srcIdx) as any;
-        if (!sourceEl || sourceEl.type !== 'note') continue;
-
-        const slurRole: string | undefined = sourceEl.slurRole;
-        const isTie:    boolean             = !!sourceEl.isTie;
-
-        // ── Tie (prolongação) ─────────────────────────────────────────────
-        if (isTie && tieStart) {
-          try {
-            new StaveTie({
-              firstNote:  tieStart as any,
-              lastNote:   vexNotes[j] as any,
-              firstIndexes: [0],
-              lastIndexes:  [0],
-            }).setContext(ctx).draw();
-          } catch { /* ignora se VexFlow não suportar */ }
-          tieStart = null;
-        }
-        if (isTie && !tieStart) {
-          // A nota anterior era o start implícito; usar a vexNote anterior se existir
-          if (j > 0) tieStart = vexNotes[j - 1];
-        }
-
-        // ── Slur (expressão) ──────────────────────────────────────────────
-        if (slurRole === 'start' || slurRole === 'single') {
-          slurStart = vexNotes[j];
-        }
-        if ((slurRole === 'end' || slurRole === 'single') && slurStart && slurStart !== vexNotes[j]) {
-          try {
-            new StaveTie({
-              firstNote:  slurStart as any,
-              lastNote:   vexNotes[j] as any,
-              firstIndexes: [0],
-              lastIndexes:  [0],
-            }).setContext(ctx).draw();
-          } catch { /* ignora */ }
-          slurStart = null;
-        }
-      }
     }
 
     // ── Hit areas para click ─────────────────────────────────────────────
