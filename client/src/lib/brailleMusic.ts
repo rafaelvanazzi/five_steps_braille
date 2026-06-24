@@ -553,6 +553,11 @@ export type ParsedElement =
 export interface ParseResult {
   elements: ParsedElement[];
   errors: string[];
+  /**
+   * Estado da última nota processada — usar como initialNoteState
+   * na próxima chamada para preservar contexto de oitavas entre linhas.
+   */
+  lastNoteState?: LastNoteState;
 }
 
 export interface ParseOptions {
@@ -560,6 +565,11 @@ export interface ParseOptions {
   initialOctave?: number;        // oitava inicial (contexto da linha anterior)
   initialPrevPitch?: string;     // nota anterior (contexto da linha anterior)
   initialBeatsPerMeasure?: number; // compasso da linha anterior
+  /**
+   * Estado completo da última nota — Grau 3: preserva contexto de oitavas entre linhas.
+   * Quando fornecido, prevalece sobre initialOctave e initialPrevPitch.
+   */
+  initialNoteState?: LastNoteState;
 }
 
 // Contexto que uma linha deixa para a próxima
@@ -583,64 +593,124 @@ function durationToBeats(duration: Duration, dotted: boolean = false): number {
   return result;
 }
 
-// Regra de inferência de oitava (Dissertação Vanazzi 2014, Cap. 3):
-// - Intervalos de 2ª e 3ª: nunca mudam oitava
-// - Intervalos de 4ª e 5ª: mudam apenas se cruzar fronteira B↔C
-// - Intervalos de 6ª, 7ª e ≥8ª: sempre requerem sinal explícito de oitava
-function inferOctave(prevPitch: NoteName, prevOctave: number, nextPitch: NoteName): number {
-  // Regras de uso das oitavas — Manual Internacional §1-10 / MusicBraille Aula 12
-  // Confirmado por: Manual Internacional PT-BR, versão espanhola e dissertação Vanazzi.
-  //
-  // A lógica baseia-se em pares de intervalos COMPLEMENTARES (soma = 9):
-  //   2ª ↔ 7ª  |  3ª ↔ 6ª  |  4ª ↔ 5ª
-  //
-  // Regra 1 — 2ª e 3ª (diat_steps 1 ou 2):
-  //   NUNCA leva sinal de oitava, mesmo que mude de oitava.
-  //   Parser: calcular pela nota MIDI mais próxima (2ª ou 3ª, não 7ª ou 6ª).
-  //
-  // Regra 2 — 4ª e 5ª (diat_steps 3 ou 4):
-  //   Leva sinal SOMENTE se a nota estiver em oitava DIFERENTE.
-  //   Sem sinal = SEMPRE mesma oitava da anterior.
-  //
-  // Regra 3 — 6ª, 7ª e 8ª (diat_steps 5, 6 ou 7):
-  //   SEMPRE leva sinal de oitava.
-  //   Sem sinal = situação inválida; parser usa oitava mais próxima (fallback).
+// ─── ESTADO DE LEITURA — Grau 3: Regra de Uso das Oitavas ──────────────────────
+//
+// Implementa a dissertação Vanazzi 2014, Cap. 3, figuras 18 e 20:
+// O parser mantém o estado da última nota lida e aplica uma árvore de decisão
+// baseada na DISTÂNCIA DIATÔNICA entre a nota anterior e a atual.
+//
+// Regras estatutárias (Manual Internacional §1-10):
+//
+//   REGRA 1 — 2ª e 3ª (diatSteps 1–2):
+//     NUNCA leva sinal de oitava, mesmo cruzando fronteira de oitava (Si→Dó).
+//     Inferência: nota MIDI mais próxima da anterior.
+//     Ex.: B4 → C (sem sinal) = C5, pois MIDI(C5)–MIDI(B4) = 1 < MIDI(C4)–MIDI(B4) = 11
+//
+//   REGRA 2 — 4ª e 5ª (diatSteps 3–4):
+//     Sem sinal de oitava = SEMPRE na MESMA oitava da nota anterior.
+//     Sinal explícito = muda de oitava conforme o sinal.
+//     Ex.: C4 → G (sem sinal) = G4. C4 → ⠨G = G5.
+//
+//   REGRA 3 — 6ª, 7ª e ≥8ª (diatSteps 5–6):
+//     SEMPRE devem levar sinal de oitava conforme o MIMB.
+//     Sem sinal = violação musicográfica; parser registra aviso e aplica
+//     fallback de MIDI mais próximo para não quebrar a renderização.
 
-  const pitchOrder: NoteName[] = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
-  const semitonos: Record<NoteName, number> = { C:0, D:2, E:4, F:5, G:7, A:9, B:11 };
-  const prevIdx = pitchOrder.indexOf(prevPitch);
-  const nextIdx = pitchOrder.indexOf(nextPitch);
-  const diatSteps = Math.abs(nextIdx - prevIdx); // 0=unís,1=2ª,2=3ª,3=4ª,4=5ª,5=6ª,6=7ª
+/**
+ * Estado interno de última nota processada.
+ * Mantido entre compassos para preservar o contexto melódico.
+ */
+export interface LastNoteState {
+  noteName: string;        // 'C' | 'D' | 'E' | 'F' | 'G' | 'A' | 'B'
+  octave: number;          // oitava real (ex: 4 = quarta oitava, C central = C4)
+  diatonicPosition: number; // índice na escala diatônica [0=C … 6=B]
+  midiNumber: number;      // MIDI: C4=60, A4=69 — usado para cálculo de proximidade
+}
 
-  // Regra 2: 4ª e 5ª → sempre mesma oitava sem sinal explícito
-  if (diatSteps === 3 || diatSteps === 4) return prevOctave;
+/** Mapas internos compartilhados pelas funções de inferência. */
+const PITCH_ORDER_INFER: ReadonlyArray<NoteName> = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
+const SEMITONES_INFER: Record<NoteName, number>  = { C:0, D:2, E:4, F:5, G:7, A:9, B:11 };
 
-  // Regra 1: 2ª e 3ª → oitava mais próxima em MIDI
-  // (pode mudar de oitava — ex: Si4→Dó5 é 2ª ascendente, correto)
-  if (diatSteps <= 2) {
-    const prevMidi = (prevOctave + 1) * 12 + semitonos[prevPitch];
-    let bestOct = prevOctave, bestDist = 999;
-    for (let oct = prevOctave - 1; oct <= prevOctave + 1; oct++) {
-      if (oct < 0 || oct > 8) continue;
-      const dist = Math.abs((oct + 1) * 12 + semitonos[nextPitch] - prevMidi);
-      if (dist < bestDist) { bestDist = dist; bestOct = oct; }
-    }
-    return bestOct;
-  }
+/**
+ * Converte pitch + oitava → número MIDI.
+ * C4 = 60, A4 = 69 (convenção MIDI científica).
+ */
+function noteToMidi(pitch: NoteName, octave: number): number {
+  return (octave + 1) * 12 + SEMITONES_INFER[pitch];
+}
 
-  // Regra 3: 6ª, 7ª e 8ª → oitava mais próxima em MIDI (fallback)
-  // Sem sinal de oitava, o parser aproxima pelo intervalo complementar:
-  //   6ª sem sinal → usa a 3ª mais próxima
-  //   7ª sem sinal → usa a 2ª mais próxima
-  //   8ª sem sinal → usa o uníssono
-  const prevMidi = (prevOctave + 1) * 12 + semitonos[prevPitch];
-  let bestOct = prevOctave, bestDist = 999;
-  for (let oct = prevOctave - 1; oct <= prevOctave + 1; oct++) {
-    if (oct < 0 || oct > 8) continue;
-    const dist = Math.abs((oct + 1) * 12 + semitonos[nextPitch] - prevMidi);
+/**
+ * Calcula a distância diatônica MÍNIMA (0=unís, 1=2ª, 2=3ª, …, 6=7ª)
+ * considerando o envoltório circular (B→C conta como 1, não 6).
+ */
+function minDiatonicSteps(prevIdx: number, nextIdx: number): number {
+  const direct    = Math.abs(nextIdx - prevIdx);
+  const wrapped   = 7 - direct; // distância pelo outro lado da escala
+  return Math.min(direct, wrapped);
+}
+
+/**
+ * Encontra a oitava que coloca `nextPitch` mais próxima (MIDI) de `prevMidi`.
+ * Limita a busca ao intervalo [minOct, maxOct] para evitar saltos irrealistas.
+ */
+function closestOctaveByMidi(
+  prevMidi:  number,
+  nextPitch: NoteName,
+  minOct = 0,
+  maxOct = 8,
+): number {
+  let bestOct = 4, bestDist = 999;
+  for (let oct = minOct; oct <= maxOct; oct++) {
+    const dist = Math.abs(noteToMidi(nextPitch, oct) - prevMidi);
     if (dist < bestDist) { bestDist = dist; bestOct = oct; }
   }
   return bestOct;
+}
+
+/**
+ * inferOctave — Algoritmo de Inferência Diatônica (Dissertação Vanazzi 2014, Cap. 3)
+ *
+ * @param prevPitch  — Nome da nota anterior (NoteName)
+ * @param prevOctave — Oitava real da nota anterior
+ * @param nextPitch  — Nome da nota atual (sem sinal de oitava)
+ * @param errors     — Array para registrar avisos de violação musicográfica
+ * @returns          — Oitava inferida para a nota atual
+ */
+function inferOctave(
+  prevPitch:  NoteName,
+  prevOctave: number,
+  nextPitch:  NoteName,
+  errors:     string[],
+): number {
+  const prevIdx    = PITCH_ORDER_INFER.indexOf(prevPitch);
+  const nextIdx    = PITCH_ORDER_INFER.indexOf(nextPitch);
+  const prevMidi   = noteToMidi(prevPitch, prevOctave);
+  const diatSteps  = minDiatonicSteps(prevIdx, nextIdx); // 0–6
+
+  // ── REGRA 1: 2ª e 3ª (diatSteps 0, 1, 2) ────────────────────────────────
+  // Inclui uníssono (0) como caso degenerado de 2ª.
+  // Usa proximidade MIDI para resolver cruzamentos de oitava (B→C, etc.).
+  if (diatSteps <= 2) {
+    // Janela de busca: oitava anterior ±1 cobre todos os casos de 2ª e 3ª
+    return closestOctaveByMidi(prevMidi, nextPitch, prevOctave - 1, prevOctave + 1);
+  }
+
+  // ── REGRA 2: 4ª e 5ª (diatSteps 3, 4) ───────────────────────────────────
+  // Sem sinal de oitava = SEMPRE a mesma oitava da nota anterior.
+  // Não há ambiguidade: o intervalo já é único dentro da mesma oitava.
+  if (diatSteps === 3 || diatSteps === 4) {
+    return prevOctave;
+  }
+
+  // ── REGRA 3: 6ª e 7ª (diatSteps 5, 6) ───────────────────────────────────
+  // Violação: esses intervalos SEMPRE devem ter sinal de oitava no MIMB.
+  // Parser registra aviso e aplica fallback de MIDI mais próximo.
+  errors.push(
+    `[Grau 3] Aviso: intervalo de ${diatSteps === 5 ? '6ª' : '7ª'} sem sinal de oitava ` +
+    `(${prevPitch}${prevOctave}→${nextPitch}). Musicografia inválida; inferindo por proximidade MIDI.`
+  );
+  // Fallback idêntico à Regra 1, mas sem restrição de janela
+  return closestOctaveByMidi(prevMidi, nextPitch, prevOctave - 1, prevOctave + 1);
 }
 
 // Desambiguação por compasso completo (lookahead)
@@ -767,8 +837,8 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
   let isMusicContextActive = false;
   // noteOctaveSeen: TRUE após o primeiro sinal de oitava de nota.
   // Espaços só incrementam compasso DEPOIS do primeiro sinal de oitava.
-  let noteOctaveSeen = false;
-
+    let noteOctaveSeen = false;
+  let inNoteContext = false; // rastreia se há nota base ativa no compasso atual
   while (i < len) {
     const ch  = input[i];
     const ch2 = i + 1 < len ? input[i + 1] : '';
@@ -831,22 +901,52 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
       curTokens.push({ kind: 'oct', val: OCTAVE_MAP[two], idx: i }); i += 2; continue;
     }
 
-    // Fórmula de compasso OU armadura de 4-7 acidentes (⠼ + dígito + ⠩/⠣)
-    // Testar armadura de 3 células PRIMEIRO (⠼⠙⠩, ⠼⠑⠣, etc.)
+    // ⠼ (U+283C) — TRIPLA AMBIGUIDADE: TS / KS / Intervalo 4ª / Texto órfão
+    // Prioridade MIMB:
+    //   1. Armadura de 4-7 acidentes (⠼ + dígito + ⠩/⠣) — 3 células
+    //   2. Fórmula de compasso (tryReadTimeSignature)
+    //   3. Intervalo de 4ª — SOMENTE se inNoteContext ativo (há nota base no compasso)
+    //   4. Texto literário órfão — fallback quando nenhuma das anteriores se aplica
     if (ch === NUMBER_SIGN) {
+      // ── Prioridade 1: armadura de 4-7 acidentes ───────────────────────────
       if (i + 2 < len && OFFICIAL_KEY_SIGNATURE_MAP[three]) {
         const ks = OFFICIAL_KEY_SIGNATURE_MAP[three];
         curTokens.push({ kind: 'ks', fifths: ks.fifths, vexKey: ks.vexKey, idx: i });
         i += 3; continue;
       }
-      const ts = tryReadTimeSignature(input, i);
-      if (ts) {
-        isMusicContextActive = true; // ⠼ = gatilho de ativação musical
-        curTokens.push({ kind: 'ts', numerator: ts.numerator, denominator: ts.denominator, idx: i });
-        beatsPerMeasure = ts.numerator;
-        i += ts.advance; continue;
+      // ── Prioridade 2: fórmula de compasso ─────────────────────────────────
+      // Válida apenas no início do fluxo ou após espaço (não dentro de compasso com notas)
+      const prevSemantic = i > 0 ? input[i - 1] : '';
+      const atMeasureStart = !isMusicContextActive
+        || curTokens.length === 0
+        || prevSemantic === ' '
+        || prevSemantic === '\u2800';
+      if (atMeasureStart) {
+        const ts = tryReadTimeSignature(input, i);
+        if (ts) {
+          isMusicContextActive = true; // ⠼ = gatilho de ativação musical
+          curTokens.push({ kind: 'ts', numerator: ts.numerator, denominator: ts.denominator, idx: i });
+          beatsPerMeasure = ts.numerator;
+          i += ts.advance; continue;
+        }
+        // Falhou em ler TS → texto literal órfão (não disparar erro de execução)
+        curTokens.push({ kind: 'text', char: ch, idx: i });
+        i++; continue;
       }
-      i++; continue;
+      // ── Prioridade 3: intervalo de 4ª — SOMENTE com nota base ativa ───────
+      // inNoteContext garante que há uma nota base válida antes deste token
+      // no mesmo compasso, tornando ⠼ um qualificador de intervalo legítimo.
+      if (inNoteContext && INTERVAL_MAP[ch] !== undefined) {
+        // O bloco de intervalos adiante tratará o roubo de acc/oct pendentes
+        // — não processar aqui, deixar cair no bloco INTERVAL_MAP abaixo
+        // para manter a lógica de captura de modificadores centralizada.
+        // (O 'fall-through' intencional para o bloco de intervalos acontece
+        //  porque NÃO usamos 'continue' aqui — apenas saímos do if NUMBER_SIGN)
+      } else {
+        // ── Prioridade 4: texto literário órfão ───────────────────────────────
+        curTokens.push({ kind: 'text', char: ch, idx: i });
+        i++; continue;
+      }
     }
 
     // Armadura de clave (3 células)
@@ -910,9 +1010,28 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
     // Ligadura simples ⠉
     if (ch === SLUR_SIMPLE) { curTokens.push({ kind: 'slur', slurType: 'simple', idx: i }); i++; continue; }
 
-    // Oitava simples
+    // Oitava simples — com desambiguação do Hífen Musical (MIMB §6)
     if (OCTAVE_MAP[ch] !== undefined) {
-      noteOctaveSeen = true; // primeiro sinal de oitava → espaços passam a ser barras
+      // ⠐ (U+2810, Ponto 5) = AMBÍGUO: oitava 4 OU hífen musical de quebra de linha.
+      // Lookahead: se o próximo caractere semântico for espaço/braille-vazio ou fim de string
+      //            → hífen musical (kind:'text') e não oitava.
+      if (ch === MUSICAL_HYPHEN) {
+        // Achar o próximo caractere não-newline
+        let lookI = i + 1;
+        while (lookI < len && (input[lookI] === '\r' || input[lookI] === '\n')) lookI++;
+        const nextSemantic = lookI < len ? input[lookI] : '';
+        const isMusicHyphen = lookI >= len                // fim de string
+          || nextSemantic === ' '                          // espaço ASCII
+          || nextSemantic === '\u2800';                  // cela braille vazia
+        if (isMusicHyphen) {
+          // Hífen musical de quebra de linha — classificar como texto, não oitava.
+          // Não gera som nem nota; apenas preserva a continuidade métrica visual.
+          curTokens.push({ kind: 'text', char: ch, idx: i });
+          i++; continue;
+        }
+      }
+      // Caso normal: sinal de oitava legítimo
+      noteOctaveSeen = true;
       curTokens.push({ kind: 'oct', val: OCTAVE_MAP[ch], idx: i }); i++; continue;
     }
 
@@ -954,8 +1073,14 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
 
     // Intervalo — captura acidentes, oitavas, staccato e slur pendentes
     // como modificadores específicos desta nota do intervalo.
-    // Esses tokens são "roubados" da fila principal — não afetam a nota base.
+    // CONDIÇÃO OBRIGATÓRIA: inNoteContext deve ser true (há nota base no compasso).
+    // Sem nota base ativa, o caractere não pode ser intervalo — tratar como texto.
     if (INTERVAL_MAP[ch] !== undefined && ch !== AUGMENTATION_DOT) {
+      if (!inNoteContext) {
+        // Nenhuma nota base ativa → não é intervalo, é texto literal ou símbolo isolado
+        curTokens.push({ kind: 'text', char: ch, idx: i });
+        i++; continue;
+      }
       let pendingAccForInterval: Accidental | undefined;
       let pendingOctForInterval: number | undefined;
       let pendingStaccForInterval: boolean | undefined;
@@ -1043,13 +1168,13 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
 
   // ── Fase 2: desambiguar e resolver oitavas ────────────────────────────────
   const elements: ParsedElement[] = [];
-  let currentOctave    = options?.initialOctave ?? 4;
-  let prevPitch: NoteName | null = (options?.initialPrevPitch as NoteName) ?? null;
-  let prevOctave       = options?.initialOctave ?? 4;
-  let firstNoteInDoc   = !options?.initialPrevPitch; // se tem contexto anterior, não é a primeira
-  let inNoteContext    = false;
-
-  // Processar cada compasso
+  // Inicializar estado de leitura — usa LastNoteState se disponível (Grau 3)
+  const initState = options?.initialNoteState;
+  let currentOctave  = initState?.octave ?? options?.initialOctave ?? 4;
+  let prevPitch: NoteName | null = (initState?.noteName as NoteName ?? options?.initialPrevPitch as NoteName) ?? null;
+  let prevOctave     = initState?.octave ?? options?.initialOctave ?? 4;
+  let firstNoteInDoc = !initState && !options?.initialPrevPitch;
+    // Processar cada compasso
   // trebleMeasureIndex e bassMeasureIndex: índices separados por mão,
   // cada um reseta para 0 ao encontrar o token da mão correspondente.
   // Implementam a sincronização matricial: trebleTrack[N] ↔ bassTrack[N] na mesma X.
@@ -1210,7 +1335,7 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
         let octave: number;
         if (pendingOctave !== undefined) { octave = pendingOctave; pendingOctave = undefined; currentOctave = octave; }
         else if (firstNoteInDoc) { octave = 4; currentOctave = 4; errors.push('Aviso: primeira nota sem sinal de oitava — assumindo oitava 4'); }
-        else if (prevPitch !== null) { octave = inferOctave(prevPitch, prevOctave, n.pitch); currentOctave = octave; }
+        else if (prevPitch !== null) { octave = inferOctave(prevPitch, prevOctave, n.pitch, errors); currentOctave = octave; }
         else { octave = currentOctave; }
 
         // ── Resolver tie vs slur — modelo de sinalizadores estáveis (Gemini/MIMB) ──
@@ -1309,7 +1434,17 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
     if (!prev || prev.type === 'barline') elements.pop();
   }
 
-  return { elements, errors };
+  // Construir o estado final para continuidade melódica entre linhas (Grau 3)
+  const lastNoteState: LastNoteState | undefined = prevPitch !== null
+    ? {
+        noteName:        prevPitch,
+        octave:          prevOctave,
+        diatonicPosition: PITCH_ORDER_INFER.indexOf(prevPitch),
+        midiNumber:      noteToMidi(prevPitch, prevOctave),
+      }
+    : undefined;
+
+  return { elements, errors, lastNoteState };
 }
 
 // ─── FUNÇÕES AUXILIARES EXPORTADAS ─────────────────────────────────────────────
