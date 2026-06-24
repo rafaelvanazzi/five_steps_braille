@@ -24,8 +24,8 @@ import {
   Accidental,
   Dot,
   Beam,
-  Curve,
   StaveTie,
+  // Curve desativado — ligaduras longas causavam linhas diagonais cruzadas
 } from 'vexflow';
 import type {
   ParsedElement,
@@ -458,9 +458,11 @@ function renderStaveSystem(
   let y = startY;
   let systemIdx = 0;
 
-  // Estado de ligaduras — persistem entre compassos (arcos cruzam barlines)
-  let activeSlurStartNote: StaveNote | null = null;
-  const activeTies = new Map<string, StaveNote>(); // "pitch/octave" → StaveNote
+  // Estado de ligaduras simples — pendingSlurNote persiste entre compassos
+  // (⠉ antes da última nota de um compasso deve ser conectado à primeira do próximo)
+  let pendingSlurNote:  StaveNote | null = null; // nota-origem do slur pendente
+  let pendingSlurY:     number           = 0;    // Y do sistema de origem (salvaguarda)
+  const activeTies = new Map<string, StaveNote>(); // "pitch/octave" → StaveNote (tie)
 
   // Construir mapa matricial para acesso por índice real
   const measureTrack = buildMeasureTrack(measures);
@@ -541,9 +543,9 @@ function renderStaveSystem(
     const srcIdxs:   (number | undefined)[]  = [];
     const skipSet = new Set<number>();
 
-    // Listas de ligaduras a desenhar APÓS o Formatter (necessário para coordenadas corretas)
-    const curvesToDraw:  Curve[]    = [];
-    const tiesToDraw:    StaveTie[] = [];
+    // Lista de ligaduras a desenhar APÓS o Formatter (coordenadas X definidas)
+    // Unificada: StaveTie cobre tanto ties de prolongação quanto slurs simples
+    const tiesToDraw: StaveTie[] = [];
 
     for (let ni = 0; ni < mNotes.length; ni++) {
       if (skipSet.has(ni)) continue;
@@ -595,21 +597,28 @@ function renderStaveSystem(
 
         if (noteEl.dotted) Dot.buildAndAttach([vn], { all: true });
 
-        // ── Ligadura de Expressão (Slur) via Curve ──────────────────────
-        // Instanciada aqui para ser criada ANTES do Formatter — as referências
-        // às StaveNotes são guardadas e o draw acontece após o format().
-        const role = noteEl.slurRole;
-        if (role === 'start' || role === 'single') {
-          activeSlurStartNote = vn;
-        }
-        if ((role === 'end' || role === 'middle') && activeSlurStartNote !== null) {
-          try {
-            curvesToDraw.push(new Curve(activeSlurStartNote, vn, {
-              cps: [{ x: 0, y: 10 }, { x: 0, y: 10 }],
-            }));
-          } catch { /* ignora */ }
-          if (role === 'end')    activeSlurStartNote = null;
-          else                   activeSlurStartNote = vn; // middle: continua
+        // ── Ligadura Simples (slurRole === 'start') ─────────────────────
+        // Modelo de vizinhança direta: a nota com slurRole='start' é guardada.
+        // Ao processar a PRÓXIMA nota (neste ou no próximo compasso),
+        // o StaveTie é criado entre os dois vizinhos.
+        // Salvaguarda de Y: se a nota-destino estiver em sistema diferente
+        // (eixo Y muito distante), o arco é cancelado para evitar linha diagonal.
+        if (noteEl.slurRole === 'start') {
+          // Fechar slur pendente do compasso anterior (se existir) com esta nota como destino
+          if (pendingSlurNote !== null && Math.abs(y - pendingSlurY) < 5) {
+            tiesToDraw.push(new StaveTie({ firstNote: pendingSlurNote, lastNote: vn } as any));
+            pendingSlurNote = null;
+          }
+          // Guardar esta nota como início do próximo arco
+          pendingSlurNote = vn;
+          pendingSlurY    = y;
+        } else if (pendingSlurNote !== null) {
+          // Esta nota é o destino do slur — verificar salvaguarda de Y
+          if (Math.abs(y - pendingSlurY) < 5) {
+            tiesToDraw.push(new StaveTie({ firstNote: pendingSlurNote, lastNote: vn } as any));
+          }
+          // Sempre limpar após tentativa (com ou sem sucesso)
+          pendingSlurNote = null;
         }
 
         // ── Ligadura de Prolongação (Tie) via StaveTie ───────────────────
@@ -657,8 +666,8 @@ function renderStaveSystem(
       voice.draw(ctx, stave);
       beams.forEach(b => { try { b.setContext(ctx).draw(); } catch { /* ignora */ } });
       // Desenhar ligaduras APÓS format/draw (coordenadas X das notas já estão definidas)
-      curvesToDraw.forEach(c => { try { c.setContext(ctx).draw(); } catch { /* ignora */ } });
-      tiesToDraw.forEach(t  => { try { t.setContext(ctx).draw(); } catch { /* ignora */ } });
+      // Desenhar slurs simples e ties após o Formatter
+      tiesToDraw.forEach(t => { try { t.setContext(ctx).draw(); } catch { /* ignora */ } });
     } catch (e) {
       console.warn(`[ScoreRenderer] format/draw error (measure ${i}):`, e);
       x += staveW; continue;

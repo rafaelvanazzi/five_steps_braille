@@ -835,10 +835,15 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
   // Tokens de ativação: Clave (⠜⠌⠇ / ⠜⠼⠇), Mão (⠨⠜ / ⠸⠜), Fórmula de Compasso (⠼).
   // Enquanto FALSE, espaços são silenciosos e texto plano é ignorado.
   let isMusicContextActive = false;
+  // inNoteContext: true quando há uma nota base ativa no compasso corrente.
+  // Declarado aqui (escopo da função) para estar disponível tanto na fase 1
+  // (verificação de intervalo ⠼) quanto na fase 2 (resolução de notas).
+  // É reinicializado para false no início de cada compasso (fase 2).
+  let inNoteContext = false;
   // noteOctaveSeen: TRUE após o primeiro sinal de oitava de nota.
   // Espaços só incrementam compasso DEPOIS do primeiro sinal de oitava.
-    let noteOctaveSeen = false;
-  let inNoteContext = false; // rastreia se há nota base ativa no compasso atual
+  let noteOctaveSeen = false;
+
   while (i < len) {
     const ch  = input[i];
     const ch2 = i + 1 < len ? input[i + 1] : '';
@@ -886,14 +891,16 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
     }
 
     // Ligaduras de frase — ANTES de testar oitavas ⠰ e ⠘
-    if (two === PHRASE_START) { curTokens.push({ kind: 'phrase', phraseType: 'start', idx: i }); i += 2; continue; }
-    if (two === PHRASE_END)   { curTokens.push({ kind: 'phrase', phraseType: 'end',   idx: i }); i += 2; continue; }
+    // PHRASE_START/END desativados temporariamente — ligaduras longas causam linhas cruzadas
+    // if (two === PHRASE_START) { curTokens.push({ kind: 'phrase', phraseType: 'start', idx: i }); i += 2; continue; }
+    // if (two === PHRASE_END)   { curTokens.push({ kind: 'phrase', phraseType: 'end',   idx: i }); i += 2; continue; }
 
     // Ligadura de prolongação ⠈⠉ — ANTES de testar oitava ⠈
     if (two === TIE) { curTokens.push({ kind: 'tie', idx: i }); i += 2; continue; }
 
-    // Ligadura dupla ⠉⠉ — ANTES de ligadura simples ⠉
-    if (two === SLUR_DOUBLE) { curTokens.push({ kind: 'slur', slurType: 'double', idx: i }); i += 2; continue; }
+    // SLUR_DOUBLE (⠉⠉) desativado temporariamente — ligaduras longas causam linhas cruzadas
+    // if (two === SLUR_DOUBLE) { curTokens.push({ kind: 'slur', slurType: 'double', idx: i }); i += 2; continue; }
+    // Tratar ⠉⠉ como dois ⠉ simples consecutivos (cada um ativa pendingSlur individualmente)
 
     // Oitavas duplas
     if (OCTAVE_MAP[two] !== undefined && two.length === 2 && ch2) {
@@ -1174,7 +1181,10 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
   let prevPitch: NoteName | null = (initState?.noteName as NoteName ?? options?.initialPrevPitch as NoteName) ?? null;
   let prevOctave     = initState?.octave ?? options?.initialOctave ?? 4;
   let firstNoteInDoc = !initState && !options?.initialPrevPitch;
-    // Processar cada compasso
+  // inNoteContext já declarado antes do while loop — reinicializar por compasso
+  inNoteContext = false;
+
+  // Processar cada compasso
   // trebleMeasureIndex e bassMeasureIndex: índices separados por mão,
   // cada um reseta para 0 ao encontrar o token da mão correspondente.
   // Implementam a sincronização matricial: trebleTrack[N] ↔ bassTrack[N] na mesma X.
@@ -1197,9 +1207,9 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
     // Isso garante que barras de compasso e quebras de linha não percam a referência.
     let pendingSlur = false;       // ⠉ simples antes da próxima nota
     let pendingTie  = false;       // ⠈⠉ antes da próxima nota
-    let longSlurActive = false;    // escopo longo aberto (⠉⠉ / ⠰⠃)
-    // Compatibilidade com código que ainda usa pendingSlurKind (token de intervalo)
-    let pendingSlurKind: 'simple' | 'double' | null = null;
+    // longSlurActive DESATIVADO — ligaduras longas causam linhas cruzadas no VexFlow
+    // const longSlurActive = false; // reativar quando o renderer suportar arcos multi-compasso
+    let pendingSlurKind: 'simple' | 'double' | null = null; // alias para compatibilidade
     // Para tie: guardar a última nota emitida para comparar pitch+octave
     let lastNoteForTie: { pitch: string; octave: number; duration: Duration; dotted: boolean; dotted2: boolean } | null = null;
     /** Duração da última nota emitida neste compasso — herdada pelos intervalos do acorde. */
@@ -1263,17 +1273,12 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
       if (tk.kind === 'repetition')    { elements.push({ type: 'repetition', name: (tk as any).name, sourceIndex: (tk as any).idx, level: 1 as const, isPremium: true }); continue; }
       if (tk.kind === 'text')           { /* texto literário: não emite elemento musical */ continue; }
       if (tk.kind === 'slur') {
-        // Sinalizador estável: não resolve aqui, apenas acumula.
-        // A resolução (start / middle / end / tie) acontece ao processar a NOTA seguinte.
+        // Apenas ⠉ simples está ativo. Double tratado como simples enquanto ligaduras longas
+        // não têm suporte no renderer sem produzir linhas cruzadas.
         const slurTk = tk as { kind: 'slur'; slurType: 'simple' | 'double'; idx: number };
-        if (slurTk.slurType === 'double') {
-          longSlurActive = true;  // abre escopo longo imediatamente
-          pendingSlurKind = 'double';
-        } else {
-          pendingSlur = true;     // ⠉ simples → aguarda a próxima nota para decidir
-          pendingSlurKind = 'simple';
-        }
-        elements.push({ type: 'slur', slurType: slurTk.slurType, sourceIndex: slurTk.idx, level: 1 as const, isPremium: true });
+        pendingSlur     = true;   // sempre pendingSlur simples
+        pendingSlurKind = 'simple';
+        elements.push({ type: 'slur', slurType: 'simple', sourceIndex: slurTk.idx, level: 1 as const, isPremium: true });
         continue;
       }
       if (tk.kind === 'tie') {
@@ -1283,12 +1288,11 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
         continue;
       }
       if (tk.kind === 'phrase') {
+        // PHRASE desativado — ligaduras longas não têm suporte no renderer atual.
+        // Ignorar silenciosamente (não acumula estado nem emite elemento visual).
         const phTk = tk as { kind: 'phrase'; phraseType: 'start' | 'end'; idx: number };
-        if (phTk.phraseType === 'start') { longSlurActive = true; pendingSlur = false; }
-        else                              { longSlurActive = false; pendingSlur = false; }
-        pendingSlurKind = phTk.phraseType === 'start' ? 'double' : null;
         elements.push({ type: 'phrase', phraseType: phTk.phraseType, sourceIndex: phTk.idx, level: 1 as const, isPremium: true });
-        continue;
+        continue; // sem pendingSlur, sem longSlurActive
       }
       if (tk.kind === 'interval') {
         if (inNoteContext) {
@@ -1361,35 +1365,28 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
           pendingTie = false;      // consumido
 
         } else if (pendingSlur) {
-          // ⠉ simples: mesma altura = tie; alturas diferentes = slur de expressão
+          // ⠉ simples: mesma altura = tie (MIMB 6-2); alturas diferentes = slur de expressão
           const samePitchOctave =
             lastNoteForTie !== null &&
             lastNoteForTie.pitch  === n.pitch &&
             lastNoteForTie.octave === octave;
 
           if (samePitchOctave) {
-            // MIMB 6-2: mesma altura + ⠉ = ligadura de prolongação (tie)
+            // Mesma altura → ligadura de prolongação (tie)
             resolvedIsTie = true;
             const prevPulses = (BEAT_MAP[lastNoteForTie!.duration] ?? 1) * (lastNoteForTie!.dotted ? 1.5 : 1);
             const thisPulses = (BEAT_MAP[dur] ?? 1) * (n.dotted ? 1.5 : 1);
             resolvedTieDuration = prevPulses + thisPulses;
           } else {
-            // Pitches diferentes → ligadura de expressão (slur)
-            if (longSlurActive) {
-              resolvedSlurRole = 'end';
-              longSlurActive   = false;
-            } else {
-              resolvedSlurRole = 'start';
-              longSlurActive   = true;
-            }
+            // Pitches diferentes → slur simples: marca a nota ATUAL como início
+            // A nota SEGUINTE receberá o arco — tratada no ScoreRenderer via vizinhança direta
+            resolvedSlurRole = 'start';
           }
-          pendingSlur     = false;  // consumido
-          pendingSlurKind = null;   // limpar alias
-
-        } else if (longSlurActive) {
-          // Dentro do arco longo (⠉⠉ / ⠰⠃) → nota intermediária
-          resolvedSlurRole = 'middle';
+          pendingSlur     = false;
+          pendingSlurKind = null;
+          // longSlurActive propositalmente não é setado — ligaduras longas desativadas
         }
+        // longSlurActive removido: sem arcos 'middle' ou 'end' automáticos
 
         elements.push({
           type: 'note', pitch: n.pitch, octave, duration: dur,
