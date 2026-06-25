@@ -730,16 +730,46 @@ function inferOctave(
 // Desambiguação por compasso completo (lookahead)
 // Recebe todos os items ambíguos de um compasso e decide em bloco.
 // Reproduz a lógica do MusicBraille: testa todos primários juntos primeiro.
+/**
+ * Desambiguação de duração por compasso — REGRAS TRAVADAS (Grau 2):
+ *
+ * Linha 1 (sem pontos 3 e 6): primary='8',  secondary='128' → SEMPRE '8'  (colcheia)
+ * Linha 2 (ponto 3):          primary='h',  secondary='32'  → SEMPRE 'h'  (mínima)
+ * Linha 4 (ponto 6):          primary='q',  secondary='64'  → SEMPRE 'q'  (semínima)
+ * Linha 3 (pontos 3 e 6):     primary='w',  secondary='16'  → DINÂMICO (semibreve vs semicolcheia)
+ *   → Única linha que usa o algoritmo de lookahead por preenchimento de compasso.
+ *
+ * Essa travagem elimina a resolução incorreta para fusas (32), semifusas (64)
+ * e quartifusas (128) nas linhas fundamentais de leitura.
+ */
 function disambiguateMeasure(
   items: Array<{ primary: Duration; secondary: Duration; dotted: boolean; dotted2: boolean }>,
   beatsPerMeasure: number,
 ): Duration[] {
   if (!items.length) return [];
-  const totalPrimary = items.reduce(
-    (s, it) => s + durationToBeats(it.primary, it.dotted) * (it.dotted2 ? 1 + 0.25 : 1), 0
-  );
-  if (totalPrimary <= beatsPerMeasure + 0.001) return items.map(it => it.primary);
-  return items.map(it => it.secondary);
+
+  return items.map(it => {
+    // Linha 1 — colcheia travada: '8' → sempre '8', nunca '128'
+    if (it.primary === '8')  return '8'  as Duration;
+    // Linha 2 — mínima travada: 'h' → sempre 'h', nunca '32'
+    if (it.primary === 'h')  return 'h'  as Duration;
+    // Linha 4 — semínima travada: 'q' → sempre 'q', nunca '64'
+    if (it.primary === 'q')  return 'q'  as Duration;
+    // Linha 3 — ÚNICA linha com desambiguação dinâmica: 'w' vs '16'
+    // (não retorna aqui — cai no algoritmo de preenchimento abaixo)
+    return null; // sentinela para linha 3
+  }).map((resolved, idx) => {
+    if (resolved !== null) return resolved; // linhas 1, 2 e 4 já resolvidas
+    // Linha 3: algoritmo de lookahead por preenchimento de compasso
+    const it = items[idx];
+    // Testar se TODOS os primários do compasso (w) cabem no número de pulsos
+    const totalPrimary = items.reduce(
+      (s, item) => s + durationToBeats(item.primary === 'w' ? 'w' : item.primary, item.dotted)
+                     * (item.dotted2 ? 1 + 0.25 : 1),
+      0
+    );
+    return (totalPrimary <= beatsPerMeasure + 0.001) ? it.primary : it.secondary;
+  });
 }
 
 // Mantida para compatibilidade com chamadas existentes

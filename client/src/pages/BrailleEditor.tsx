@@ -233,13 +233,12 @@ function FontSizeControl({
 // Os botões acumulam pontos (dots) e emitem a célula ao liberar todos.
 
 function PerkinsKeyboard({
-  onChar, onSpace, onBackspace, onNewline, brailleTextareaRef,
+  onChar, onSpace, onBackspace, onNewline,
 }: {
   onChar: (char: string) => void;
   onSpace: () => void;
   onBackspace: () => void;
   onNewline: () => void;
-  brailleTextareaRef: React.RefObject<HTMLTextAreaElement | null>;
 }) {
   // Estado dos pontos pressionados (físico + virtual)
   const [pressed,   setPressed]   = useState<Set<string>>(new Set());
@@ -266,11 +265,10 @@ function PerkinsKeyboard({
       // Guard: não interceptar Perkins quando o foco está em um campo de texto
       // (título do projeto, BPM, busca, etc.) — apenas a textarea braille é permitida.
       const active = document.activeElement;
-      const isTextInput =
+            const isTextInput =
         active instanceof HTMLInputElement ||
-        (active instanceof HTMLTextAreaElement && active !== brailleTextareaRef.current);
+        (active instanceof HTMLTextAreaElement);
       if (isTextInput) return; // deixar o browser tratar normalmente
-
       const key = e.key.toLowerCase();
       if (["f","d","s","j","k","l"].includes(key)) {
         e.preventDefault();
@@ -288,11 +286,10 @@ function PerkinsKeyboard({
     const up = (e: KeyboardEvent) => {
       // Guard idêntico ao keydown
       const active = document.activeElement;
-      const isTextInput =
+            const isTextInput =
         active instanceof HTMLInputElement ||
-        (active instanceof HTMLTextAreaElement && active !== brailleTextareaRef.current);
+        (active instanceof HTMLTextAreaElement);
       if (isTextInput) return;
-
       const key = e.key.toLowerCase();
       if (key === " ")         { e.preventDefault(); onSpace();     return; }
       if (key === "backspace") { e.preventDefault(); onBackspace(); return; }
@@ -592,14 +589,6 @@ export default function BrailleEditor() {
     };
   }, [layoutMode]);
 
-  // ── Refs ──────────────────────────────────────────────────────────────────
-  const syncSourceRef      = useRef<"braille" | "romano" | "none">("none");
-  const brailleTextareaRef = useRef<HTMLTextAreaElement>(null);
-  const romanTextareaRef   = useRef<HTMLTextAreaElement>(null);
-  const scoreContainerRef  = useRef<HTMLDivElement>(null);
-  const fileInputRef       = useRef<HTMLInputElement>(null);
-  const midiFileInputRef   = useRef<HTMLInputElement>(null);
-
   // ── Audio state ───────────────────────────────────────────────────────────
   const [isPlaying,     setIsPlaying]     = useState(false);
   const [playerBpm,     setPlayerBpm]     = useState(120);
@@ -612,6 +601,14 @@ export default function BrailleEditor() {
   const [cursorPos,      setCursorPos]      = useState(0);
   const [selectionRange, setSelectionRange] = useState<[number, number] | null>(null);
   const [scoreWidth,     setScoreWidth]     = useState(800);
+
+  // ── Refs ──────────────────────────────────────────────────────────────────
+  const syncSourceRef      = useRef<"braille" | "romano" | "none">("none");
+  const brailleTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const romanTextareaRef   = useRef<HTMLTextAreaElement>(null);
+  const scoreContainerRef  = useRef<HTMLDivElement>(null);
+  const fileInputRef       = useRef<HTMLInputElement>(null);
+  const midiFileInputRef   = useRef<HTMLInputElement>(null);
 
   const parseOptions = useMemo<ParseOptions>(() => ({}), []);
   const isExportLocked = false;
@@ -735,31 +732,51 @@ export default function BrailleEditor() {
   const tryPlayFeedback = useCallback((char: string) => {
     if (!soundOnType) return;
     try {
-      const r      = parseBrailleMusic(char, parseOptions);
-      const noteEl = r.elements.find(e => e.type === "note") as ParsedNote | undefined;
-      if (!noteEl) return;
+      // ── Mod 3: Resolver acidente correto ─────────────────────────────────
+      // Parsear o caractere isolado NÃO resolve acidentes: a armadura de clave
+      // e os acidentes acumulados no compasso (measureAccidentals do parser)
+      // precisam ser considerados para calcular a frequência correta.
+      //
+      // Estratégia: parsear o conteúdo completo do editor (que já contém armadura
+      // e contexto de compasso) e extrair a última nota emitida.
+      // Se tiver o mesmo pitch que o caractere digitado, usa o acidente resolvido.
+      const fullResult  = parseBrailleMusic(brailleContent, parseOptions);
+      const allNotes    = fullResult.elements.filter(e => e.type === "note") as ParsedNote[];
+      const charResult  = parseBrailleMusic(char, parseOptions);
+      const charNote    = charResult.elements.find(e => e.type === "note") as ParsedNote | undefined;
+      if (!charNote) return;
 
+      // Preferir contexto completo se a última nota tem o mesmo pitch
+      const ctxNote = allNotes.length > 0 ? allNotes[allNotes.length - 1] : undefined;
+      const noteEl  = (ctxNote?.pitch === charNote.pitch) ? ctxNote : charNote;
+
+      // ── MIDI com acidente resolvido ───────────────────────────────────────
       const PITCH_CLASS: Record<string, number> = { C:0, D:2, E:4, F:5, G:7, A:9, B:11 };
-      const midi = 12 * (noteEl.octave + 1) + (PITCH_CLASS[noteEl.pitch] ?? 0);
-      const ctx  = getAudioCtx();
-      const t0   = ctx.currentTime + 0.01;
+      const ACC_DELTA: Record<string, number>    = {
+        sharp: 1, flat: -1, natural: 0, 'double-sharp': 2, 'double-flat': -2,
+      };
+      const baseMidi = 12 * (noteEl.octave + 1) + (PITCH_CLASS[noteEl.pitch] ?? 0);
+      const accDelta = noteEl.accidental ? (ACC_DELTA[noteEl.accidental] ?? 0) : 0;
+      const midi     = baseMidi + accDelta;
+
+      const ctx = getAudioCtx();
+      const t0  = ctx.currentTime + 0.01;
 
       loadPianoSample(ctx, midi).then(result => {
         if (result) {
           playPianoBuffer(ctx, result.buffer, midi, result.closestMidi, t0, 0.28, {
-            velocity:  0.7,
-            staccato:  !!noteEl.staccato,
-            isTie:     noteEl.tieRole === 'end',
+            velocity:    0.7,
+            staccato:    !!noteEl.staccato,
+            isTie:       (noteEl as any).tieRole === 'end',
             tieDuration: noteEl.tieDuration,
-            bpm:       playerBpm,
+            bpm:         playerBpm,
           });
         } else {
-          // Fallback: oscilador FM com regras de staccato
           playFallbackOscillator(ctx, midi, t0, 0.28, !!noteEl.staccato, 0.3);
         }
       });
-    } catch { /* ignora */ }
-  }, [soundOnType, parseOptions, playerBpm]);
+    } catch { /* feedback é best-effort — falha silenciosa */ }
+  }, [soundOnType, parseOptions, playerBpm, brailleContent]);
 
   // ── Save ──────────────────────────────────────────────────────────────────
   const handleSave = useCallback(() => {
@@ -1261,7 +1278,6 @@ export default function BrailleEditor() {
             onSpace={insertSpace}
             onBackspace={handleBackspace}
             onNewline={insertNewline}
-            brailleTextareaRef={brailleTextareaRef}
           />
         </div>
       )}
@@ -1313,7 +1329,7 @@ export default function BrailleEditor() {
           </p>
           <div className="font-mono text-xs text-foreground/80 leading-relaxed whitespace-pre-wrap break-all max-h-20 overflow-y-auto select-text">
             {romanContent
-              ? romanContent.split("").map((char, idx) => (
+              ? Array.from(romanContent).map((char, idx) => (
                   <span
                     key={idx}
                     className="inline-block hover:bg-primary/10 rounded transition-colors px-px"
