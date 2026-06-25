@@ -553,12 +553,12 @@ function renderStaveSystem(
     // StaveTie cobre: ties de prolongação (tieRole) e slurs de expressão (slurRole)
     const tiesToDraw: StaveTie[] = [];
 
-    // ── Rastreador de acidentes locais por compasso (Mod 2) ──────────────────
-    // Impede que o mesmo acidente seja renderizado duas vezes para a mesma nota
-    // dentro do mesmo compasso (ex: dois Fá# no mesmo compasso).
-    // O mapa é reinicializado aqui (início de cada compasso no loop for(i)).
-    // Chave: "pitch/octave" → último acidente VexFlow aplicado neste compasso.
-    const localAccidentalsInMeasure = new Map<string, string>();
+    // ── measureAccidentalsTrack: persistência visual de acidentes por compasso ──
+    // Regra MIMB/teoria tradicional: acidente impresso uma vez persiste até a barline.
+    // Este mapa é REINICIALIZADO a cada iteração do for(i) (= cada compasso/barline).
+    // Chave: "pitch/octave"  →  último token Accidental VexFlow aplicado neste compasso.
+    // Efeito: segundo Fá# no mesmo compasso não recebe novo glifo visual.
+    const measureAccidentalsTrack = new Map<string, string>();
 
     for (let ni = 0; ni < mNotes.length; ni++) {
       if (skipSet.has(ni)) continue;
@@ -606,14 +606,14 @@ function renderStaveSystem(
         accMods.forEach((vexAcc, keyIdx) => {
           // Recuperar o pitch real para a chave de rastreamento
           const keyPitch = keys[keyIdx] ?? '?';
-          const prevAcc  = localAccidentalsInMeasure.get(keyPitch);
+          const prevAcc  = measureAccidentalsTrack.get(keyPitch);
           // Só adicionar o modificador visual se:
           // (a) Nunca houve acidente para este pitch neste compasso, OU
           // (b) O acidente mudou em relação ao anterior (ex: # → ♮)
           if (prevAcc !== vexAcc) {
             try {
               vn.addModifier(new Accidental(vexAcc), keyIdx);
-              localAccidentalsInMeasure.set(keyPitch, vexAcc); // registrar
+              measureAccidentalsTrack.set(keyPitch, vexAcc); // registrar
             } catch { /* ignora falha de API */ }
           }
           // prevAcc === vexAcc: acidente idêntico já impresso → suprimir visual

@@ -229,8 +229,20 @@ function FontSizeControl({
 }
 
 // ─── PERKINS KEYBOARD ─────────────────────────────────────────────────────────
-// Teclado Perkins virtual — totalmente clicável/tocável para mobile.
-// Os botões acumulam pontos (dots) e emitem a célula ao liberar todos.
+// ─── TECLADO PERKINS VIRTUAL ─────────────────────────────────────────────────
+//
+// Suporte completo a:
+//   • Teclado físico (F,D,S / J,K,L) com guard para não interceptar inputs de texto
+//   • Botões virtuais com type="button" inputMode="none" — nunca abre teclado do SO
+//   • Overlay modo Perkins físico (isMobileScreenInputMode): tela cheia dividida em
+//     metade esquerda (pontos 1-2-3) e metade direita (pontos 4-5-6), com debounce
+//     de 50ms para capturar multi-toques como máquina Perkins física
+
+/** Mapa de slot de overlay (posição 0-5) para campo de PerkinsKeyState */
+const OVERLAY_SLOT_TO_DOT: Array<keyof PerkinsKeyState> = [
+  'dot1', 'dot2', 'dot3',  // metade esquerda (slots 0,1,2)
+  'dot4', 'dot5', 'dot6',  // metade direita  (slots 3,4,5)
+];
 
 function PerkinsKeyboard({
   onChar, onSpace, onBackspace, onNewline,
@@ -240,35 +252,40 @@ function PerkinsKeyboard({
   onBackspace: () => void;
   onNewline: () => void;
 }) {
-  // Estado dos pontos pressionados (físico + virtual)
-  const [pressed,   setPressed]   = useState<Set<string>>(new Set());
-  const pressedRef                = useRef<Set<string>>(new Set());
-  const activeDotsRef             = useRef<PerkinsKeyState>({
+  const [pressed,      setPressed]      = useState<Set<string>>(new Set());
+  const pressedRef                      = useRef<Set<string>>(new Set());
+  const activeDotsRef                   = useRef<PerkinsKeyState>({
     dot1: false, dot2: false, dot3: false,
     dot4: false, dot5: false, dot6: false,
   });
 
-  // Commit: emite célula quando todos os pontos são liberados
+  // Estado do overlay Perkins físico (modo mobile paisagem)
+  const [overlayDotsActive, setOverlayDotsActive] = useState<Set<number>>(new Set());
+  const overlayDotsRef    = useRef<Set<number>>(new Set());
+  const overlayCommitRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ── Commit: emite célula quando todos os pontos são liberados ─────────────
   const commitIfDone = useCallback(() => {
     if (pressedRef.current.size === 0) {
       const dots = { ...activeDotsRef.current };
       if (dots.dot1 || dots.dot2 || dots.dot3 || dots.dot4 || dots.dot5 || dots.dot6) {
         onChar(perkinsDotsToUnicode(dots));
       }
-      activeDotsRef.current = { dot1: false, dot2: false, dot3: false, dot4: false, dot5: false, dot6: false };
+      activeDotsRef.current = {
+        dot1: false, dot2: false, dot3: false,
+        dot4: false, dot5: false, dot6: false,
+      };
     }
   }, [onChar]);
 
-  // ── Teclado físico ────────────────────────────────────────────────────────
+  // ── Teclado físico (F,D,S / J,K,L) ──────────────────────────────────────
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
-      // Guard: não interceptar Perkins quando o foco está em um campo de texto
-      // (título do projeto, BPM, busca, etc.) — apenas a textarea braille é permitida.
       const active = document.activeElement;
             const isTextInput =
         active instanceof HTMLInputElement ||
         (active instanceof HTMLTextAreaElement);
-      if (isTextInput) return; // deixar o browser tratar normalmente
+      if (isTextInput) return;
       const key = e.key.toLowerCase();
       if (["f","d","s","j","k","l"].includes(key)) {
         e.preventDefault();
@@ -284,12 +301,12 @@ function PerkinsKeyboard({
       if (key === " " || key === "backspace" || key === "enter") e.preventDefault();
     };
     const up = (e: KeyboardEvent) => {
-      // Guard idêntico ao keydown
       const active = document.activeElement;
-            const isTextInput =
+      const isTextInput =
         active instanceof HTMLInputElement ||
         (active instanceof HTMLTextAreaElement);
       if (isTextInput) return;
+
       const key = e.key.toLowerCase();
       if (key === " ")         { e.preventDefault(); onSpace();     return; }
       if (key === "backspace") { e.preventDefault(); onBackspace(); return; }
@@ -303,11 +320,14 @@ function PerkinsKeyboard({
     };
     window.addEventListener("keydown", down);
     window.addEventListener("keyup",   up);
-    return () => { window.removeEventListener("keydown", down); window.removeEventListener("keyup", up); };
+    return () => {
+      window.removeEventListener("keydown", down);
+      window.removeEventListener("keyup",   up);
+    };
   }, [onSpace, onBackspace, onNewline, commitIfDone]);
 
   // ── Botões virtuais (touch/click) ─────────────────────────────────────────
-  // Cada botão usa pointerdown/pointerup para suportar touch e mouse uniformemente.
+  // type="button" + inputMode="none": nunca abre teclado do SO em Android/iOS
 
   const handleVirtualDown = useCallback((dotKey: string, dotField: keyof PerkinsKeyState) => {
     activeDotsRef.current[dotField] = true;
@@ -330,6 +350,71 @@ function PerkinsKeyboard({
     { label: "L", sub: "•6", key: "l", field: "dot6" },
   ];
 
+  // ── Overlay Perkins Físico (isMobileScreenInputMode) ─────────────────────
+  // Disparado pelo estado pai via prop — renderizado como overlay invisível
+  // em tela cheia quando em paisagem mobile.
+  // Metade esquerda = pontos 1-2-3 (posições verticais top/middle/bottom)
+  // Metade direita  = pontos 4-5-6
+  // Debounce de 50ms: aguarda todos os dedos serem levantados antes de emitir.
+
+  const handleOverlayTouchStart = useCallback((
+    e: React.TouchEvent<HTMLDivElement>,
+    slotIndex: number
+  ) => {
+    e.preventDefault();
+    e.stopPropagation();
+    overlayDotsRef.current.add(slotIndex);
+    setOverlayDotsActive(new Set(overlayDotsRef.current));
+  }, []);
+
+  const handleOverlayTouchEnd = useCallback((
+    e: React.TouchEvent<HTMLDivElement>,
+    slotIndex: number
+  ) => {
+    e.preventDefault();
+    e.stopPropagation();
+    overlayDotsRef.current.delete(slotIndex);
+    setOverlayDotsActive(new Set(overlayDotsRef.current));
+
+    // Debounce 50ms: emitir célula quando nenhum dedo mais tocar a tela
+    if (overlayCommitRef.current) clearTimeout(overlayCommitRef.current);
+    overlayCommitRef.current = setTimeout(() => {
+      if (overlayDotsRef.current.size === 0) {
+        // Construir PerkinsKeyState a partir dos slots ativos no momento do commit
+        const dots: PerkinsKeyState = {
+          dot1: false, dot2: false, dot3: false,
+          dot4: false, dot5: false, dot6: false,
+        };
+        // Nota: neste ponto todos os slots foram liberados.
+        // Usar os dots que foram pressionados ao longo do gesto (capturados abaixo).
+        const committed = committedOverlayDotsRef.current;
+        if (committed.size > 0) {
+          Array.from(committed).forEach(slot => {
+            const field = OVERLAY_SLOT_TO_DOT[slot];
+            if (field) dots[field] = true;
+          });
+          if (dots.dot1||dots.dot2||dots.dot3||dots.dot4||dots.dot5||dots.dot6) {
+            onChar(perkinsDotsToUnicode(dots));
+          }
+          committedOverlayDotsRef.current = new Set();
+        }
+      }
+    }, 50);
+  }, [onChar]);
+
+  // Acumulador: registra todos os slots que foram tocados no gesto atual
+  const committedOverlayDotsRef = useRef<Set<number>>(new Set());
+
+  const handleOverlaySlotStart = useCallback((
+    e: React.TouchEvent<HTMLDivElement>,
+    slotIndex: number
+  ) => {
+    e.preventDefault();
+    e.stopPropagation();
+    committedOverlayDotsRef.current.add(slotIndex);
+    handleOverlayTouchStart(e, slotIndex);
+  }, [handleOverlayTouchStart]);
+
   return (
     <div className="flex flex-col items-center gap-1.5 py-1 select-none">
       <div className="flex gap-1.5 items-center">
@@ -337,11 +422,20 @@ function PerkinsKeyboard({
           <div key={k.key} className="flex items-center">
             {idx === 3 && <span className="inline-block w-3" />}
             <button
+              type="button"
+              inputMode="none"
+              onTouchStart={(e) => { e.preventDefault(); e.stopPropagation(); handleVirtualDown(k.key, k.field); }}
+              onTouchEnd={(e)   => { e.preventDefault(); e.stopPropagation(); handleVirtualUp(k.key); }}
+              onTouchCancel={(e) => { e.preventDefault(); e.stopPropagation(); handleVirtualUp(k.key); }}
               onPointerDown={(e) => { e.preventDefault(); handleVirtualDown(k.key, k.field); }}
               onPointerUp={(e)   => { e.preventDefault(); handleVirtualUp(k.key); }}
-              onPointerLeave={(e) => { e.preventDefault(); if (pressedRef.current.has(k.key)) { handleVirtualUp(k.key); } }}
+              onPointerLeave={(e) => {
+                e.preventDefault();
+                if (pressedRef.current.has(k.key)) handleVirtualUp(k.key);
+              }}
               onPointerCancel={(e) => { e.preventDefault(); handleVirtualUp(k.key); }}
-              className={`w-11 h-12 rounded-xl border-2 flex flex-col items-center justify-center font-bold text-sm transition-all touch-none ${
+              onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}
+              className={`w-11 h-12 rounded-xl border-2 flex flex-col items-center justify-center font-bold text-sm transition-all touch-none select-none ${
                 pressed.has(k.key)
                   ? "bg-primary text-primary-foreground border-primary scale-95 shadow-inner"
                   : "bg-card text-card-foreground border-border hover:border-primary/60 hover:bg-accent active:scale-95"
@@ -357,30 +451,166 @@ function PerkinsKeyboard({
       {/* Barra de ações */}
       <div className="flex gap-1.5 mt-0.5">
         <button
-          onPointerDown={e => e.preventDefault()}
-          onClick={onSpace}
-          className="px-4 py-1 text-[10px] rounded-lg border border-border bg-card hover:bg-accent transition-colors text-muted-foreground"
+          type="button"
+          inputMode="none"
+          onTouchStart={e => { e.preventDefault(); e.stopPropagation(); }}
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); onSpace(); }}
+          className="px-4 py-1 text-[10px] rounded-lg border border-border bg-card hover:bg-accent transition-colors text-muted-foreground touch-none"
           aria-label="Barra de compasso (espaço)"
         >
           ␣ Barra
         </button>
         <button
-          onPointerDown={e => e.preventDefault()}
-          onClick={onNewline}
-          className="px-3 py-1 text-[10px] rounded-lg border border-border bg-card hover:bg-accent transition-colors text-muted-foreground"
+          type="button"
+          inputMode="none"
+          onTouchStart={e => { e.preventDefault(); e.stopPropagation(); }}
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); onNewline(); }}
+          className="px-3 py-1 text-[10px] rounded-lg border border-border bg-card hover:bg-accent transition-colors text-muted-foreground touch-none"
           aria-label="Nova linha"
         >
           ↵ Linha
         </button>
         <button
-          onPointerDown={e => e.preventDefault()}
-          onClick={onBackspace}
-          className="px-3 py-1 text-[10px] rounded-lg border border-border bg-card hover:bg-accent transition-colors text-muted-foreground"
+          type="button"
+          inputMode="none"
+          onTouchStart={e => { e.preventDefault(); e.stopPropagation(); }}
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); onBackspace(); }}
+          className="px-3 py-1 text-[10px] rounded-lg border border-border bg-card hover:bg-accent transition-colors text-muted-foreground touch-none"
           aria-label="Apagar"
         >
           ⌫ Apagar
         </button>
       </div>
+
+      {/* Slots do Overlay Perkins Físico — renderizados externamente pelo pai */}
+      {/* Ver: PerkinsPhysicalOverlay abaixo */}
+    </div>
+  );
+}
+
+// ─── OVERLAY PERKINS FÍSICO (MODO MOBILE PAISAGEM) ───────────────────────────
+//
+// Overlay invisível em tela cheia, dividido em 6 zonas de toque.
+// Ativado por isMobileScreenInputMode no componente pai.
+// Não usa inputs de texto — apenas divs com onTouchStart/End.
+
+function PerkinsPhysicalOverlay({
+  onChar,
+  onClose,
+}: {
+  onChar: (char: string) => void;
+  onClose: () => void;
+}) {
+  const committedRef    = useRef<Set<number>>(new Set());
+  const activeRef       = useRef<Set<number>>(new Set());
+  const [active, setActive] = useState<Set<number>>(new Set());
+  const commitTimerRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Slots: 0=dot1(esq-top), 1=dot2(esq-mid), 2=dot3(esq-bot)
+  //        3=dot4(dir-top), 4=dot5(dir-mid), 5=dot6(dir-bot)
+  const SLOT_LABELS = ['•1','•2','•3','•4','•5','•6'];
+
+  const scheduleCommit = useCallback(() => {
+    if (commitTimerRef.current) clearTimeout(commitTimerRef.current);
+    commitTimerRef.current = setTimeout(() => {
+      if (activeRef.current.size === 0 && committedRef.current.size > 0) {
+        const dots: PerkinsKeyState = {
+          dot1: false, dot2: false, dot3: false,
+          dot4: false, dot5: false, dot6: false,
+        };
+        Array.from(committedRef.current).forEach(slot => {
+          const field = OVERLAY_SLOT_TO_DOT[slot];
+          if (field) dots[field] = true;
+        });
+        if (dots.dot1||dots.dot2||dots.dot3||dots.dot4||dots.dot5||dots.dot6) {
+          onChar(perkinsDotsToUnicode(dots));
+        }
+        committedRef.current = new Set();
+      }
+    }, 50); // 50ms debounce
+  }, [onChar]);
+
+  const handleSlotStart = useCallback((
+    e: React.TouchEvent<HTMLDivElement>,
+    slot: number
+  ) => {
+    e.preventDefault();
+    e.stopPropagation();
+    activeRef.current.add(slot);
+    committedRef.current.add(slot);
+    setActive(new Set(activeRef.current));
+  }, []);
+
+  const handleSlotEnd = useCallback((
+    e: React.TouchEvent<HTMLDivElement>,
+    slot: number
+  ) => {
+    e.preventDefault();
+    e.stopPropagation();
+    activeRef.current.delete(slot);
+    setActive(new Set(activeRef.current));
+    scheduleCommit();
+  }, [scheduleCommit]);
+
+  // Slots esquerda (pontos 1-2-3) e direita (pontos 4-5-6)
+  const leftSlots  = [0, 1, 2];
+  const rightSlots = [3, 4, 5];
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex landscape:flex portrait:hidden"
+      style={{ touchAction: 'none' }}
+    >
+      {/* Metade esquerda: pontos 1-2-3 */}
+      <div className="flex-1 flex flex-col">
+        {leftSlots.map(slot => (
+          <div
+            key={slot}
+            className={`flex-1 flex items-center justify-center border-r border-b border-white/10 transition-colors ${
+              active.has(slot) ? 'bg-primary/30' : 'bg-black/5'
+            }`}
+            onTouchStart={e => handleSlotStart(e, slot)}
+            onTouchEnd={e => handleSlotEnd(e, slot)}
+            onTouchCancel={e => handleSlotEnd(e, slot)}
+            style={{ touchAction: 'none', WebkitTapHighlightColor: 'transparent' }}
+          >
+            <span className="text-white/40 text-2xl font-bold pointer-events-none select-none">
+              {SLOT_LABELS[slot]}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {/* Metade direita: pontos 4-5-6 */}
+      <div className="flex-1 flex flex-col">
+        {rightSlots.map(slot => (
+          <div
+            key={slot}
+            className={`flex-1 flex items-center justify-center border-b border-white/10 transition-colors ${
+              active.has(slot) ? 'bg-primary/30' : 'bg-black/5'
+            }`}
+            onTouchStart={e => handleSlotStart(e, slot)}
+            onTouchEnd={e => handleSlotEnd(e, slot)}
+            onTouchCancel={e => handleSlotEnd(e, slot)}
+            style={{ touchAction: 'none', WebkitTapHighlightColor: 'transparent' }}
+          >
+            <span className="text-white/40 text-2xl font-bold pointer-events-none select-none">
+              {SLOT_LABELS[slot]}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {/* Botão de fechar o overlay */}
+      <button
+        type="button"
+        inputMode="none"
+        onClick={onClose}
+        className="absolute top-3 right-3 z-10 w-10 h-10 rounded-full bg-black/40 text-white flex items-center justify-center text-lg"
+        aria-label="Fechar modo Perkins físico"
+      >
+        ✕
+      </button>
     </div>
   );
 }
@@ -544,6 +774,8 @@ export default function BrailleEditor() {
   const [panelOrder,    setPanelOrder]    = useState<PanelOrder>("braille-first");
   const [saveStatus,    setSaveStatus]    = useState<"saved" | "saving" | "unsaved">("saved");
   const [importing,     setImporting]     = useState(false);
+  // Modo Perkins físico para mobile em paisagem — overlay invisível de tela cheia
+  const [isMobileScreenInputMode, setIsMobileScreenInputMode] = useState(false);
 
   // ── Font sizes ────────────────────────────────────────────────────────────
   const [brailleFontSize, setBrailleFontSize] = useState(28);
@@ -1249,6 +1481,23 @@ export default function BrailleEditor() {
           >
             Abc
           </button>
+          {/* Botão de ativação do overlay Perkins físico (mobile paisagem) */}
+          {inputMode === "braille" && (
+            <button
+              type="button"
+              inputMode="none"
+              onClick={(e) => { e.preventDefault(); setIsMobileScreenInputMode(v => !v); }}
+              className={`text-[10px] px-2 py-0.5 rounded-md border transition-colors ${
+                isMobileScreenInputMode
+                  ? "bg-primary text-primary-foreground border-primary"
+                  : "border-border text-muted-foreground hover:text-foreground hover:border-primary/50"
+              }`}
+              title="Modo Perkins físico (mobile paisagem)"
+              aria-label="Ativar modo Perkins físico para mobile em paisagem"
+            >
+              ⌨︎ Físico
+            </button>
+          )}
           {/* Mostrar romano (sobreposição) quando em modo braille */}
           {inputMode === "braille" && (
             <button
@@ -1547,6 +1796,14 @@ export default function BrailleEditor() {
           )}
         </main>
       </div>
+
+      {/* Overlay Perkins Físico — visível apenas em landscape + isMobileScreenInputMode */}
+      {isMobileScreenInputMode && (
+        <PerkinsPhysicalOverlay
+          onChar={insertCharAtCursor}
+          onClose={() => setIsMobileScreenInputMode(false)}
+        />
+      )}
     </SiteLayout>
   );
 }

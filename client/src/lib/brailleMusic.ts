@@ -27,6 +27,9 @@
 // ─── TIPOS BASE ────────────────────────────────────────────────────────────────
 
 type NoteName = 'C' | 'D' | 'E' | 'F' | 'G' | 'A' | 'B';
+// Durações válidas — fusas (32), semifusas (64) e quartifusas (128) REMOVIDAS.
+// Linhas fundamentais são resolvidas diretamente: col=8, mín=h, sem=q.
+// Apenas semibreve (w) vs semicolcheia (16) usa desambiguação dinâmica (linha 3).
 type Duration = 'w' | 'h' | 'q' | '8' | '16' | '32' | '64' | '128';
 export type Accidental = 'sharp' | 'flat' | 'natural' | 'double-sharp' | 'double-flat';
 
@@ -59,31 +62,31 @@ interface NoteInfo {
 // Fonte: Tabela 1A do Manual / TABELA_BRAILLE_corrigida.odt
 // Colcheias (8) e Quartifusas (128) — pontos de nota sem 3 e sem 6
 const NOTE_MAP: Record<string, NoteInfo> = {
-  '\u2819': { pitch: 'C', duration: '8',  altDuration: '128' }, // ⠙ (1,4,5)
-  '\u2811': { pitch: 'D', duration: '8',  altDuration: '128' }, // ⠑ (1,5)
-  '\u280B': { pitch: 'E', duration: '8',  altDuration: '128' }, // ⠋ (1,2,4)
-  '\u281B': { pitch: 'F', duration: '8',  altDuration: '128' }, // ⠛ (1,2,4,5)
-  '\u2813': { pitch: 'G', duration: '8',  altDuration: '128' }, // ⠓ (1,2,5)
-  '\u280A': { pitch: 'A', duration: '8',  altDuration: '128' }, // ⠊ (2,4)
-  '\u281A': { pitch: 'B', duration: '8',  altDuration: '128' }, // ⠚ (2,4,5)
+  '\u2819': { pitch: 'C', duration: '8',  altDuration: '8' }, // ⠙ (1,4,5)
+  '\u2811': { pitch: 'D', duration: '8',  altDuration: '8' }, // ⠑ (1,5)
+  '\u280B': { pitch: 'E', duration: '8',  altDuration: '8' }, // ⠋ (1,2,4)
+  '\u281B': { pitch: 'F', duration: '8',  altDuration: '8' }, // ⠛ (1,2,4,5)
+  '\u2813': { pitch: 'G', duration: '8',  altDuration: '8' }, // ⠓ (1,2,5)
+  '\u280A': { pitch: 'A', duration: '8',  altDuration: '8' }, // ⠊ (2,4)
+  '\u281A': { pitch: 'B', duration: '8',  altDuration: '8' }, // ⠚ (2,4,5)
 
   // Semínimas (q) e Semifusas (64) — acrescenta ponto 6
-  '\u2839': { pitch: 'C', duration: 'q',  altDuration: '64'  }, // ⠹ (1,4,5,6)
-  '\u2831': { pitch: 'D', duration: 'q',  altDuration: '64'  }, // ⠱ (1,5,6)
-  '\u282B': { pitch: 'E', duration: 'q',  altDuration: '64'  }, // ⠫ (1,2,4,6)
-  '\u283B': { pitch: 'F', duration: 'q',  altDuration: '64'  }, // ⠻ (1,2,4,5,6)
-  '\u2833': { pitch: 'G', duration: 'q',  altDuration: '64'  }, // ⠳ (1,2,5,6)
-  '\u282A': { pitch: 'A', duration: 'q',  altDuration: '64'  }, // ⠪ (2,4,6)
-  '\u283A': { pitch: 'B', duration: 'q',  altDuration: '64'  }, // ⠺ (2,4,5,6)
+  '\u2839': { pitch: 'C', duration: 'q',  altDuration: 'q'  }, // ⠹ (1,4,5,6)
+  '\u2831': { pitch: 'D', duration: 'q',  altDuration: 'q'  }, // ⠱ (1,5,6)
+  '\u282B': { pitch: 'E', duration: 'q',  altDuration: 'q'  }, // ⠫ (1,2,4,6)
+  '\u283B': { pitch: 'F', duration: 'q',  altDuration: 'q'  }, // ⠻ (1,2,4,5,6)
+  '\u2833': { pitch: 'G', duration: 'q',  altDuration: 'q'  }, // ⠳ (1,2,5,6)
+  '\u282A': { pitch: 'A', duration: 'q',  altDuration: 'q'  }, // ⠪ (2,4,6)
+  '\u283A': { pitch: 'B', duration: 'q',  altDuration: 'q'  }, // ⠺ (2,4,5,6)
 
   // Mínimas (h) e Fusas (32) — acrescenta ponto 3
-  '\u281D': { pitch: 'C', duration: 'h',  altDuration: '32'  }, // ⠝ (1,3,4,5) — Dó mínima
-  '\u2815': { pitch: 'D', duration: 'h',  altDuration: '32'  }, // ⠕ (1,3,5)   — Ré mínima
-  '\u280F': { pitch: 'E', duration: 'h',  altDuration: '32'  }, // ⠏ (1,2,3,4) — Mi mínima
-  '\u281F': { pitch: 'F', duration: 'h',  altDuration: '32'  }, // ⠟ (1,2,3,4,5) — Fá mínima
-  '\u2817': { pitch: 'G', duration: 'h',  altDuration: '32'  }, // ⠗ (1,2,3,5) — Sol mínima
-  '\u280E': { pitch: 'A', duration: 'h',  altDuration: '32'  }, // ⠎ (2,3,4)   — Lá mínima
-  '\u281E': { pitch: 'B', duration: 'h',  altDuration: '32'  }, // ⠞ (2,3,4,5) — Si mínima
+  '\u281D': { pitch: 'C', duration: 'h',  altDuration: 'h'  }, // ⠝ (1,3,4,5) — Dó mínima
+  '\u2815': { pitch: 'D', duration: 'h',  altDuration: 'h'  }, // ⠕ (1,3,5)   — Ré mínima
+  '\u280F': { pitch: 'E', duration: 'h',  altDuration: 'h'  }, // ⠏ (1,2,3,4) — Mi mínima
+  '\u281F': { pitch: 'F', duration: 'h',  altDuration: 'h'  }, // ⠟ (1,2,3,4,5) — Fá mínima
+  '\u2817': { pitch: 'G', duration: 'h',  altDuration: 'h'  }, // ⠗ (1,2,3,5) — Sol mínima
+  '\u280E': { pitch: 'A', duration: 'h',  altDuration: 'h'  }, // ⠎ (2,3,4)   — Lá mínima
+  '\u281E': { pitch: 'B', duration: 'h',  altDuration: 'h'  }, // ⠞ (2,3,4,5) — Si mínima
 
   // Semibreves (w) e Semicolcheias (16) — acrescenta pontos 3 e 6
   '\u283D': { pitch: 'C', duration: 'w',  altDuration: '16'  }, // ⠽ (1,3,4,5,6)
@@ -787,9 +790,13 @@ function disambiguateDuration(
 }
 
 function durationToVex(duration: Duration, dotted: boolean, isRest: boolean): string {
-  let s = duration === 'w' ? 'w' : duration === 'h' ? 'h' : duration === 'q' ? 'q' :
-          duration === '8' ? '8' : duration === '16' ? '16' : duration === '32' ? '32' :
-          duration === '64' ? '64' : '128';
+  // Fusas (32), semifusas (64) e quartifusas (128) removidas do tipo Duration.
+  // Apenas w/h/q/8/16 são valores válidos.
+  let s = duration === 'w' ? 'w'
+        : duration === 'h' ? 'h'
+        : duration === 'q' ? 'q'
+        : duration === '8' ? '8'
+        : '16'; // fallback para semicolcheia (único outro valor válido)
   if (dotted) s += 'd';
   if (isRest) s += 'r';
   return s;
