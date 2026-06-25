@@ -25,7 +25,6 @@ import {
   Dot,
   Beam,
   StaveTie,
-  // Curve desativado — ligaduras longas causavam linhas diagonais cruzadas
 } from 'vexflow';
 import type {
   ParsedElement,
@@ -110,7 +109,6 @@ function groupIntoMeasures(elements: ParsedElement[]): MeasureInfo[] {
 
       let barType: MeasureInfo['barlineType'] = 'single';
       if      (bt === 'end')          barType = 'end';
-      else if (bt === 'end-section')  barType = 'end-section';
       else if (bt === 'repeat-end')   barType = 'repeat-end';
       else if (bt === 'repeat-begin') barType = 'repeat-begin';
 
@@ -458,13 +456,19 @@ function renderStaveSystem(
   let y = startY;
   let systemIdx = 0;
 
-  // Estado de ligaduras — persiste entre compassos
-  let pendingSlurNote:  StaveNote | null = null; // nota-origem de slur/tie pendente
-  let pendingSlurY:     number           = 0;    // Y do sistema de origem (salvaguarda)
-  // Ligaduras longas: mapa slurLongId → StaveNote de início (persistência entre compassos)
-  const activeLongSlurMap  = new Map<string, StaveNote>(); // id → nota-origem
-  const activeLongSlurYMap = new Map<string, number>();    // id → Y de origem
-  const activeTies = new Map<string, StaveNote>(); // "pitch/octave" → StaveNote (tie)
+  // ── Estado de ligaduras (persiste entre compassos) ───────────────────────
+  //
+  // Canal 1 — Ties de prolongação (tieRole: 'start'/'end')
+  // Modelo: nota com tieRole='start' guarda a StaveNote. A próxima com tieRole='end'
+  // fecha o arco. Separado por pitch/octave para suportar acordes (múltiplos ties).
+  let activeTieStartNote: StaveNote | null = null;  // tie simples (nota única)
+  let activeTieStartY:    number           = 0;     // Y de origem (salvaguarda)
+
+  // Canal 2 — Slurs de expressão (slurRole: 'start'/'end' + slurLongId)
+  // O Cérebro gera slurLongId único para cada arco, curto ou longo.
+  // O mapa persiste entre compassos — um slur pode cruzar barlines.
+  const activeSlurMap:  Map<string, StaveNote> = new Map(); // slurLongId → StaveNote de início
+  const activeSlurYMap: Map<string, number>    = new Map(); // slurLongId → Y de origem
 
   // Construir mapa matricial para acesso por índice real
   const measureTrack = buildMeasureTrack(measures);
@@ -545,8 +549,8 @@ function renderStaveSystem(
     const srcIdxs:   (number | undefined)[]  = [];
     const skipSet = new Set<number>();
 
-    // Lista de ligaduras a desenhar APÓS o Formatter (coordenadas X definidas)
-    // Unificada: StaveTie cobre tanto ties de prolongação quanto slurs simples
+    // Lista de arcos a desenhar APÓS o Formatter — coordenadas X definidas pelo format()
+    // StaveTie cobre: ties de prolongação (tieRole) e slurs de expressão (slurRole)
     const tiesToDraw: StaveTie[] = [];
 
     for (let ni = 0; ni < mNotes.length; ni++) {
@@ -599,48 +603,62 @@ function renderStaveSystem(
 
         if (noteEl.dotted) Dot.buildAndAttach([vn], { all: true });
 
-        // ── Ligaduras: modelo retroativo (tieRole / slurRole / slurLongId) ──
-        // O parser já marcou as notas com papéis exatos — apenas conectar os pares.
-        // Salvaguarda de Y: arco cancelado se as notas estiverem em sistemas diferentes.
-        const noteSlurRole  = (noteEl as any).slurRole  as 'start' | 'end' | undefined;
-        const noteTieRole   = (noteEl as any).tieRole   as 'start' | 'end' | undefined;
-        const noteLongId    = (noteEl as any).slurLongId as string | undefined;
+        // ── Ligaduras e Prolongações — Modelo Neutro (Cérebro) ───────────────
+        // O parser (brailleMusic.ts) marcou cada nota com papéis exatos:
+        //   tieRole:   'start' | 'end'          → prolongação (mesma altura)
+        //   slurRole:  'start' | 'end'          → expressão/fraseio
+        //   slurLongId: string                  → ID único do arco curto ou longo
+        //
+        // O renderer apenas conecta os pares — sem lógica de decisão.
+        // Salvaguarda de Y: se início e fim estiverem em sistemas diferentes
+        // (quebra de linha vertical), o arco é cancelado para evitar diagonal.
 
-        // Fechar slur/tie pendente do compasso anterior com esta nota como destino
-        if (pendingSlurNote !== null && Math.abs(y - pendingSlurY) < 5) {
-          if (noteSlurRole === 'end' || noteTieRole === 'end') {
-            tiesToDraw.push(new StaveTie({ firstNote: pendingSlurNote, lastNote: vn } as any));
-            pendingSlurNote = null;
+        const noteTieRole  = (noteEl as any).tieRole   as 'start' | 'end' | undefined;
+        const noteSlurRole = (noteEl as any).slurRole  as 'start' | 'end' | undefined;
+        const noteLongId   = (noteEl as any).slurLongId as string | undefined;
+
+        // ── Canal 1: Tie de Prolongação (tieRole) ────────────────────────────
+        if (noteTieRole === 'start') {
+          // Guardar esta nota como origem do tie
+          activeTieStartNote = vn;
+          activeTieStartY    = y;
+        }
+        if (noteTieRole === 'end' && activeTieStartNote !== null) {
+          // Salvaguarda: cancelar se os sistemas forem diferentes (Y muito distante)
+          if (Math.abs(y - activeTieStartY) < 5) {
+            tiesToDraw.push(
+              new StaveTie({ firstNote: activeTieStartNote, lastNote: vn } as any)
+            );
           }
-        } else if (pendingSlurNote !== null) {
-          pendingSlurNote = null; // salvaguarda: Y diferente — cancelar arco
+          // Sempre limpar após tentativa (com ou sem sucesso)
+          activeTieStartNote = null;
         }
 
-        // Abrir novo arco (slur start ou tie start)
-        if (noteSlurRole === 'start' || noteTieRole === 'start') {
-          pendingSlurNote = vn;
-          pendingSlurY    = y;
+        // ── Canal 2: Slur de Expressão / Fraseio (slurRole + slurLongId) ─────
+        // O slurLongId é gerado pelo Cérebro para TODOS os slurs (curtos e longos),
+        // portanto basta usar o ID como chave do mapa — comportamento uniforme.
+        if (noteSlurRole === 'start' && noteLongId) {
+          // Registrar a StaveNote de início, indexada pelo ID único do arco
+          activeSlurMap.set(noteLongId, vn);
+          activeSlurYMap.set(noteLongId, y);
         }
-
-        // Ligadura longa: abrir pelo slurLongId
-        if (noteLongId && noteSlurRole === 'start') {
-          activeLongSlurMap.set(noteLongId, vn);
-          activeLongSlurYMap.set(noteLongId, y);
-        }
-        // Ligadura longa: fechar pelo slurLongId
-        if (noteLongId && noteSlurRole === 'end') {
-          const startVn = activeLongSlurMap.get(noteLongId);
-          const startY  = activeLongSlurYMap.get(noteLongId);
-          if (startVn && startY !== undefined && Math.abs(y - startY) < 5) {
-            tiesToDraw.push(new StaveTie({ firstNote: startVn, lastNote: vn } as any));
+        if (noteSlurRole === 'end' && noteLongId) {
+          const startVn = activeSlurMap.get(noteLongId);
+          const startY  = activeSlurYMap.get(noteLongId);
+          if (startVn !== undefined && startY !== undefined) {
+            // Salvaguarda de quebra de sistema:
+            // Se início e fim estão no mesmo sistema (Y próximo), desenhar arco normal.
+            // Se estão em sistemas diferentes, cancelar (evita diagonal cruzada).
+            if (Math.abs(y - startY) < 5) {
+              tiesToDraw.push(
+                new StaveTie({ firstNote: startVn, lastNote: vn } as any)
+              );
+            }
+            // Limpar o ID consumido (evita reutilização de arco fantasma)
+            activeSlurMap.delete(noteLongId);
+            activeSlurYMap.delete(noteLongId);
           }
-          activeLongSlurMap.delete(noteLongId);
-          activeLongSlurYMap.delete(noteLongId);
         }
-
-        // Registrar esta nota no mapa de ties (para cruzamento de compassos)
-        // O tie visual é criado pelo bloco de slurRole/tieRole acima.
-        activeTies.set(`${noteEl.pitch.toLowerCase()}/${noteEl.octave}`, vn);
 
         vexNotes.push(vn);
         srcIdxs.push((noteEl as any).sourceIndex);
