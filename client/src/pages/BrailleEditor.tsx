@@ -749,7 +749,7 @@ export default function BrailleEditor() {
           playPianoBuffer(ctx, result.buffer, midi, result.closestMidi, t0, 0.28, {
             velocity:  0.7,
             staccato:  !!noteEl.staccato,
-            isTie:     !!noteEl.isTie,
+            isTie:     noteEl.tieRole === 'end',
             tieDuration: noteEl.tieDuration,
             bpm:       playerBpm,
           });

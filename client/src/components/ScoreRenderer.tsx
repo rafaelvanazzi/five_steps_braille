@@ -458,10 +458,12 @@ function renderStaveSystem(
   let y = startY;
   let systemIdx = 0;
 
-  // Estado de ligaduras simples — pendingSlurNote persiste entre compassos
-  // (⠉ antes da última nota de um compasso deve ser conectado à primeira do próximo)
-  let pendingSlurNote:  StaveNote | null = null; // nota-origem do slur pendente
+  // Estado de ligaduras — persiste entre compassos
+  let pendingSlurNote:  StaveNote | null = null; // nota-origem de slur/tie pendente
   let pendingSlurY:     number           = 0;    // Y do sistema de origem (salvaguarda)
+  // Ligaduras longas: mapa slurLongId → StaveNote de início (persistência entre compassos)
+  const activeLongSlurMap  = new Map<string, StaveNote>(); // id → nota-origem
+  const activeLongSlurYMap = new Map<string, number>();    // id → Y de origem
   const activeTies = new Map<string, StaveNote>(); // "pitch/octave" → StaveNote (tie)
 
   // Construir mapa matricial para acesso por índice real
@@ -597,44 +599,47 @@ function renderStaveSystem(
 
         if (noteEl.dotted) Dot.buildAndAttach([vn], { all: true });
 
-        // ── Ligadura Simples (slurRole === 'start') ─────────────────────
-        // Modelo de vizinhança direta: a nota com slurRole='start' é guardada.
-        // Ao processar a PRÓXIMA nota (neste ou no próximo compasso),
-        // o StaveTie é criado entre os dois vizinhos.
-        // Salvaguarda de Y: se a nota-destino estiver em sistema diferente
-        // (eixo Y muito distante), o arco é cancelado para evitar linha diagonal.
-        if (noteEl.slurRole === 'start') {
-          // Fechar slur pendente do compasso anterior (se existir) com esta nota como destino
-          if (pendingSlurNote !== null && Math.abs(y - pendingSlurY) < 5) {
+        // ── Ligaduras: modelo retroativo (tieRole / slurRole / slurLongId) ──
+        // O parser já marcou as notas com papéis exatos — apenas conectar os pares.
+        // Salvaguarda de Y: arco cancelado se as notas estiverem em sistemas diferentes.
+        const noteSlurRole  = (noteEl as any).slurRole  as 'start' | 'end' | undefined;
+        const noteTieRole   = (noteEl as any).tieRole   as 'start' | 'end' | undefined;
+        const noteLongId    = (noteEl as any).slurLongId as string | undefined;
+
+        // Fechar slur/tie pendente do compasso anterior com esta nota como destino
+        if (pendingSlurNote !== null && Math.abs(y - pendingSlurY) < 5) {
+          if (noteSlurRole === 'end' || noteTieRole === 'end') {
             tiesToDraw.push(new StaveTie({ firstNote: pendingSlurNote, lastNote: vn } as any));
             pendingSlurNote = null;
           }
-          // Guardar esta nota como início do próximo arco
-          pendingSlurNote = vn;
-          pendingSlurY    = y;
         } else if (pendingSlurNote !== null) {
-          // Esta nota é o destino do slur — verificar salvaguarda de Y
-          if (Math.abs(y - pendingSlurY) < 5) {
-            tiesToDraw.push(new StaveTie({ firstNote: pendingSlurNote, lastNote: vn } as any));
-          }
-          // Sempre limpar após tentativa (com ou sem sucesso)
-          pendingSlurNote = null;
+          pendingSlurNote = null; // salvaguarda: Y diferente — cancelar arco
         }
 
-        // ── Ligadura de Prolongação (Tie) via StaveTie ───────────────────
-        // Regra MIMB 6-2: mesma altura → prolongação sem re-ataque.
-        // activeTies guarda por "pitch/octave" para cruzar compassos.
-        if (noteEl.isTie) {
-          const noteKey = `${noteEl.pitch.toLowerCase()}/${noteEl.octave}`;
-          const prevVn  = activeTies.get(noteKey);
-          if (prevVn) {
-            try {
-              tiesToDraw.push(new StaveTie({ firstNote: prevVn, lastNote: vn } as any));
-            } catch { /* ignora */ }
-            activeTies.delete(noteKey);
-          }
+        // Abrir novo arco (slur start ou tie start)
+        if (noteSlurRole === 'start' || noteTieRole === 'start') {
+          pendingSlurNote = vn;
+          pendingSlurY    = y;
         }
-        // Registrar esta nota como candidata a inicio de tie
+
+        // Ligadura longa: abrir pelo slurLongId
+        if (noteLongId && noteSlurRole === 'start') {
+          activeLongSlurMap.set(noteLongId, vn);
+          activeLongSlurYMap.set(noteLongId, y);
+        }
+        // Ligadura longa: fechar pelo slurLongId
+        if (noteLongId && noteSlurRole === 'end') {
+          const startVn = activeLongSlurMap.get(noteLongId);
+          const startY  = activeLongSlurYMap.get(noteLongId);
+          if (startVn && startY !== undefined && Math.abs(y - startY) < 5) {
+            tiesToDraw.push(new StaveTie({ firstNote: startVn, lastNote: vn } as any));
+          }
+          activeLongSlurMap.delete(noteLongId);
+          activeLongSlurYMap.delete(noteLongId);
+        }
+
+        // Registrar esta nota no mapa de ties (para cruzamento de compassos)
+        // O tie visual é criado pelo bloco de slurRole/tieRole acima.
         activeTies.set(`${noteEl.pitch.toLowerCase()}/${noteEl.octave}`, vn);
 
         vexNotes.push(vn);

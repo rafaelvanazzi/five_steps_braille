@@ -599,23 +599,22 @@ function renderStaveSystem(
         // Instanciada aqui para ser criada ANTES do Formatter — as referências
         // às StaveNotes são guardadas e o draw acontece após o format().
         const role = noteEl.slurRole;
-        if (role === 'start' || role === 'single') {
+        if (role === 'start') {
           activeSlurStartNote = vn;
         }
-        if ((role === 'end' || role === 'middle') && activeSlurStartNote !== null) {
+        if (role === 'end' && activeSlurStartNote !== null) {
           try {
             curvesToDraw.push(new Curve(activeSlurStartNote, vn, {
               cps: [{ x: 0, y: 10 }, { x: 0, y: 10 }],
             }));
           } catch { /* ignora */ }
-          if (role === 'end')    activeSlurStartNote = null;
-          else                   activeSlurStartNote = vn; // middle: continua
+          activeSlurStartNote = null;
         }
 
         // ── Ligadura de Prolongação (Tie) via StaveTie ───────────────────
         // Regra MIMB 6-2: mesma altura → prolongação sem re-ataque.
         // activeTies guarda por "pitch/octave" para cruzar compassos.
-        if (noteEl.isTie) {
+        if (noteEl.tieRole === 'end') {
           const noteKey = `${noteEl.pitch.toLowerCase()}/${noteEl.octave}`;
           const prevVn  = activeTies.get(noteKey);
           if (prevVn) {
