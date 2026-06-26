@@ -245,12 +245,16 @@ const OVERLAY_SLOT_TO_DOT: Array<keyof PerkinsKeyState> = [
 ];
 
 function PerkinsKeyboard({
-  onChar, onSpace, onBackspace, onNewline,
+  onChar, onSpace, onBackspace, onNewline, brailleTextareaRef, isMobileScreenInputMode,
 }: {
   onChar: (char: string) => void;
   onSpace: () => void;
   onBackspace: () => void;
   onNewline: () => void;
+  brailleTextareaRef: React.RefObject<HTMLTextAreaElement | null>;
+  /** Quando true (overlay mobile ativo), desativar o listener de teclado físico
+   *  para não capturar toques do OS. Quando false (desktop), o listener funciona normalmente. */
+  isMobileScreenInputMode: boolean;
 }) {
   const [pressed,      setPressed]      = useState<Set<string>>(new Set());
   const pressedRef                      = useRef<Set<string>>(new Set());
@@ -279,13 +283,19 @@ function PerkinsKeyboard({
   }, [onChar]);
 
   // ── Teclado físico (F,D,S / J,K,L) ──────────────────────────────────────
+  // Guard: se isMobileScreenInputMode=true, o overlay tátil está ativo.
+  // Neste caso, desativar completamente a escuta do teclado físico para evitar
+  // conflito com o SO mobile. Em desktop (false), o listener funciona normalmente.
   useEffect(() => {
+    if (isMobileScreenInputMode) return; // overlay mobile ativo — não capturar teclado físico
+
     const down = (e: KeyboardEvent) => {
       const active = document.activeElement;
-            const isTextInput =
+      const isTextInput =
         active instanceof HTMLInputElement ||
-        (active instanceof HTMLTextAreaElement);
+        (active instanceof HTMLTextAreaElement && active !== brailleTextareaRef.current);
       if (isTextInput) return;
+
       const key = e.key.toLowerCase();
       if (["f","d","s","j","k","l"].includes(key)) {
         e.preventDefault();
@@ -304,7 +314,7 @@ function PerkinsKeyboard({
       const active = document.activeElement;
       const isTextInput =
         active instanceof HTMLInputElement ||
-        (active instanceof HTMLTextAreaElement);
+        (active instanceof HTMLTextAreaElement && active !== brailleTextareaRef.current);
       if (isTextInput) return;
 
       const key = e.key.toLowerCase();
@@ -324,7 +334,7 @@ function PerkinsKeyboard({
       window.removeEventListener("keydown", down);
       window.removeEventListener("keyup",   up);
     };
-  }, [onSpace, onBackspace, onNewline, commitIfDone]);
+  }, [onSpace, onBackspace, onNewline, commitIfDone, isMobileScreenInputMode]);
 
   // ── Botões virtuais (touch/click) ─────────────────────────────────────────
   // type="button" + inputMode="none": nunca abre teclado do SO em Android/iOS
@@ -830,6 +840,13 @@ export default function BrailleEditor() {
 
   // ── Score ─────────────────────────────────────────────────────────────────
   const [parsedElements, setParsedElements] = useState<ParsedElement[]>([]);
+
+  // Armadura de clave ativa — derivada dos elementos parseados em tempo real.
+  // Usada por tryPlayFeedback e playSingleNote para aplicar delta correto.
+  const activeKeySignature = useMemo<string | null>(() => {
+    const ks = parsedElements.find(e => e.type === 'keysignature') as any;
+    return ks?.vexKey ?? null;
+  }, [parsedElements]);
   const [cursorPos,      setCursorPos]      = useState(0);
   const [selectionRange, setSelectionRange] = useState<[number, number] | null>(null);
   const [scoreWidth,     setScoreWidth]     = useState(800);
@@ -1008,7 +1025,7 @@ export default function BrailleEditor() {
         }
       });
     } catch { /* feedback é best-effort — falha silenciosa */ }
-  }, [soundOnType, parseOptions, playerBpm, brailleContent]);
+  }, [soundOnType, parseOptions, playerBpm, brailleContent, activeKeySignature]);
 
   // ── Save ──────────────────────────────────────────────────────────────────
   const handleSave = useCallback(() => {
@@ -1527,6 +1544,8 @@ export default function BrailleEditor() {
             onSpace={insertSpace}
             onBackspace={handleBackspace}
             onNewline={insertNewline}
+            brailleTextareaRef={brailleTextareaRef}
+            isMobileScreenInputMode={isMobileScreenInputMode}
           />
         </div>
       )}

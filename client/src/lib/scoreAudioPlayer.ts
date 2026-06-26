@@ -11,7 +11,7 @@
  *   playScore(elements, initialBpm, onElementHighlight?)  → void
  *   stopScore()                                           → void
  *   setBpm(newBpm)                                        → void
- *   playSingleNote(note)                                  → void
+ *   playSingleNote(note, keySignature?, durationMs?)       → void
  *
  * Regras de negócio:
  *   1. Apenas 'note' e 'rest' emitem som; todos os outros tipos são ignorados.
@@ -354,10 +354,8 @@ export function playScore(
   initialBpm = 120,
   onElementHighlight?: (sourceIndex: number) => void,
 ): void {
-  // Parar qualquer execução anterior
   stopScore();
 
-  // Inicializar AudioContext
   const AudioCtx =
     window.AudioContext ??
     (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
@@ -370,72 +368,82 @@ export function playScore(
   let keyAccidentals:     KeyAccidentalMap     = {};
   let measureAccidentals: MeasureAccidentalMap = {};
 
-  // Pré-carregar armadura se houver keysignature antes das notas
   const firstKS = elements.find(el => el.type === 'keysignature') as ParsedKeySignature | undefined;
   if (firstKS) {
     keyAccidentals = { ...(KEY_SIGNATURE_MAP[firstKS.vexKey] ?? {}) };
   }
 
-  // ── Cursor de tempo (Web Audio API scheduler) ─────────────────────────────
+  // ── Cursor de tempo ────────────────────────────────────────────────────────
   let cursor = _ctx.currentTime + 0.05;
-  const ctx  = _ctx; // captura local para closures (ctx pode mudar se stopScore for chamado)
+  const ctx  = _ctx;
 
-  // ── Loop principal sobre os elementos ────────────────────────────────────
+  // ── Estado de tie (MIMB 6-2) ──────────────────────────────────────────────
+  // Rastreia notas ativas com envelope aberto para prolongação.
+  // Chave: "pitch/octave" → cursor de fim do som agendado.
+  // Quando isTie=true chega, NÃO re-ataca; apenas avança o cursor pelo
+  // tempo métrico da nota vinculada sem gerar novo som.
+  // O envelope da nota ORIGEM foi agendado com a duração somada (tieDuration).
+  const tieActiveUntil = new Map<string, number>(); // pitch/octave → timestamp de fim
+
+  // ── Loop principal ────────────────────────────────────────────────────────
   for (let i = 0; i < elements.length; i++) {
     if (_stopped) break;
 
     const el = elements[i];
 
-    // ── Regra 2: atualizar armadura de clave ──────────────────────────────
+    // Regra 2: atualizar armadura
     if (el.type === 'keysignature') {
       const ks = el as ParsedKeySignature;
       keyAccidentals     = { ...(KEY_SIGNATURE_MAP[ks.vexKey] ?? {}) };
-      measureAccidentals = {}; // armadura nova → reset do compasso
+      measureAccidentals = {};
       continue;
     }
 
-    // ── Regra 5: barra de compasso → limpar acidentes do compasso ────────
+    // Regra 5: barra limpa acidentes do compasso
     if (el.type === 'barline') {
       measureAccidentals = {};
       continue;
     }
 
-    // ── Regra 1: pausas avançam o cursor sem som ──────────────────────────
+    // Pausas: apenas avançam o cursor
     if (el.type === 'rest') {
       const rest = el as { type: 'rest'; duration: string; dotted: boolean; dotted2: boolean };
       cursor += figureDurationSeconds(rest.duration, rest.dotted, rest.dotted2, _currentBpm);
       continue;
     }
 
-    // ── Regra 1: apenas notas emitem som ─────────────────────────────────
     if (el.type !== 'note') continue;
 
     const note = el as ParsedNote;
 
-    // ── Regra 4: registrar acidente explícito da nota ─────────────────────
+    // Regra 4: registrar acidente explícito
     if (note.accidental !== undefined) {
       if (note.accidental === 'natural') {
-        // null = sentinela de bequadro: cancela a armadura para este pitch no compasso
         (measureAccidentals as Record<string, null>)[note.pitch] = null;
       } else {
         measureAccidentals[note.pitch] = ACCIDENTAL_SEMITONE[note.accidental];
       }
     }
 
-    // ── Regra 3: resolver acidente efetivo e calcular frequência ─────────
+    // ── Duração métrica desta nota ────────────────────────────────────────
+    // A duração métrica é sempre a duração nominal da figura — ela determina
+    // quanto o cursor avança independentemente de ties ou staccato.
+    const metricDur = figureDurationSeconds(note.duration, note.dotted, note.dotted2, _currentBpm);
+
+    // ── Coletar intervalos harmônicos ─────────────────────────────────────
+    // Coletamos SEMPRE, mesmo em ties — necessário para manter a contagem de
+    // índice correta do loop e resolver acidentes de intervalos.
+    const chordFrequencies: number[] = [];
+    let intervalCount = 0;
+
     const delta = resolveNoteDelta(note.pitch, measureAccidentals, keyAccidentals);
     const midi  = pitchToMidi(note.pitch, note.octave, delta);
-    const hz    = midiToFrequency(midi);
-    const dur   = figureDurationSeconds(note.duration, note.dotted, note.dotted2, _currentBpm);
-
-    // ── Coletar intervalos harmônicos consecutivos (acorde) ───────────────
-    // Elementos 'interval' imediatamente após a nota formam o acorde.
-    // Cada intervalo também respeita a armadura e os acidentes do compasso.
-    const chordFrequencies: number[] = [hz];
+    chordFrequencies.push(midiToFrequency(midi));
 
     for (let j = i + 1; j < elements.length; j++) {
       const next = elements[j];
       if (next.type !== 'interval') break;
+      intervalCount++;
 
       const size      = (next as { type: 'interval'; intervalSize: number }).intervalSize;
       const baseIdx   = DIATONIC_SCALE.indexOf(note.pitch as typeof DIATONIC_SCALE[number]);
@@ -448,10 +456,79 @@ export function playScore(
       chordFrequencies.push(midiToFrequency(intMidi));
     }
 
-    // ── Agendar o som no Web Audio scheduler ──────────────────────────────
-    scheduleChord(ctx, chordFrequencies, cursor, dur * 0.93);
+    // ── MIMB 6-2: Tie (Ligadura de Prolongação) ───────────────────────────
+    // isTie=true: esta nota é a CONTINUAÇÃO de uma tie.
+    //   → NÃO re-atacar. O envelope já foi aberto pela nota origem com
+    //     duração total (tieDuration). Apenas avançar o cursor.
+    //
+    // Nota ORIGEM (não tem isTie): se a próxima nota de mesma altura tiver
+    // isTie=true, o parser já calculou tieDuration em pulsos.
+    //   → Agendar o som com a duração SOMADA (tieDuration → segundos).
+    //   → Registrar em tieActiveUntil para suprimir o re-ataque.
 
-    // ── Callback de highlight (sincronizado com o tempo da nota) ─────────
+    const isTie          = !!(note as any).isTie || (note as any).tieRole === 'end';
+    const tieDurationPulses = (note as any).tieDuration as number | undefined;
+    const noteKey        = `${note.pitch.toLowerCase()}/${note.octave}`;
+
+    if (isTie) {
+      // Esta nota é uma continuação — silêncio de ataque, apenas avança cursor.
+      // O envelope da nota origem já cobre este tempo.
+      tieActiveUntil.delete(noteKey); // consumida
+
+      // Callback de highlight (a nota existe musicalmente, só não re-ataca)
+      if (onElementHighlight !== undefined && note.sourceIndex !== undefined) {
+        const noteTime = (cursor - ctx.currentTime) * 1000;
+        const srcIdx   = note.sourceIndex;
+        setTimeout(() => {
+          if (!_stopped) onElementHighlight(srcIdx);
+        }, Math.max(0, noteTime));
+      }
+
+      cursor += metricDur;
+      continue; // ← pula scheduleChord inteiramente
+    }
+
+    // ── Verificar se esta nota é ORIGEM de um tie ─────────────────────────
+    // O parser emite tieDuration na nota seguinte (isTie=true), não aqui.
+    // Para saber se esta nota será ligada, olhamos adiante no array:
+    // se o próximo elemento de tipo 'note' com mesmo pitch/octave tiver isTie=true,
+    // esta é a origem e deve usar a duração somada.
+    let soundDur = metricDur; // duração padrão do som
+
+    if (tieDurationPulses !== undefined) {
+      // A nota atual tem tieDuration — ela É a origem com duração somada já calculada
+      soundDur = (tieDurationPulses / 1) * (60 / _currentBpm);
+      // Registrar que este pitch+octave tem tie ativo até cursor + soundDur
+      tieActiveUntil.set(noteKey, cursor + soundDur);
+    } else {
+      // Verificar lookahead: existe próxima nota de mesma altura com isTie=true?
+      // Isso acontece quando o parser emite tieDuration apenas na nota de origem.
+      let lookAhead = i + 1 + intervalCount;
+      // Pular barlines, slurs e outros elementos não-notas
+      while (lookAhead < elements.length) {
+        const nextEl = elements[lookAhead];
+        if (nextEl.type === 'note') {
+          const nextNote = nextEl as ParsedNote;
+          const nextKey  = `${nextNote.pitch.toLowerCase()}/${nextNote.octave}`;
+          if (!!(nextNote as any).isTie && nextKey === noteKey) {
+            // Próxima nota de mesma altura tem isTie=true → esta é a origem
+            const nextTieDur = (nextNote as any).tieDuration as number | undefined;
+            if (nextTieDur !== undefined) {
+              soundDur = nextTieDur * (60 / _currentBpm);
+              tieActiveUntil.set(noteKey, cursor + soundDur);
+            }
+          }
+          break; // parar no primeiro elemento 'note' encontrado
+        }
+        if (nextEl.type === 'barline') { lookAhead++; continue; }
+        break; // qualquer outro tipo → parar
+      }
+    }
+
+    // ── Agendar o som ─────────────────────────────────────────────────────
+    scheduleChord(ctx, chordFrequencies, cursor, soundDur * 0.96);
+
+    // ── Callback de highlight ─────────────────────────────────────────────
     if (onElementHighlight !== undefined && note.sourceIndex !== undefined) {
       const noteTime = (cursor - ctx.currentTime) * 1000;
       const srcIdx   = note.sourceIndex;
@@ -460,10 +537,10 @@ export function playScore(
       }, Math.max(0, noteTime));
     }
 
-    cursor += dur;
+    cursor += metricDur;
   }
 
-  // ── Agendar o encerramento após a última nota ─────────────────────────────
+  // ── Encerramento ─────────────────────────────────────────────────────────
   if (!_stopped) {
     const remainingMs = Math.max(0, (cursor - ctx.currentTime) * 1000) + 300;
     _finishTimer = setTimeout(() => {
@@ -480,12 +557,18 @@ export function playScore(
  * Usa um AudioContext efêmero independente do player principal.
  *
  * Ideal para uso no teclado Perkins: toda vez que o usuário confirma uma célula,
- * chame `playSingleNote(parsedNote)` para ouvir a nota imediatamente.
+ * chame `playSingleNote(parsedNote, keySignature)` para ouvir a nota
+ * com a armadura de clave ativa corretamente aplicada.
  *
- * @param note      — ParsedNote a ser tocada
- * @param durationMs — Duração em milissegundos (padrão: 300ms)
+ * @param note         — ParsedNote a ser tocada
+ * @param keySignature — Armadura de clave ativa na UI (ex: 'G', 'D', 'F'). null = Dó Maior.
+ * @param durationMs   — Duração em milissegundos (padrão: 300ms)
  */
-export function playSingleNote(note: ParsedNote, durationMs = 300): void {
+export function playSingleNote(
+  note:         ParsedNote,
+  keySignature: string | null = null,
+  durationMs  = 300,
+): void {
   const AudioCtx =
     window.AudioContext ??
     (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
@@ -494,16 +577,21 @@ export function playSingleNote(note: ParsedNote, durationMs = 300): void {
   try {
     ctx = new AudioCtx();
   } catch {
-    return; // Navegador sem suporte a Web Audio API
+    return;
   }
 
-  // Usa delta 0 (sem armadura) para feedback imediato — a armadura
-  // não é relevante para o feedback de digitação isolada
-  const accidentalDelta = note.accidental !== undefined && note.accidental !== 'natural'
-    ? ACCIDENTAL_SEMITONE[note.accidental]
-    : 0;
+  // Resolver armadura de clave ativa — aplica delta de semitom implícito
+  const keyAcc: KeyAccidentalMap = keySignature
+    ? (KEY_SIGNATURE_MAP[keySignature] ?? {})
+    : {};
 
-  const midi = pitchToMidi(note.pitch, note.octave, accidentalDelta);
+  // Prioridade: acidente explícito da nota sobrescreve a armadura de clave.
+  // Se não há acidente explícito, usar o delta da armadura via resolveNoteDelta.
+  const finalDelta = note.accidental !== undefined
+    ? (ACCIDENTAL_SEMITONE[note.accidental] ?? 0)
+    : resolveNoteDelta(note.pitch, {}, keyAcc);
+
+  const midi = pitchToMidi(note.pitch, note.octave, finalDelta);
   const hz   = midiToFrequency(midi);
   const dur  = durationMs / 1000;
 
@@ -512,4 +600,111 @@ export function playSingleNote(note: ParsedNote, durationMs = 300): void {
   setTimeout(() => {
     ctx.close().catch(() => {});
   }, durationMs + 200);
+}
+
+// ─── TESTES UNITÁRIOS ─────────────────────────────────────────────────────────
+// Compatível com Vitest (configuração padrão do projeto).
+// Execute: pnpm vitest run src/lib/scoreAudioPlayer.test.ts
+
+if (import.meta.vitest) {
+  const { describe, it, expect } = import.meta.vitest;
+
+  describe('pitchToMidi — conversão de nota para MIDI', () => {
+    it('C4 = MIDI 60 (padrão internacional)', () =>
+      expect(pitchToMidi('C', 4, 0)).toBe(60));
+    it('A4 = MIDI 69 (referência 440 Hz)', () =>
+      expect(pitchToMidi('A', 4, 0)).toBe(69));
+    it('C#4 = MIDI 61 (sustenido = +1 semitom)', () =>
+      expect(pitchToMidi('C', 4, 1)).toBe(61));
+    it('Bb4 = MIDI 70 (bemol = -1 semitom)', () =>
+      expect(pitchToMidi('B', 4, -1)).toBe(70));
+    it('C5 = MIDI 72 (oitava acima de C4)', () =>
+      expect(pitchToMidi('C', 5, 0)).toBe(72));
+    it('B3 = MIDI 59 (abaixo de C4)', () =>
+      expect(pitchToMidi('B', 3, 0)).toBe(59));
+    it('F#5 = MIDI 78', () =>
+      expect(pitchToMidi('F', 5, 1)).toBe(78));
+  });
+
+  describe('midiToFrequency — conversão MIDI → Hz', () => {
+    it('A4 (MIDI 69) = 440.00 Hz', () =>
+      expect(midiToFrequency(69)).toBeCloseTo(440.0, 2));
+    it('A5 (MIDI 81) = 880.00 Hz (oitava acima)', () =>
+      expect(midiToFrequency(81)).toBeCloseTo(880.0, 2));
+    it('C4 (MIDI 60) ≈ 261.63 Hz', () =>
+      expect(midiToFrequency(60)).toBeCloseTo(261.63, 1));
+    it('A3 (MIDI 57) = 220.00 Hz', () =>
+      expect(midiToFrequency(57)).toBeCloseTo(220.0, 2));
+  });
+
+  describe('resolveNoteDelta — prioridade de acidentes', () => {
+    // Ré maior: F# e C#
+    const keyD: KeyAccidentalMap = { F: 1, C: 1 };
+
+    it('sem acidente no compasso: F em Ré maior → sustenido (+1)', () =>
+      expect(resolveNoteDelta('F', {}, keyD)).toBe(1));
+
+    it('sem acidente no compasso: D em Ré maior → natural (0)', () =>
+      expect(resolveNoteDelta('D', {}, keyD)).toBe(0));
+
+    it('bequadro no compasso (null) cancela F# da armadura', () => {
+      const mAcc: MeasureAccidentalMap = {};
+      (mAcc as Record<string, null>)['F'] = null;
+      expect(resolveNoteDelta('F', mAcc, keyD)).toBe(0);
+    });
+
+    it('acidente do compasso tem prioridade sobre armadura', () => {
+      const mAcc: MeasureAccidentalMap = { C: -1 }; // Cb no compasso
+      expect(resolveNoteDelta('C', mAcc, keyD)).toBe(-1);
+    });
+
+    it('acidente do compasso não afeta outras notas', () => {
+      const mAcc: MeasureAccidentalMap = { F: -1 };
+      expect(resolveNoteDelta('C', mAcc, keyD)).toBe(1); // C# da armadura
+    });
+
+    it('nota sem acidente em Dó maior → natural (0)', () =>
+      expect(resolveNoteDelta('B', {}, {})).toBe(0));
+  });
+
+  describe('figureDurationSeconds — duração das figuras', () => {
+    it('semínima a 60 BPM = 1.000s', () =>
+      expect(figureDurationSeconds('q', false, false, 60)).toBeCloseTo(1.0, 5));
+    it('mínima a 60 BPM = 2.000s', () =>
+      expect(figureDurationSeconds('h', false, false, 60)).toBeCloseTo(2.0, 5));
+    it('semibreve a 60 BPM = 4.000s', () =>
+      expect(figureDurationSeconds('w', false, false, 60)).toBeCloseTo(4.0, 5));
+    it('colcheia a 120 BPM = 0.250s', () =>
+      expect(figureDurationSeconds('8', false, false, 120)).toBeCloseTo(0.25, 5));
+    it('semínima pontuada a 60 BPM = 1.500s', () =>
+      expect(figureDurationSeconds('q', true, false, 60)).toBeCloseTo(1.5, 5));
+    it('semínima com ponto duplo a 60 BPM = 1.750s', () =>
+      expect(figureDurationSeconds('q', false, true, 60)).toBeCloseTo(1.75, 5));
+    it('colcheia a 60 BPM = 0.500s', () =>
+      expect(figureDurationSeconds('8', false, false, 60)).toBeCloseTo(0.5, 5));
+  });
+
+  describe('KEY_SIGNATURE_MAP — armaduras de clave', () => {
+    it('Dó maior (C): nenhum acidente', () =>
+      expect(KEY_SIGNATURE_MAP['C']).toEqual({}));
+    it('Sol maior (G): F#', () =>
+      expect(KEY_SIGNATURE_MAP['G']).toEqual({ F: 1 }));
+    it('Ré maior (D): F# e C#', () =>
+      expect(KEY_SIGNATURE_MAP['D']).toEqual({ F: 1, C: 1 }));
+    it('Fá maior (F): Bb', () =>
+      expect(KEY_SIGNATURE_MAP['F']).toEqual({ B: -1 }));
+    it('Sib maior (Bb): Bb e Eb', () =>
+      expect(KEY_SIGNATURE_MAP['Bb']).toEqual({ B: -1, E: -1 }));
+    it('Dó# maior (C#): 7 sustenidos', () =>
+      expect(Object.keys(KEY_SIGNATURE_MAP['C#'] ?? {})).toHaveLength(7));
+    it('Dób maior (Cb): 7 bemóis', () =>
+      expect(Object.keys(KEY_SIGNATURE_MAP['Cb'] ?? {})).toHaveLength(7));
+  });
+
+  describe('setBpm — controle de andamento', () => {
+    it('valor mínimo: 20 BPM', () => { setBpm(1); expect(_currentBpm).toBe(20); });
+    it('valor máximo: 400 BPM', () => { setBpm(9999); expect(_currentBpm).toBe(400); });
+    it('valor normal: 120 BPM', () => { setBpm(120); expect(_currentBpm).toBe(120); });
+    it('valor normal: 60 BPM', () => { setBpm(60); expect(_currentBpm).toBe(60); });
+  });
 }
