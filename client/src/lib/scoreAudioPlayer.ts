@@ -365,11 +365,18 @@ export function playScore(
   setBpm(initialBpm);
 
   // ── Estado de memória de acidentes ────────────────────────────────────────
-  let keyAccidentals:     KeyAccidentalMap     = {};
-  let measureAccidentals: MeasureAccidentalMap = {};
+  // currentGlobalKeySignature: persiste do primeiro ao último compasso.
+  // Atualizada sempre que um elemento 'keysignature' é encontrado no loop.
+  // Garante que o delta de semitom da armadura (ex: F# e C# em Ré Maior)
+  // seja aplicado continuamente em toda a partitura.
+  let currentGlobalKeySignature: string | null = null;
+  let keyAccidentals:            KeyAccidentalMap     = {};
+  let measureAccidentals:        MeasureAccidentalMap = {};
 
+  // Pré-carregar armadura a partir do primeiro elemento keysignature encontrado
   const firstKS = elements.find(el => el.type === 'keysignature') as ParsedKeySignature | undefined;
   if (firstKS) {
+    currentGlobalKeySignature = firstKS.vexKey;
     keyAccidentals = { ...(KEY_SIGNATURE_MAP[firstKS.vexKey] ?? {}) };
   }
 
@@ -391,9 +398,10 @@ export function playScore(
 
     const el = elements[i];
 
-    // Regra 2: atualizar armadura
+    // Regra 2: atualizar armadura — persiste em currentGlobalKeySignature
     if (el.type === 'keysignature') {
       const ks = el as ParsedKeySignature;
+      currentGlobalKeySignature = ks.vexKey;
       keyAccidentals     = { ...(KEY_SIGNATURE_MAP[ks.vexKey] ?? {}) };
       measureAccidentals = {};
       continue;
@@ -436,6 +444,8 @@ export function playScore(
     const chordFrequencies: number[] = [];
     let intervalCount = 0;
 
+    // resolveNoteDelta usa: (1) acidente local do compasso → (2) armadura de clave global
+    // keyAccidentals é mantido sincronizado com currentGlobalKeySignature em todo o loop.
     const delta = resolveNoteDelta(note.pitch, measureAccidentals, keyAccidentals);
     const midi  = pitchToMidi(note.pitch, note.octave, delta);
     chordFrequencies.push(midiToFrequency(midi));

@@ -25,6 +25,7 @@ import {
   Dot,
   Beam,
   StaveTie,
+  Fraction,
 } from 'vexflow';
 import type {
   ParsedElement,
@@ -689,14 +690,26 @@ function renderStaveSystem(
     const voice = new Voice({ numBeats: timeSignature.numerator, beatValue: timeSignature.denominator });
     voice.setMode(2); // SOFT
 
-    // ── Beaming: criar ANTES do draw para suprimir flags individuais ─────
-    const isCompound = timeSignature.denominator === 8 && [6, 9, 12].includes(timeSignature.numerator);
-    const beamSz     = isCompound ? 3 : 2;
-    const beamable   = vexNotes.filter(n => ['8','16','32','64'].includes((n as any).duration));
-    const beams: Beam[] = [];
-    for (let bi = 0; bi < beamable.length; bi += beamSz) {
-      const grp = beamable.slice(bi, bi + beamSz);
-      if (grp.length >= 2) { try { beams.push(new Beam(grp)); } catch { /* ignora */ } }
+    // ── Beaming: gerador nativo do VexFlow ──────────────────────────────
+    // Beam.generateBeams() detecta automaticamente pausas, interrompe as vigas
+    // corretamente e adiciona flags individuais a colcheias isoladas.
+    // Elimina as linhas diagonais que surgiam ao conectar colcheias através de pausas.
+    let beams: Beam[] = [];
+    try {
+      beams = Beam.generateBeams(vexNotes, {
+        // groups: define tamanho dos grupos de vigas por fórmula de compasso
+        // Em compassos compostos (6/8, 9/8, 12/8), agrupa de 3 em 3.
+        // Em compassos simples, o VexFlow usa a subdivisão padrão.
+        groups: (
+          timeSignature.denominator === 8 &&
+          [6, 9, 12].includes(timeSignature.numerator)
+        )
+          ? [new Fraction(3, 8)]
+          : undefined,
+      });
+    } catch {
+      // Fallback silencioso: se generateBeams falhar (notas insuficientes etc.), sem vigas
+      beams = [];
     }
 
     voice.addTickables(vexNotes);
