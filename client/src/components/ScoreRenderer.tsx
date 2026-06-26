@@ -691,24 +691,28 @@ function renderStaveSystem(
     voice.setMode(2); // SOFT
 
     // ── Beaming: gerador nativo do VexFlow ──────────────────────────────
-    // Beam.generateBeams() detecta automaticamente pausas, interrompe as vigas
-    // corretamente e adiciona flags individuais a colcheias isoladas.
-    // Elimina as linhas diagonais que surgiam ao conectar colcheias através de pausas.
+    // Beam.generateBeams() detecta pausas automaticamente e interrompe vigas
+    // no ponto correto — eliminando as linhas diagonais entre pausas do MarioBro.
+    //
+    // Casos:
+    //   Compasso simples (4/4, 2/4, 3/4, etc.): sem 'groups' → VexFlow usa
+    //     subdivisão por batida. Colcheias isoladas entre pausas recebem flag.
+    //   Compasso composto (6/8, 9/8, 12/8): groups=[Fraction(3,8)] → agrupa
+    //     colcheias de 3 em 3 (tempo pontuado da semínima pontuada).
+    const isCompound = (
+      timeSignature.denominator === 8 &&
+      [6, 9, 12].includes(timeSignature.numerator)
+    );
+
     let beams: Beam[] = [];
     try {
-      beams = Beam.generateBeams(vexNotes, {
-        // groups: define tamanho dos grupos de vigas por fórmula de compasso
-        // Em compassos compostos (6/8, 9/8, 12/8), agrupa de 3 em 3.
-        // Em compassos simples, o VexFlow usa a subdivisão padrão.
-        groups: (
-          timeSignature.denominator === 8 &&
-          [6, 9, 12].includes(timeSignature.numerator)
-        )
-          ? [new Fraction(3, 8)]
-          : undefined,
-      });
+      beams = isCompound
+        ? Beam.generateBeams(vexNotes, { groups: [new Fraction(3, 8)] })
+        : Beam.generateBeams(vexNotes);
+      // Definir contexto de desenho em cada viga
+      beams.forEach(b => b.setContext(ctx));
     } catch {
-      // Fallback silencioso: se generateBeams falhar (notas insuficientes etc.), sem vigas
+      // Fallback silencioso: vexNotes sem beamáveis ou erro de API
       beams = [];
     }
 
@@ -718,7 +722,7 @@ function renderStaveSystem(
       const notesArea = Math.max(staveW - extraW - 20, 60);
       new Formatter().joinVoices([voice]).format([voice], notesArea);
       voice.draw(ctx, stave);
-      beams.forEach(b => { try { b.setContext(ctx).draw(); } catch { /* ignora */ } });
+      beams.forEach(b => { try { b.draw(); } catch { /* ignora — beam pode não ter notas */ } });
       // Desenhar ligaduras APÓS format/draw (coordenadas X das notas já estão definidas)
       // Desenhar slurs simples e ties após o Formatter
       tiesToDraw.forEach(t => { try { t.setContext(ctx).draw(); } catch { /* ignora */ } });

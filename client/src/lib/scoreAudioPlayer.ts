@@ -407,9 +407,16 @@ export function playScore(
       continue;
     }
 
-    // Regra 5: barra limpa acidentes do compasso
+    // Regra 5: barline limpa acidentes locais do compasso.
+    // keyAccidentals (armadura global) persiste intacta — apenas measureAccidentals é zerado.
+    // Isso garante que Fá# e Dó# (ex: Ré Maior) continuem ativos após cada barline.
     if (el.type === 'barline') {
       measureAccidentals = {};
+      // Reforço: derivar keyAccidentals da armadura global persistente
+      // (prevenção contra qualquer corrupção de estado via elementos inesperados)
+      if (currentGlobalKeySignature) {
+        keyAccidentals = { ...(KEY_SIGNATURE_MAP[currentGlobalKeySignature] ?? {}) };
+      }
       continue;
     }
 
@@ -444,8 +451,12 @@ export function playScore(
     const chordFrequencies: number[] = [];
     let intervalCount = 0;
 
-    // resolveNoteDelta usa: (1) acidente local do compasso → (2) armadura de clave global
-    // keyAccidentals é mantido sincronizado com currentGlobalKeySignature em todo o loop.
+    // resolveNoteDelta — prioridade (MIMB Cap. 5):
+    //   1. measureAccidentals[pitch] — acidente explícito neste compasso (bequadro ou acidente)
+    //   2. keyAccidentals[pitch]     — acidente implícito da armadura global (currentGlobalKeySignature)
+    //   3. 0                         — sem alteração (Dó Maior / Lá menor)
+    // Se note.accidental !== undefined → delta foi registrado em measureAccidentals acima.
+    // Se note.accidental === undefined → resolveNoteDelta aplica o da armadura automaticamente.
     const delta = resolveNoteDelta(note.pitch, measureAccidentals, keyAccidentals);
     const midi  = pitchToMidi(note.pitch, note.octave, delta);
     chordFrequencies.push(midiToFrequency(midi));

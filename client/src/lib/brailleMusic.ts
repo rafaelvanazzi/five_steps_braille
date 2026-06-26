@@ -30,6 +30,8 @@ type NoteName = 'C' | 'D' | 'E' | 'F' | 'G' | 'A' | 'B';
 // Durações válidas — fusas (32), semifusas (64) e quartifusas (128) REMOVIDAS.
 // Linhas fundamentais são resolvidas diretamente: col=8, mín=h, sem=q.
 // Apenas semibreve (w) vs semicolcheia (16) usa desambiguação dinâmica (linha 3).
+// Tipo completo — 32/64/128 mantidos para compatibilidade com durationToBeats e getQuickReference.
+// O parser NUNCA emite esses valores: NOTE_MAP e disambiguateMeasure estão travados nas linhas 1/2/4.
 type Duration = 'w' | 'h' | 'q' | '8' | '16' | '32' | '64' | '128';
 export type Accidental = 'sharp' | 'flat' | 'natural' | 'double-sharp' | 'double-flat';
 
@@ -101,9 +103,9 @@ const NOTE_MAP: Record<string, NoteInfo> = {
 // ─── REGISTRO DE PAUSAS ────────────────────────────────────────────────────────
 // CORRIGIDO — Fonte: TABELA_BRAILLE_corrigida.odt, seção PAUSAS
 const REST_MAP: Record<string, { duration: Duration; altDuration: Duration }> = {
-  '\u282D': { duration: '8',  altDuration: '128' }, // ⠭ (1,3,4,6) — pausa colcheia / quartifusa
-  '\u2827': { duration: 'q',  altDuration: '64'  }, // ⠧ (1,2,3,6) — pausa semínima / semifusa
-  '\u2825': { duration: 'h',  altDuration: '32'  }, // ⠥ (1,3,6)   — pausa mínima / fusa
+  '\u282D': { duration: '8',  altDuration: '8'   }, // ⠭ (1,3,4,6) — pausa colcheia (travada)
+  '\u2827': { duration: 'q',  altDuration: 'q'   }, // ⠧ (1,2,3,6) — pausa semínima (travada)
+  '\u2825': { duration: 'h',  altDuration: 'h'   }, // ⠥ (1,3,6)   — pausa mínima (travada)
   '\u280D': { duration: 'w',  altDuration: '16'  }, // ⠍ (1,3,4)   — pausa semibreve / semicolcheia
 };
 // ATENÇÃO: ⠧ (\u2827) = pausa semínima (pontos 1,2,3,6). ⠾ (\u283E) = Si semibreve (pontos 2,3,4,5,6). Sem conflito.
@@ -571,6 +573,13 @@ export interface ParseResult {
   elements: ParsedElement[];
   errors: string[];
   /**
+   * Armadura de clave ativa ao final do parse (ex: 'G', 'D', 'Bb').
+   * null = Dó Maior / Lá menor (sem acidentes).
+   * Persistida no ParseResult para que o scoreAudioPlayer e BrailleEditor
+   * possam aplicar o delta correto sem re-parsear.
+   */
+  keySignature: string | null;
+  /**
    * Estado da última nota processada — usar como initialNoteState
    * na próxima chamada para preservar contexto de oitavas entre linhas.
    */
@@ -792,11 +801,15 @@ function disambiguateDuration(
 function durationToVex(duration: Duration, dotted: boolean, isRest: boolean): string {
   // Fusas (32), semifusas (64) e quartifusas (128) removidas do tipo Duration.
   // Apenas w/h/q/8/16 são valores válidos.
-  let s = duration === 'w' ? 'w'
-        : duration === 'h' ? 'h'
-        : duration === 'q' ? 'q'
-        : duration === '8' ? '8'
-        : '16'; // fallback para semicolcheia (único outro valor válido)
+  let s = duration === 'w'   ? 'w'
+        : duration === 'h'   ? 'h'
+        : duration === 'q'   ? 'q'
+        : duration === '8'   ? '8'
+        : duration === '16'  ? '16'
+        : duration === '32'  ? '32'
+        : duration === '64'  ? '64'
+        : duration === '128' ? '128'
+        : '8'; // fallback
   if (dotted) s += 'd';
   if (isRest) s += 'r';
   return s;
@@ -1571,6 +1584,10 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
     if (!prev || prev.type === 'barline') elements.pop();
   }
 
+  // Armadura de clave final para o ParseResult
+  const currentKeySignature: string | null =
+    (elements.find(e => e.type === 'keysignature') as any)?.vexKey ?? null;
+
   // Construir o estado final para continuidade melódica entre linhas (Grau 3)
   const lastNoteState: LastNoteState | undefined = prevPitch !== null
     ? {
@@ -1581,7 +1598,7 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
       }
     : undefined;
 
-  return { elements, errors, lastNoteState };
+  return { elements, errors, keySignature: currentKeySignature, lastNoteState };
 }
 
 // ─── FUNÇÕES AUXILIARES EXPORTADAS ─────────────────────────────────────────────
