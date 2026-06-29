@@ -1000,12 +1000,36 @@ export default function BrailleEditor() {
       const noteEl  = (ctxNote?.pitch === charNote.pitch) ? ctxNote : charNote;
 
       // ── MIDI com acidente resolvido ───────────────────────────────────────
+      // Bug fix: quando a nota não tem acidente explícito, aplicar o da armadura.
+      // Antes: accDelta = noteEl.accidental ? ACC_DELTA[...] : 0
+      //        → Dó sem acidente em Ré Maior soava natural (0 em vez de +1)
+      // Agora: usar KEY_SIGNATURE_MAP[activeKeySignature] para resolver o delta
       const PITCH_CLASS: Record<string, number> = { C:0, D:2, E:4, F:5, G:7, A:9, B:11 };
       const ACC_DELTA: Record<string, number>    = {
         sharp: 1, flat: -1, natural: 0, 'double-sharp': 2, 'double-flat': -2,
       };
+      // Mapa de delta por pitch para a armadura ativa
+      const KEY_SIG_DELTAS: Record<string, Record<string, number>> = {
+        'G':  { F: 1 },
+        'D':  { F: 1, C: 1 },
+        'A':  { F: 1, C: 1, G: 1 },
+        'E':  { F: 1, C: 1, G: 1, D: 1 },
+        'B':  { F: 1, C: 1, G: 1, D: 1, A: 1 },
+        'F#': { F: 1, C: 1, G: 1, D: 1, A: 1, E: 1 },
+        'C#': { F: 1, C: 1, G: 1, D: 1, A: 1, E: 1, B: 1 },
+        'F':  { B: -1 },
+        'Bb': { B: -1, E: -1 },
+        'Eb': { B: -1, E: -1, A: -1 },
+        'Ab': { B: -1, E: -1, A: -1, D: -1 },
+        'Db': { B: -1, E: -1, A: -1, D: -1, G: -1 },
+        'Gb': { B: -1, E: -1, A: -1, D: -1, G: -1, C: -1 },
+        'Cb': { B: -1, E: -1, A: -1, D: -1, G: -1, C: -1, F: -1 },
+      };
       const baseMidi = 12 * (noteEl.octave + 1) + (PITCH_CLASS[noteEl.pitch] ?? 0);
-      const accDelta = noteEl.accidental ? (ACC_DELTA[noteEl.accidental] ?? 0) : 0;
+      // Prioridade: acidente explícito da nota > armadura de clave > natural (0)
+      const accDelta = noteEl.accidental !== undefined
+        ? (ACC_DELTA[noteEl.accidental] ?? 0)
+        : ((activeKeySignature ? (KEY_SIG_DELTAS[activeKeySignature]?.[noteEl.pitch] ?? 0) : 0));
       const midi     = baseMidi + accDelta;
 
       const ctx = getAudioCtx();

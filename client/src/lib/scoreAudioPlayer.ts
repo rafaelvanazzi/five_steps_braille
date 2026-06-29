@@ -426,7 +426,11 @@ export function playScore(
     // para notas subsequentes quando o ciclo é interrompido pela pausa.
     if (el.type === 'rest') {
       const rest = el as { type: 'rest'; duration: string; dotted: boolean; dotted2: boolean };
-      // Garantia: keyAccidentals sempre derivado da armadura global após qualquer pausa
+      // ── Bug fix: pausa não deve propagar bequadros locais para nota seguinte ──
+      // measureAccidentals pode conter entradas null (bequadros) de notas anteriores.
+      // Após uma pausa, reset para estado limpo derivado apenas da armadura global.
+      // Isso garante que a nota pós-pausa receba o acidente correto da armadura.
+      measureAccidentals = {};
       if (currentGlobalKeySignature) {
         keyAccidentals = { ...(KEY_SIGNATURE_MAP[currentGlobalKeySignature] ?? {}) };
       }
