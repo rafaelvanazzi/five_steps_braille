@@ -29,6 +29,7 @@ import type {
   ParsedKeySignature,
 } from './brailleMusic';
 import type { Accidental } from './brailleMusic';
+import Soundfont from 'soundfont-player';
 
 // ─── TIPOS INTERNOS ───────────────────────────────────────────────────────────
 
@@ -558,7 +559,21 @@ export function playScore(
     }
 
     // ── Agendar o som ─────────────────────────────────────────────────────
-    scheduleChord(ctx, chordFrequencies, cursor, soundDur * 0.96);
+    // ── Agendar o som (soundfont se pronto, FM como fallback) ─────────────────────────────────────────────────────────────────────────────
+    if (_sfReady && _sfInstrument && _sfCtx) {
+      // Soundfont: agendar cada nota do acorde com offset de tempo correto
+      const offsetSec = cursor - _sfCtx.currentTime;
+      chordFrequencies.forEach(freq => {
+        const noteMidi = Math.round(A4_MIDI + 12 * Math.log2(freq / A4_FREQ));
+        const sfName = midiToSoundfontName(noteMidi);
+        _sfInstrument!.play(sfName, _sfCtx!.currentTime + Math.max(0, offsetSec), {
+          duration: soundDur * 0.96,
+          gain: 1.0,
+        });
+      });
+    } else {
+      scheduleChord(ctx, chordFrequencies, cursor, soundDur * 0.96);
+    }
 
     // ── Callback de highlight ─────────────────────────────────────────────
     if (onElementHighlight !== undefined && note.sourceIndex !== undefined) {
@@ -638,31 +653,83 @@ export function playSingleNote(
     : resolveNoteDelta(note.pitch, {}, keyAcc);
 
   const midi = pitchToMidi(note.pitch, note.octave, finalDelta);
-  const hz   = midiToFrequency(midi);
   const dur  = durationMs / 1000;
 
-  scheduleChord(ctx, [hz], ctx.currentTime + 0.01, dur, 0.65);
-
-  setTimeout(() => {
-    ctx.close().catch(() => {});
-  }, durationMs + 200);
+  // Estratégia dual: soundfont (realista) se pronto, FM (rápido) como fallback
+  if (_sfReady) {
+    playSoundfontNote(midi, dur);
+  } else {
+    const hz = midiToFrequency(midi);
+    scheduleChord(ctx, [hz], ctx.currentTime + 0.01, dur, 0.65);
+    setTimeout(() => { ctx.close().catch(() => {}); }, durationMs + 200);
+  }
 }
 
-// ─── SOUNDFONT LOADER ────────────────────────────────────────────────────────
+// ─── SOUNDFONT LOADER (amostras reais de piano) ────────────────────────────────────────────
 /**
- * Pré-carrega o arquivo SF2 via fetch com suporte a Range Requests.
- * O fallback FM permanece ativo enquanto o SF2 carrega.
- * Armazena o ArrayBuffer em memória para uso futuro pela síntese.
+ * Motor de amostras reais via soundfont-player.
+ *
+ * Estado:
+ *   _sfInstrument  — instância do soundfont-player (null = ainda carregando / não iniciado)
+ *   _sfCtx         — AudioContext compartilhado para o soundfont-player
+ *   _sfReady       — true quando o instrumento está pronto para tocar
+ *   _sfLoading     — true enquanto o carregamento está em andamento (evita duplo carregamento)
+ *
+ * Estratégia de fallback:
+ *   - Enquanto _sfReady === false: usa síntese FM nativa (rápida, zero latência)
+ *   - Após _sfReady === true:     usa amostras reais do soundfont-player (realista)
+ *   - Em caso de erro no carregamento: mantém FM permanentemente
  */
-let _sf2Buffer: ArrayBuffer | null = null;
+type SoundfontInstrument = Awaited<ReturnType<typeof Soundfont.instrument>>;
+let _sfInstrument: SoundfontInstrument | null = null;
+let _sfCtx:        AudioContext | null        = null;
+let _sfReady       = false;
+let _sfLoading     = false;
 
-export async function loadSoundFont(url: string): Promise<void> {
-  if (_sf2Buffer) return; // já carregado
-  const response = await fetch(url, {
-    headers: { 'Accept': 'application/octet-stream' },
-  });
-  if (!response.ok) throw new Error(`SF2 fetch failed: ${response.status}`);
-  _sf2Buffer = await response.arrayBuffer();
+/** Converte número MIDI para nota no formato do soundfont-player (ex: 60 → 'C4'). */
+function midiToSoundfontName(midi: number): string {
+  const noteNames = ['C','Db','D','Eb','E','F','Gb','G','Ab','A','Bb','B'];
+  const octave = Math.floor(midi / 12) - 1;
+  const name   = noteNames[midi % 12];
+  return `${name}${octave}`;
+}
+
+/**
+ * Carrega o instrumento de piano via soundfont-player em background.
+ * Usa o repositório FluidR3_GM (amostras MP3 ~2.5 MB) hospedado no jsDelivr CDN.
+ * O fallback FM permanece ativo até o carregamento completar.
+ *
+ * @param url - Ignorado (mantido por compatibilidade com a API anterior).
+ *              O soundfont é carregado do CDN jsDelivr automaticamente.
+ */
+export async function loadSoundFont(_url?: string): Promise<void> {
+  if (_sfReady || _sfLoading) return;
+  _sfLoading = true;
+  try {
+    const AudioCtx =
+      window.AudioContext ??
+      (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    _sfCtx = new AudioCtx();
+    _sfInstrument = await Soundfont.instrument(_sfCtx, 'acoustic_grand_piano', {
+      soundfont: 'FluidR3_GM',
+      format: 'mp3',
+    });
+    _sfReady = true;
+  } catch (err) {
+    // Falha silenciosa — FM continua como fallback permanente
+    console.warn('[scoreAudioPlayer] Soundfont não carregado, usando síntese FM.', err);
+    _sfLoading = false;
+  }
+}
+
+/**
+ * Toca uma única nota usando soundfont-player (amostras reais).
+ * Usado internamente por playSingleNote e playScore quando _sfReady === true.
+ */
+function playSoundfontNote(midi: number, durationSeconds: number): void {
+  if (!_sfReady || !_sfInstrument || !_sfCtx) return;
+  const noteName = midiToSoundfontName(midi);
+  _sfInstrument.play(noteName, _sfCtx.currentTime, { duration: durationSeconds, gain: 1.2 });
 }
 
 // ─── TESTES UNITÁRIOS ─────────────────────────────────────────────────────────
