@@ -16,7 +16,7 @@ import {
   type ParseOptions,
 } from "@/lib/brailleMusic";
 import { brailleToRoman } from "@/lib/brailleRomano";
-import { playScore, stopScore, setBpm as setScoreBpmFn } from "@/lib/scoreAudioPlayer";
+import { playScore, stopScore, setBpm as setScoreBpmFn, loadSoundFont } from "@/lib/scoreAudioPlayer";
 import { asciiToUnicodeBraille, detectBrailleFormat } from "@/lib/brailleAscii";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -861,6 +861,11 @@ export default function BrailleEditor() {
 
   const parseOptions = useMemo<ParseOptions>(() => ({}), []);
   const isExportLocked = false;
+  // ── Inicialização do SoundFont SF2 ─────────────────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    loadSoundFont('/assets/piano.sf2').catch(() => {});
+  }, []);
+
 
   // ── Parse ─────────────────────────────────────────────────────────────────
   useEffect(() => {

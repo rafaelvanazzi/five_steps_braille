@@ -46,6 +46,15 @@ async function startServer() {
       createContext,
     })
   );
+  // Headers especiais para piano.sf2 — Range Requests, CORS e cache 24h
+  app.use("/assets/piano.sf2", (_req, res, next) => {
+    res.setHeader("Accept-Ranges", "bytes");
+    res.setHeader("Content-Type", "application/octet-stream");
+    res.setHeader("Cache-Control", "public, max-age=86400");
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    next();
+  });
+
   // development mode uses Vite, production mode uses static files
   if (process.env.NODE_ENV === "development") {
     await setupVite(app, server);

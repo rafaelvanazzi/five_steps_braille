@@ -648,6 +648,23 @@ export function playSingleNote(
   }, durationMs + 200);
 }
 
+// ─── SOUNDFONT LOADER ────────────────────────────────────────────────────────
+/**
+ * Pré-carrega o arquivo SF2 via fetch com suporte a Range Requests.
+ * O fallback FM permanece ativo enquanto o SF2 carrega.
+ * Armazena o ArrayBuffer em memória para uso futuro pela síntese.
+ */
+let _sf2Buffer: ArrayBuffer | null = null;
+
+export async function loadSoundFont(url: string): Promise<void> {
+  if (_sf2Buffer) return; // já carregado
+  const response = await fetch(url, {
+    headers: { 'Accept': 'application/octet-stream' },
+  });
+  if (!response.ok) throw new Error(`SF2 fetch failed: ${response.status}`);
+  _sf2Buffer = await response.arrayBuffer();
+}
+
 // ─── TESTES UNITÁRIOS ─────────────────────────────────────────────────────────
 // Compatível com Vitest (configuração padrão do projeto).
 // Execute: pnpm vitest run src/lib/scoreAudioPlayer.test.ts
