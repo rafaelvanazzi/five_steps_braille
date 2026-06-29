@@ -420,9 +420,16 @@ export function playScore(
       continue;
     }
 
-    // Pausas: apenas avançam o cursor
+    // Pausas: avançam o cursor mantendo armadura intacta.
+    // A cada pausa, re-afirmamos keyAccidentals da armadura global —
+    // isso evita que bequadros locais (measureAccidentals null) vazem
+    // para notas subsequentes quando o ciclo é interrompido pela pausa.
     if (el.type === 'rest') {
       const rest = el as { type: 'rest'; duration: string; dotted: boolean; dotted2: boolean };
+      // Garantia: keyAccidentals sempre derivado da armadura global após qualquer pausa
+      if (currentGlobalKeySignature) {
+        keyAccidentals = { ...(KEY_SIGNATURE_MAP[currentGlobalKeySignature] ?? {}) };
+      }
       cursor += figureDurationSeconds(rest.duration, rest.dotted, rest.dotted2, _currentBpm);
       continue;
     }
@@ -601,13 +608,27 @@ export function playSingleNote(
     return;
   }
 
-  // Resolver armadura de clave ativa — aplica delta de semitom implícito
-  const keyAcc: KeyAccidentalMap = keySignature
-    ? (KEY_SIGNATURE_MAP[keySignature] ?? {})
-    : {};
+  // Resolver armadura de clave ativa — aplica delta de semitom implícito.
+  // O KEY_SIGNATURE_MAP usa as chaves do VexFlow (ex: 'G', 'D', 'F', 'Bb', 'Eb').
+  // Se keySignature não for null mas não existir no mapa, keyAcc fica {} →
+  // a nota soará natural. Log defensivo para detectar esse caso em desenvolvimento.
+  const keyAcc: KeyAccidentalMap = (() => {
+    if (!keySignature) return {};
+    const acc = KEY_SIGNATURE_MAP[keySignature];
+    if (!acc && process.env.NODE_ENV === 'development') {
+      console.warn(`[playSingleNote] armadura '${keySignature}' não encontrada em KEY_SIGNATURE_MAP`);
+    }
+    return acc ?? {};
+  })();
 
-  // Prioridade: acidente explícito da nota sobrescreve a armadura de clave.
-  // Se não há acidente explícito, usar o delta da armadura via resolveNoteDelta.
+  // Prioridade (idêntica ao playScore/MIMB Cap. 5):
+  //   1. Acidente explícito na nota (accidental !== undefined) → ACCIDENTAL_SEMITONE
+  //   2. Armadura de clave ativa (keyAcc) → resolveNoteDelta com measureAccidentals vazio
+  //      (digitação isolada: não há contexto de compasso — apenas a armadura)
+  //   3. 0 → nota natural (Dó Maior)
+  //
+  // CASO CRÍTICO: nota.accidental === undefined E pitch está na armadura →
+  //   resolveNoteDelta({}, keyAcc) retorna keyAcc[pitch] → semitom correto aplicado.
   const finalDelta = note.accidental !== undefined
     ? (ACCIDENTAL_SEMITONE[note.accidental] ?? 0)
     : resolveNoteDelta(note.pitch, {}, keyAcc);
