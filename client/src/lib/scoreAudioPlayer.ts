@@ -3,22 +3,26 @@
  * ─────────────────────────────────────────────────────────────────────────────
  * Motor de áudio para o Editor de Partituras em Braille — Five Steps Braille
  *
- * Síntese de piano via Web Audio API nativa (zero dependências externas).
- * Segue estritamente as regras do Manual Internacional de Musicografia Braille
- * e da dissertação Vanazzi (2014) para resolução de acidentes.
+ * Suporte a SoundFont2 (.sf2) com fallback em síntese FM nativa.
  *
- * API pública exportada:
+ * Hierarquia de síntese:
+ *   1. SF2 carregado via loadSoundFont() → AudioBufferSourceNode + playbackRate
+ *   2. Fallback FM (zero dependências externas) — automático se SF2 não foi
+ *      carregado ou falhou durante o parsing.
+ *
+ * API pública:
+ *   loadSoundFont(url)                                    → Promise<void>
  *   playScore(elements, initialBpm, onElementHighlight?)  → void
  *   stopScore()                                           → void
  *   setBpm(newBpm)                                        → void
- *   playSingleNote(note, keySignature?, durationMs?)       → void
+ *   playSingleNote(note, keySignature?, durationMs?)      → void
  *
- * Regras de negócio:
- *   1. Apenas 'note' e 'rest' emitem som; todos os outros tipos são ignorados.
+ * Regras de negócio (MIMB + Dissertação Vanazzi 2014):
+ *   1. Apenas 'note' e 'rest' emitem som; outros tipos são ignorados.
  *   2. 'keysignature' atualiza a armadura de clave ativa.
- *   3. Para cada nota: acidente do compasso > armadura de clave > natural.
+ *   3. Prioridade de acidente: compasso > armadura de clave > natural.
  *   4. Acidente explícito na nota é salvo em measureAccidentals.
- *   5. 'barline' limpa measureAccidentals, restaurando a armadura de clave.
+ *   5. 'barline' e 'rest' limpam measureAccidentals (armadura global persiste).
  *   6. setBpm() ajusta o andamento em tempo real sem reiniciar o player.
  *   7. playSingleNote() fornece feedback imediato ao digitar.
  */
@@ -29,7 +33,6 @@ import type {
   ParsedKeySignature,
 } from './brailleMusic';
 import type { Accidental } from './brailleMusic';
-import Soundfont from 'soundfont-player';
 
 // ─── TIPOS INTERNOS ───────────────────────────────────────────────────────────
 
@@ -42,36 +45,24 @@ const ACCIDENTAL_SEMITONE: Record<Accidental, number> = {
   'double-flat': -2,
 };
 
-/**
- * Mapa de nota → delta de semitom para uma armadura de clave.
- * Ausência de chave = nota natural (delta 0).
- */
+/** Mapa de nota → delta de semitom para uma armadura de clave. */
 type KeyAccidentalMap = Partial<Record<string, number>>;
 
 /**
  * Acidentais acumulados dentro do compasso atual.
- * O valor `null` é a sentinela de bequadro (cancela a armadura de clave).
+ * null = sentinela de bequadro (cancela a armadura de clave).
  */
 type MeasureAccidentalMap = Partial<Record<string, number | null>>;
 
 // ─── CONSTANTES MUSICAIS ──────────────────────────────────────────────────────
 
-/** Frequência de referência: A4 = 440 Hz, MIDI 69. */
 const A4_FREQ = 440;
 const A4_MIDI = 69;
 
-/**
- * Número MIDI base de cada nota dentro de uma oitava
- * (relativo a C, sem considerar a oitava).
- */
 const PITCH_CLASS: Record<string, number> = {
   C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11,
 };
 
-/**
- * Duração de cada figura em pulsos de semínima.
- * Semínima = 1 pulso, colcheia = 0.5, etc.
- */
 const DURATION_PULSES: Record<string, number> = {
   w:     4,
   h:     2,
@@ -83,12 +74,6 @@ const DURATION_PULSES: Record<string, number> = {
   '128': 0.03125,
 };
 
-/**
- * Mapeamento vexKey → { nota: delta de semitom }
- * Baseado no ciclo de quintas:
- *   Sustenidos: F C G D A E B (em ordem crescente de # na armadura)
- *   Bemóis:     B E A D G C F (em ordem crescente de ♭)
- */
 const KEY_SIGNATURE_MAP: Record<string, KeyAccidentalMap> = {
   C:    {},
   G:    { F:  1 },
@@ -107,18 +92,10 @@ const KEY_SIGNATURE_MAP: Record<string, KeyAccidentalMap> = {
   Cb:   { B: -1, E: -1, A: -1, D: -1, G: -1, C: -1, F: -1 },
 };
 
-/** Ordem diatônica das notas (para cálculo de intervalos harmônicos). */
 const DIATONIC_SCALE = ['C', 'D', 'E', 'F', 'G', 'A', 'B'] as const;
 
 // ─── FUNÇÕES PURAS DE CONVERSÃO ───────────────────────────────────────────────
 
-/**
- * Converte pitch + oitava + delta de semitom → número MIDI.
- *
- * Convenção: C4 = 60, A4 = 69.
- * MIDI 12 = C0 na escala científica (C-1 = 0 na convenção MIDI estrita,
- * mas usamos a convenção mais comum onde C4 = 60).
- */
 function pitchToMidi(pitch: string, octave: number, delta: number): number {
   const pitchClass = PITCH_CLASS[pitch];
   if (pitchClass === undefined) {
@@ -127,33 +104,21 @@ function pitchToMidi(pitch: string, octave: number, delta: number): number {
   return 12 * (octave + 1) + pitchClass + delta;
 }
 
-/** Converte número MIDI → frequência Hz via afinação igual temperada. */
 function midiToFrequency(midi: number): number {
   return A4_FREQ * Math.pow(2, (midi - A4_MIDI) / 12);
 }
 
-/**
- * Resolve o delta de semitom efetivo para uma nota, aplicando a prioridade:
- *   1. Acidente do compasso (measureAccidentals) — null = bequadro (cancela tudo)
- *   2. Acidente da armadura de clave (keyAccidentals)
- *   3. Natural (delta 0)
- */
 function resolveNoteDelta(
   pitch: string,
   measureAccidentals: MeasureAccidentalMap,
   keyAccidentals: KeyAccidentalMap,
 ): number {
   if (Object.prototype.hasOwnProperty.call(measureAccidentals, pitch)) {
-    // null = bequadro explícito → nota natural independente da armadura
     return measureAccidentals[pitch] ?? 0;
   }
   return keyAccidentals[pitch] ?? 0;
 }
 
-/**
- * Calcula a duração de uma figura em segundos.
- * Considera ponto de aumento (×1.5) e ponto duplo (×1.75).
- */
 function figureDurationSeconds(
   duration: string,
   dotted: boolean,
@@ -166,63 +131,511 @@ function figureDurationSeconds(
   return pulses * secondsPerPulse * multiplier;
 }
 
-// ─── SÍNTESE SONORA ───────────────────────────────────────────────────────────
+// ─── MOTOR DE SOUNDFONT2 ──────────────────────────────────────────────────────
+//
+// Parser estrutural de sub-chunks RIFF do formato SF2:
+//
+//  RIFF layout:
+//    RIFF ─┬─ sfbk ─┬─ LIST INFO  (metadados textuais — ignorado)
+//           │         ├─ LIST sdta ─┬─ smpl  (PCM 16-bit signed, 22050/44100 Hz)
+//           │         │             └─ sm24   (byte extra de 24-bit — opcional)
+//           │         └─ LIST pdta ─┬─ phdr  (preset headers)
+//           │                       ├─ pbag  (preset bags)
+//           │                       ├─ pmod  (modulators)
+//           │                       ├─ pgen  (preset generators)
+//           │                       ├─ inst  (instrument headers)
+//           │                       ├─ ibag  (instrument bags)
+//           │                       ├─ imod  (instrument modulators)
+//           │                       ├─ igen  (instrument generators — keyRange, sampleID, etc.)
+//           │                       └─ shdr  (sample headers: início/fim/loop, taxa, pitch)
+//           └─ [sub-chunks extras ignorados]
 
-// ─── SÍNTESE FM DE PIANO ─────────────────────────────────────────────────────
-//
-// Arquitetura de síntese aditiva com modulação FM leve:
-//
-//  MODULADOR FM
-//   └─ OscFM (sine, freq × ratioFM)
-//       └─ GainFM (profundidade de modulação)
-//           └─ frequency input do OscFundamental
-//
-//  CADEIA PRINCIPAL (por harmônico)
-//   ├─ OscFundamental (sine, freq)          — frequência fundamental
-//   ├─ Osc2 (sine, freq × 2)               — 2° harmônico (oitava)
-//   ├─ Osc3 (sine, freq × 3)               — 3° harmônico (quinta)
-//   └─ Osc4 (sine, freq × 4)               — 4° harmônico (oitava + quinta)
-//       └─ GainMaster
-//           └─ destination
-//
-// Envelope: ataque imediato (gain.setValueAtTime 0.3) →
-//           decaimento exponencial (exponentialRampToValueAtTime 0.001)
-//           ao longo da duração da nota, imitando o martelo + ressonância da corda.
+/** Metadados de uma amostra extraída do SF2. */
+interface SF2Sample {
+  name:       string;  // SHdr.achSampleName
+  start:      number;  // SHdr.dwStart (frames no smpl chunk)
+  end:        number;  // SHdr.dwEnd
+  loopStart:  number;  // SHdr.dwStartLoop
+  loopEnd:    number;  // SHdr.dwEndLoop
+  sampleRate: number;  // SHdr.dwSampleRate
+  pitch:      number;  // SHdr.byOriginalKey (MIDI 0–127)
+  pitchCorr:  number;  // SHdr.chPitchCorrection (cents, -99..+99)
+  type:       number;  // SHdr.sfSampleType (1=mono, 2=right, 4=left, 0x8000=ROM)
+}
+
+/** Associação instrumento-zona: quais amostras cobrem quais notas MIDI. */
+interface SF2Zone {
+  keyLo:    number; // keyRange.lo
+  keyHi:    number; // keyRange.hi
+  velLo:    number; // velRange.lo
+  velHi:    number; // velRange.hi
+  sampleId: number; // ID do SHdr
+  tune:     number; // scaleTuning (cents/semitom, normalmente 100)
+  fine:     number; // fineTune (cents)
+  coarse:   number; // coarseTune (semitoms)
+}
+
+// ─── ESTADO DO SOUNDFONT ───────────────────────────────────────────────────────
+
+/** AudioBuffer decodificado por número MIDI de pitch-base. */
+const _sfBuffers = new Map<number, AudioBuffer>();
+
+/** Metadados das amostras (antes de decodificar). */
+let _sfSamples:   SF2Sample[] = [];
+
+/** Zonas do instrumento 0 (piano — preset 0, bank 0). */
+let _sfZones:     SF2Zone[]   = [];
+
+/** PCM 16-bit signed big-array — compartilhado; fatias por amostra. */
+let _sfPcm:       Int16Array | null = null;
+
+/** Taxa de amostragem do smpl chunk (assumida uniforme). */
+let _sfSampleRate = 44100;
+
+/** Indica se o SF2 foi carregado e está pronto para uso. */
+let _sfReady = false;
+
+/** AudioContext compartilhado para pré-decodificação. */
+let _sfCtx: AudioContext | null = null;
+
+// ─── HELPERS DE LEITURA BINÁRIA ───────────────────────────────────────────────
+
+function readUint32LE(view: DataView, offset: number): number {
+  return view.getUint32(offset, true);
+}
+function readUint16LE(view: DataView, offset: number): number {
+  return view.getUint16(offset, true);
+}
+function readInt16LE(view: DataView, offset: number): number {
+  return view.getInt16(offset, true);
+}
+function readInt8(view: DataView, offset: number): number {
+  return view.getInt8(offset);
+}
+function readUint8(view: DataView, offset: number): number {
+  return view.getUint8(offset);
+}
+function readFourCC(view: DataView, offset: number): string {
+  return String.fromCharCode(
+    view.getUint8(offset),
+    view.getUint8(offset + 1),
+    view.getUint8(offset + 2),
+    view.getUint8(offset + 3),
+  );
+}
+function readString(buf: ArrayBuffer, offset: number, length: number): string {
+  const bytes = new Uint8Array(buf, offset, length);
+  let s = '';
+  for (let i = 0; i < bytes.length; i++) {
+    if (bytes[i] === 0) break;
+    s += String.fromCharCode(bytes[i]);
+  }
+  return s;
+}
+
+// ─── PARSER SF2 ──────────────────────────────────────────────────────────────
+
+/** Parsear o chunk smpl → Int16Array de PCM 16-bit. */
+function parseSdtaChunk(
+  view: DataView,
+  buf:  ArrayBuffer,
+  offset: number,
+  size: number,
+): void {
+  const end = offset + size;
+  let pos   = offset;
+
+  while (pos < end - 8) {
+    const id   = readFourCC(view, pos);
+    const len  = readUint32LE(view, pos + 4);
+    pos += 8;
+    if (id === 'smpl') {
+      // PCM 16-bit little-endian
+      _sfPcm = new Int16Array(buf, pos, len >> 1);
+      _sfSampleRate = 44100; // será sobrescrito pelos shdr
+    }
+    pos += len + (len & 1); // word-align
+  }
+}
+
+/** Parsear shdr → array de SF2Sample. */
+function parseShdr(view: DataView, offset: number, size: number): SF2Sample[] {
+  const count   = (size / 46) | 0;
+  const samples: SF2Sample[] = [];
+  for (let i = 0; i < count - 1; i++) { // último é EOS sentinel
+    const base = offset + i * 46;
+    samples.push({
+      name:       readString(view.buffer as ArrayBuffer, base, 20),
+      start:      readUint32LE(view, base + 20),
+      end:        readUint32LE(view, base + 24),
+      loopStart:  readUint32LE(view, base + 28),
+      loopEnd:    readUint32LE(view, base + 32),
+      sampleRate: readUint32LE(view, base + 36),
+      pitch:      readUint8(view, base + 40),
+      pitchCorr:  readInt8(view, base + 41),
+      type:       readUint16LE(view, base + 42),
+    });
+  }
+  return samples;
+}
 
 /**
- * Tabela de amplitudes relativas de cada harmônico.
- * Baseada na análise espectral aproximada de um piano Steinway (notas médias).
- * Índice 0 = fundamental, 1 = 2°, 2 = 3°, 3 = 4° harmônico.
+ * Parsear igen para o instrumento 0 (preset 0 / bank 0 = piano acústico).
+ * Generators relevantes: keyRange (43), velRange (44), sampleID (53),
+ * scaleTuning (56), fineTune (52), coarseTune (51).
  */
+function parseIgen(view: DataView, offset: number, size: number): SF2Zone[] {
+  const count = (size / 4) | 0;
+  const zones: SF2Zone[] = [];
+
+  let keyLo   = 0, keyHi = 127;
+  let velLo   = 0, velHi = 127;
+  let fine    = 0, coarse = 0, tune = 100;
+
+  for (let i = 0; i < count; i++) {
+    const base    = offset + i * 4;
+    const genId   = readUint16LE(view, base);
+    const amtLo   = readUint8(view, base + 2);
+    const amtHi   = readUint8(view, base + 3);
+    const amtS    = readInt16LE(view, base + 2);
+
+    if      (genId === 43) { keyLo = amtLo; keyHi = amtHi; }     // keyRange
+    else if (genId === 44) { velLo = amtLo; velHi = amtHi; }     // velRange
+    else if (genId === 52) { fine   = amtS;                }      // fineTune
+    else if (genId === 51) { coarse = amtS;                }      // coarseTune
+    else if (genId === 56) { tune   = amtS;                }      // scaleTuning
+    else if (genId === 53) {                                       // sampleID
+      const sampleId = readUint16LE(view, base + 2);
+      zones.push({ keyLo, keyHi, velLo, velHi, sampleId, tune, fine, coarse });
+      // reset para próxima zona
+      keyLo = 0; keyHi = 127; velLo = 0; velHi = 127;
+      fine  = 0; coarse = 0;  tune  = 100;
+    }
+  }
+  return zones;
+}
+
+/** Parsear o chunk pdta → popula _sfZones e _sfSamples. */
+function parsePdtaChunk(
+  view:   DataView,
+  offset: number,
+  size:   number,
+): void {
+  const end = offset + size;
+  let pos   = offset;
+  let igenOffset = -1, igenSize = 0;
+  let shdrOffset = -1, shdrSize = 0;
+
+  while (pos < end - 8) {
+    const id  = readFourCC(view, pos);
+    const len = readUint32LE(view, pos + 4);
+    pos += 8;
+    if      (id === 'igen') { igenOffset = pos; igenSize = len; }
+    else if (id === 'shdr') { shdrOffset = pos; shdrSize = len; }
+    pos += len + (len & 1);
+  }
+
+  if (shdrOffset >= 0) _sfSamples = parseShdr(view, shdrOffset, shdrSize);
+  if (igenOffset >= 0) _sfZones   = parseIgen(view, igenOffset, igenSize);
+}
+
+/** Parser RIFF principal do SF2. */
+function parseSF2(buf: ArrayBuffer): void {
+  const view = new DataView(buf);
+  if (readFourCC(view, 0) !== 'RIFF') throw new Error('[SF2] Não é RIFF');
+  // offset 4 = tamanho total (ignorado)
+  if (readFourCC(view, 8) !== 'sfbk') throw new Error('[SF2] Não é sfbk');
+
+  let pos = 12;
+  const total = buf.byteLength;
+
+  while (pos < total - 8) {
+    const id  = readFourCC(view, pos);
+    const len = readUint32LE(view, pos + 4);
+    pos += 8;
+
+    if (id === 'LIST') {
+      const listType = readFourCC(view, pos);
+      if      (listType === 'sdta') parseSdtaChunk(view, buf, pos + 4, len - 4);
+      else if (listType === 'pdta') parsePdtaChunk(view, pos + 4, len - 4);
+    }
+
+    pos += len + (len & 1);
+  }
+}
+
+/**
+ * Encontrar a zona de instrumento que melhor cobre um MIDI específico (vel=64).
+ * Retorna a zona com menor distância de pitch ao MIDI solicitado.
+ */
+function findZoneForMidi(midi: number): SF2Zone | null {
+  // Primeiro tentar zona exata (keyLo <= midi <= keyHi)
+  const exact = _sfZones.find(z => midi >= z.keyLo && midi <= z.keyHi);
+  if (exact) return exact;
+
+  // Vizinho mais próximo
+  let best: SF2Zone | null = null;
+  let bestDist = Infinity;
+  for (const z of _sfZones) {
+    const dist = Math.min(Math.abs(midi - z.keyLo), Math.abs(midi - z.keyHi));
+    if (dist < bestDist) { bestDist = dist; best = z; }
+  }
+  return best;
+}
+
+/**
+ * Decodificar a amostra de uma zona em AudioBuffer.
+ * Usa o PCM 16-bit do smpl chunk e a sampleRate do shdr.
+ */
+async function decodeZone(
+  ctx: AudioContext,
+  zone: SF2Zone,
+): Promise<AudioBuffer | null> {
+  if (!_sfPcm) return null;
+  const sample = _sfSamples[zone.sampleId];
+  if (!sample) return null;
+  if (sample.type & 0x8000) return null; // ROM sample — ignorar
+
+  const sr       = sample.sampleRate || 44100;
+  const startFr  = sample.start;
+  const endFr    = Math.min(sample.end, _sfPcm.length);
+  const frameLen = endFr - startFr;
+  if (frameLen <= 0) return null;
+
+  const audioBuf = ctx.createBuffer(1, frameLen, sr);
+  const channel  = audioBuf.getChannelData(0);
+
+  // Converter Int16 PCM → Float32 normalizado [-1, +1]
+  for (let i = 0; i < frameLen; i++) {
+    channel[i] = (_sfPcm[startFr + i] ?? 0) / 32768.0;
+  }
+
+  // Registrar no mapa por pitch MIDI de base
+  _sfBuffers.set(sample.pitch, audioBuf);
+  return audioBuf;
+}
+
+/**
+ * Pré-decodifica todas as amostras do SF2 em AudioBuffers.
+ * Chamado internamente após parseSF2() terminar.
+ */
+async function preDecodeAllZones(ctx: AudioContext): Promise<void> {
+  const seen = new Set<number>();
+  const tasks: Promise<void>[] = [];
+
+  for (const zone of _sfZones) {
+    if (seen.has(zone.sampleId)) continue;
+    seen.add(zone.sampleId);
+
+    tasks.push(
+      decodeZone(ctx, zone).then(buf => {
+        if (buf) {
+          const sample = _sfSamples[zone.sampleId];
+          if (sample) _sfBuffers.set(sample.pitch, buf);
+        }
+      }).catch(() => { /* ignora amostras corrompidas individualmente */ })
+    );
+  }
+
+  await Promise.all(tasks);
+}
+
+// ─── API PÚBLICA DO SOUNDFONT ─────────────────────────────────────────────────
+
+/**
+ * Carrega e parseia um arquivo SoundFont2 (.sf2) a partir de uma URL.
+ *
+ * Após carregar com sucesso, `playScore` e `playSingleNote` usarão
+ * automaticamente os buffers do SF2. Se falhar, o fallback FM permanece ativo.
+ *
+ * Suporte a Range Requests: o fetch enviará headers `Accept-Ranges` corretos
+ * se o servidor suportar (necessário para arquivos SF2 grandes).
+ *
+ * @param url — URL do arquivo .sf2 (ex: '/assets/piano.sf2')
+ */
+export async function loadSoundFont(url: string): Promise<void> {
+  _sfReady = false;
+  _sfBuffers.clear();
+  _sfSamples = [];
+  _sfZones   = [];
+  _sfPcm     = null;
+
+  try {
+    const response = await fetch(url, {
+      headers: { Accept: 'application/octet-stream' },
+    });
+
+    if (!response.ok) {
+      throw new Error(`[SF2] HTTP ${response.status} ao carregar ${url}`);
+    }
+
+    const buf = await response.arrayBuffer();
+    parseSF2(buf);
+
+    if (_sfZones.length === 0 || _sfSamples.length === 0) {
+      throw new Error('[SF2] Nenhuma zona/amostra válida encontrada');
+    }
+
+    // Criar AudioContext temporário para decodificação
+    const AudioCtx =
+      window.AudioContext ??
+      (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    _sfCtx = new AudioCtx();
+
+    await preDecodeAllZones(_sfCtx);
+
+    // Fechar ctx temporário (evitar vazamento; um novo é criado em playScore)
+    await _sfCtx.close();
+    _sfCtx = null;
+
+    _sfReady = _sfBuffers.size > 0;
+
+    if (!_sfReady) {
+      throw new Error('[SF2] Nenhum AudioBuffer decodificado com sucesso');
+    }
+
+    if (process.env.NODE_ENV === 'development') {
+      console.info(`[SF2] Carregado: ${_sfBuffers.size} amostras, ${_sfZones.length} zonas`);
+    }
+  } catch (err) {
+    _sfReady = false;
+    if (process.env.NODE_ENV === 'development') {
+      console.warn('[SF2] Falha no carregamento — fallback FM ativo:', err);
+    }
+    // Não relança — o fallback FM é ativado automaticamente
+  }
+}
+
+// ─── SÍNTESE FM DE PIANO (FALLBACK) ──────────────────────────────────────────
+
 const HARMONIC_GAINS = [1.0, 0.50, 0.25, 0.12] as const;
-
-/**
- * Parâmetros do modulador FM.
- * ratioFM:  frequência do modulador = fundamental × ratioFM
- * depthFM:  desvio máximo de frequência em Hz (profundidade de modulação)
- * decayFM:  o FM decai rapidamente após o ataque (simula o transiente do martelo)
- */
 const FM_PARAMS = {
-  ratioFM:  2.756,  // rácio não-inteiro → aliasing interessante no ataque
-  depthFM:  14,     // Hz — inarm. leve no transiente
-  decayFM:  0.04,   // s — FM some rapidamente
+  ratioFM:  2.756,
+  depthFM:  14,
+  decayFM:  0.04,
 } as const;
 
 /**
- * Agenda a síntese de um acorde de piano usando FM + síntese aditiva.
+ * Síntese FM + aditiva (fallback quando SF2 não está carregado).
+ * Mantida intacta: envelope setValueAtTime → exponentialRampToValueAtTime.
+ */
+function scheduleChordFM(
+  ctx: AudioContext,
+  frequencies: number[],
+  startTime: number,
+  durationSeconds: number,
+  velocity = 0.72,
+): void {
+  const safeDuration = Math.max(durationSeconds, 0.08);
+  const noteOff      = startTime + safeDuration;
+
+  frequencies.forEach(freq => {
+    if (!Number.isFinite(freq) || freq <= 0) return;
+
+    const oscFM  = ctx.createOscillator();
+    const gainFM = ctx.createGain();
+    oscFM.type = 'sine';
+    oscFM.frequency.value = freq * FM_PARAMS.ratioFM;
+    gainFM.gain.setValueAtTime(FM_PARAMS.depthFM * velocity, startTime);
+    gainFM.gain.exponentialRampToValueAtTime(0.001, startTime + FM_PARAMS.decayFM);
+    oscFM.connect(gainFM);
+    oscFM.start(startTime);
+    oscFM.stop(startTime + FM_PARAMS.decayFM + 0.01);
+
+    const gainMaster = ctx.createGain();
+    const peakGain   = 0.30 * velocity;
+    gainMaster.gain.setValueAtTime(peakGain, startTime);
+    gainMaster.gain.exponentialRampToValueAtTime(0.001, noteOff);
+    gainMaster.connect(ctx.destination);
+
+    HARMONIC_GAINS.forEach((relGain, harmonicIdx) => {
+      const harmFreq = freq * (harmonicIdx + 1);
+      if (!Number.isFinite(harmFreq) || harmFreq > 20000) return;
+
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.value = harmFreq;
+      if (harmonicIdx === 0) gainFM.connect(osc.frequency);
+
+      const gainHarm = ctx.createGain();
+      gainHarm.gain.value = relGain;
+      osc.connect(gainHarm);
+      gainHarm.connect(gainMaster);
+      osc.start(startTime);
+      osc.stop(noteOff + 0.05);
+    });
+  });
+}
+
+// ─── SÍNTESE SF2 ──────────────────────────────────────────────────────────────
+
+/**
+ * Agenda reprodução de um acorde via AudioBufferSourceNode (SF2).
+ * Para cada frequência, encontra o buffer cujo pitch-base é mais próximo
+ * e ajusta `.playbackRate` para transpor até a frequência alvo.
  *
- * Envelope de sulco (conforme especificado):
- *   1. gain.setValueAtTime(0.3, startTime)              — ataque imediato
- *   2. gain.exponentialRampToValueAtTime(0.001, noteOff) — decaimento ao longo da duração
- *
- * O decaimento exponencial imita fisicamente: a energia mecânica do martelo
- * transmitida à corda decai de forma logarítmica com o tempo.
- *
- * @param ctx             — AudioContext ativo
- * @param frequencies     — Array de frequências Hz (nota + intervalos harmônicos do acorde)
- * @param startTime       — Timestamp Web Audio de início
- * @param durationSeconds — Duração total da nota em segundos
- * @param velocity        — Intensidade 0.0–1.0 (mapeia para amplitude inicial)
+ * Envelope: setValueAtTime(peak) → exponentialRampToValueAtTime(0.001)
+ */
+function scheduleChordSF2(
+  ctx: AudioContext,
+  frequencies: number[],
+  startTime: number,
+  durationSeconds: number,
+  velocity = 0.72,
+): void {
+  if (_sfBuffers.size === 0) {
+    scheduleChordFM(ctx, frequencies, startTime, durationSeconds, velocity);
+    return;
+  }
+
+  const safeDuration = Math.max(durationSeconds, 0.08);
+  const noteOff      = startTime + safeDuration;
+
+  frequencies.forEach(freq => {
+    if (!Number.isFinite(freq) || freq <= 0) return;
+
+    const targetMidi = Math.round(A4_MIDI + 12 * Math.log2(freq / A4_FREQ));
+
+    // Encontrar o buffer com pitch-base mais próximo
+    let bestPitch  = -1;
+    let bestDist   = Infinity;
+    _sfBuffers.forEach((_, pitch) => {
+      const dist = Math.abs(pitch - targetMidi);
+      if (dist < bestDist) { bestDist = dist; bestPitch = pitch; }
+    });
+
+    const buffer = bestPitch >= 0 ? _sfBuffers.get(bestPitch) : undefined;
+    if (!buffer) {
+      // Fallback FM para esta frequência específica
+      scheduleChordFM(ctx, [freq], startTime, durationSeconds, velocity);
+      return;
+    }
+
+    // playbackRate: razão de frequências para transpor do pitch-base ao alvo
+    const baseFreq  = A4_FREQ * Math.pow(2, (bestPitch - A4_MIDI) / 12);
+    const playRate  = freq / baseFreq;
+
+    const src  = ctx.createBufferSource();
+    const gain = ctx.createGain();
+
+    src.buffer           = buffer;
+    src.playbackRate.value = playRate;
+
+    // Envelope de decaimento exponencial (idêntico ao FM)
+    const peakGain = 0.80 * velocity;
+    gain.gain.setValueAtTime(peakGain, startTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, noteOff);
+
+    src.connect(gain);
+    gain.connect(ctx.destination);
+
+    src.start(startTime);
+    src.stop(noteOff + 0.1);
+  });
+}
+
+/**
+ * Rota de síntese unificada: usa SF2 se disponível, FM como fallback.
  */
 function scheduleChord(
   ctx: AudioContext,
@@ -231,88 +644,24 @@ function scheduleChord(
   durationSeconds: number,
   velocity = 0.72,
 ): void {
-  // A duração mínima garante que o envelope exponencial não chegue a zero
-  // antes do tempo, evitando cliques e erros de valor zero no Web Audio API.
-  const safeDuration = Math.max(durationSeconds, 0.08);
-  const noteOff = startTime + safeDuration;
-
-  frequencies.forEach(freq => {
-    if (!Number.isFinite(freq) || freq <= 0) return;
-
-    // ── Modulador FM (martelo → transiente percussivo) ─────────────────────
-    // O FM adiciona inarmonia no instante do ataque e desaparece rapidamente,
-    // imitando a distorção de frequência quando o martelo bate na corda.
-    const oscFM  = ctx.createOscillator();
-    const gainFM = ctx.createGain();
-    oscFM.type = 'sine';
-    oscFM.frequency.value = freq * FM_PARAMS.ratioFM;
-
-    // Profundidade de modulação: máxima no ataque, zero em 40ms
-    gainFM.gain.setValueAtTime(FM_PARAMS.depthFM * velocity, startTime);
-    gainFM.gain.exponentialRampToValueAtTime(
-      0.001,
-      startTime + FM_PARAMS.decayFM,
-    );
-
-    oscFM.connect(gainFM);
-    oscFM.start(startTime);
-    oscFM.stop(startTime + FM_PARAMS.decayFM + 0.01);
-
-    // ── Osciladores harmônicos (corpo da nota) ─────────────────────────────
-    // Cada harmônico compartilha o mesmo GainMaster — um único envelope
-    // controla toda a cadeia, simplificando e melhorando a coerência tímbrica.
-    const gainMaster = ctx.createGain();
-
-    // Envelope de sulco (especificado):
-    //   Ataque imediato a 0.3 × velocity → decaimento exponencial até 0.001
-    const peakGain = 0.30 * velocity;
-    gainMaster.gain.setValueAtTime(peakGain, startTime);
-    gainMaster.gain.exponentialRampToValueAtTime(0.001, noteOff);
-
-    gainMaster.connect(ctx.destination);
-
-    HARMONIC_GAINS.forEach((relGain, harmonicIdx) => {
-      const harmFreq = freq * (harmonicIdx + 1);
-      if (!Number.isFinite(harmFreq) || harmFreq > 20000) return; // acima de 20 kHz → inaudível
-
-      const osc = ctx.createOscillator();
-      osc.type = 'sine';
-      osc.frequency.value = harmFreq;
-
-      // Conectar modulador FM apenas na fundamental (harmônico 0)
-      // — nos harmônicos superiores o FM causaria distorção excessiva
-      if (harmonicIdx === 0) {
-        gainFM.connect(osc.frequency);
-      }
-
-      // GainHarm escala cada harmônico pela sua amplitude relativa
-      const gainHarm = ctx.createGain();
-      gainHarm.gain.value = relGain;
-
-      osc.connect(gainHarm);
-      gainHarm.connect(gainMaster);
-
-      osc.start(startTime);
-      osc.stop(noteOff + 0.05); // pequena cauda para evitar clique no corte
-    });
-  });
+  if (_sfReady && _sfBuffers.size > 0) {
+    scheduleChordSF2(ctx, frequencies, startTime, durationSeconds, velocity);
+  } else {
+    scheduleChordFM(ctx, frequencies, startTime, durationSeconds, velocity);
+  }
 }
 
 // ─── ESTADO GLOBAL DO PLAYER ──────────────────────────────────────────────────
-// Mantido fora da função principal para permitir controle via setBpm/stopScore.
 
-let _ctx:             AudioContext | null = null;
-let _stopped:         boolean             = true;
-let _currentBpm:      number              = 120;
-let _finishTimer:     ReturnType<typeof setTimeout> | null = null;
+let _ctx:         AudioContext | null = null;
+let _stopped:     boolean             = true;
+let _currentBpm:  number              = 120;
+let _finishTimer: ReturnType<typeof setTimeout> | null = null;
 
 // ─── API PÚBLICA ──────────────────────────────────────────────────────────────
 
 /**
- * Altera o andamento (BPM) da execução em tempo real.
- * Afeta o agendamento das notas ainda não processadas.
- * Se o player não estiver ativo, o valor é salvo para a próxima execução.
- *
+ * Altera o andamento (BPM) em tempo real.
  * @param newBpm — Novo valor de BPM (mínimo: 20, máximo: 400)
  */
 export function setBpm(newBpm: number): void {
@@ -330,7 +679,7 @@ export function stopScore(): void {
     _finishTimer = null;
   }
   if (_ctx !== null) {
-    _ctx.close().catch(() => { /* ignora erros de fechamento */ });
+    _ctx.close().catch(() => {});
     _ctx = null;
   }
 }
@@ -338,17 +687,11 @@ export function stopScore(): void {
 /**
  * Percorre o array de elementos e reproduz a partitura completa.
  *
- * Regras de negócio:
- *   1. Apenas 'note' e 'rest' emitem som.
- *   2. 'keysignature' atualiza a armadura de clave ativa.
- *   3. Acidente do compasso > armadura de clave > natural.
- *   4. Acidente explícito salvo em measureAccidentals para o compasso atual.
- *   5. 'barline' limpa measureAccidentals.
- *   6. setBpm() ajusta o andamento sem reiniciar.
+ * Usa SF2 se loadSoundFont() foi chamado com sucesso; FM como fallback.
  *
- * @param elements            — Array de ParsedElement do brailleMusic.ts
- * @param initialBpm          — BPM inicial (padrão: 120)
- * @param onElementHighlight  — Callback opcional: recebe sourceIndex da nota atual
+ * @param elements           — Array de ParsedElement do brailleMusic.ts
+ * @param initialBpm         — BPM inicial (padrão: 120)
+ * @param onElementHighlight — Callback opcional: sourceIndex da nota atual
  */
 export function playScore(
   elements: ParsedElement[],
@@ -365,33 +708,22 @@ export function playScore(
   _stopped = false;
   setBpm(initialBpm);
 
-  // ── Estado de memória de acidentes ────────────────────────────────────────
-  // currentGlobalKeySignature: persiste do primeiro ao último compasso.
-  // Atualizada sempre que um elemento 'keysignature' é encontrado no loop.
-  // Garante que o delta de semitom da armadura (ex: F# e C# em Ré Maior)
-  // seja aplicado continuamente em toda a partitura.
+  // ── Estado de armadura ────────────────────────────────────────────────────
   let currentGlobalKeySignature: string | null = null;
   let keyAccidentals:            KeyAccidentalMap     = {};
   let measureAccidentals:        MeasureAccidentalMap = {};
 
-  // Pré-carregar armadura a partir do primeiro elemento keysignature encontrado
   const firstKS = elements.find(el => el.type === 'keysignature') as ParsedKeySignature | undefined;
   if (firstKS) {
     currentGlobalKeySignature = firstKS.vexKey;
     keyAccidentals = { ...(KEY_SIGNATURE_MAP[firstKS.vexKey] ?? {}) };
   }
 
-  // ── Cursor de tempo ────────────────────────────────────────────────────────
   let cursor = _ctx.currentTime + 0.05;
   const ctx  = _ctx;
 
-  // ── Estado de tie (MIMB 6-2) ──────────────────────────────────────────────
-  // Rastreia notas ativas com envelope aberto para prolongação.
-  // Chave: "pitch/octave" → cursor de fim do som agendado.
-  // Quando isTie=true chega, NÃO re-ataca; apenas avança o cursor pelo
-  // tempo métrico da nota vinculada sem gerar novo som.
-  // O envelope da nota ORIGEM foi agendado com a duração somada (tieDuration).
-  const tieActiveUntil = new Map<string, number>(); // pitch/octave → timestamp de fim
+  // Tie tracking (MIMB 6-2)
+  const tieActiveUntil = new Map<string, number>();
 
   // ── Loop principal ────────────────────────────────────────────────────────
   for (let i = 0; i < elements.length; i++) {
@@ -399,7 +731,7 @@ export function playScore(
 
     const el = elements[i];
 
-    // Regra 2: atualizar armadura — persiste em currentGlobalKeySignature
+    // keysignature → atualiza armadura global
     if (el.type === 'keysignature') {
       const ks = el as ParsedKeySignature;
       currentGlobalKeySignature = ks.vexKey;
@@ -408,29 +740,20 @@ export function playScore(
       continue;
     }
 
-    // Regra 5: barline limpa acidentes locais do compasso.
-    // keyAccidentals (armadura global) persiste intacta — apenas measureAccidentals é zerado.
-    // Isso garante que Fá# e Dó# (ex: Ré Maior) continuem ativos após cada barline.
+    // barline → limpa acidentes locais, reafirma keyAccidentals da armadura global
     if (el.type === 'barline') {
       measureAccidentals = {};
-      // Reforço: derivar keyAccidentals da armadura global persistente
-      // (prevenção contra qualquer corrupção de estado via elementos inesperados)
       if (currentGlobalKeySignature) {
         keyAccidentals = { ...(KEY_SIGNATURE_MAP[currentGlobalKeySignature] ?? {}) };
       }
       continue;
     }
 
-    // Pausas: avançam o cursor mantendo armadura intacta.
-    // A cada pausa, re-afirmamos keyAccidentals da armadura global —
-    // isso evita que bequadros locais (measureAccidentals null) vazem
-    // para notas subsequentes quando o ciclo é interrompido pela pausa.
+    // rest → avança cursor + reset para garantir que nota pós-pausa
+    // não herde bequadros locais do compasso anterior
     if (el.type === 'rest') {
       const rest = el as { type: 'rest'; duration: string; dotted: boolean; dotted2: boolean };
-      // ── Bug fix: pausa não deve propagar bequadros locais para nota seguinte ──
-      // measureAccidentals pode conter entradas null (bequadros) de notas anteriores.
-      // Após uma pausa, reset para estado limpo derivado apenas da armadura global.
-      // Isso garante que a nota pós-pausa receba o acidente correto da armadura.
+      // Bug fix: pausa não propaga bequadros locais para nota seguinte
       measureAccidentals = {};
       if (currentGlobalKeySignature) {
         keyAccidentals = { ...(KEY_SIGNATURE_MAP[currentGlobalKeySignature] ?? {}) };
@@ -443,7 +766,7 @@ export function playScore(
 
     const note = el as ParsedNote;
 
-    // Regra 4: registrar acidente explícito
+    // Registrar acidente explícito no compasso
     if (note.accidental !== undefined) {
       if (note.accidental === 'natural') {
         (measureAccidentals as Record<string, null>)[note.pitch] = null;
@@ -452,23 +775,13 @@ export function playScore(
       }
     }
 
-    // ── Duração métrica desta nota ────────────────────────────────────────
-    // A duração métrica é sempre a duração nominal da figura — ela determina
-    // quanto o cursor avança independentemente de ties ou staccato.
     const metricDur = figureDurationSeconds(note.duration, note.dotted, note.dotted2, _currentBpm);
 
-    // ── Coletar intervalos harmônicos ─────────────────────────────────────
-    // Coletamos SEMPRE, mesmo em ties — necessário para manter a contagem de
-    // índice correta do loop e resolver acidentes de intervalos.
+    // Coletar frequências do acorde (nota base + intervalos)
     const chordFrequencies: number[] = [];
     let intervalCount = 0;
 
-    // resolveNoteDelta — prioridade (MIMB Cap. 5):
-    //   1. measureAccidentals[pitch] — acidente explícito neste compasso (bequadro ou acidente)
-    //   2. keyAccidentals[pitch]     — acidente implícito da armadura global (currentGlobalKeySignature)
-    //   3. 0                         — sem alteração (Dó Maior / Lá menor)
-    // Se note.accidental !== undefined → delta foi registrado em measureAccidentals acima.
-    // Se note.accidental === undefined → resolveNoteDelta aplica o da armadura automaticamente.
+    // resolveNoteDelta: medida > armadura > natural
     const delta = resolveNoteDelta(note.pitch, measureAccidentals, keyAccidentals);
     const midi  = pitchToMidi(note.pitch, note.octave, delta);
     chordFrequencies.push(midiToFrequency(midi));
@@ -489,127 +802,75 @@ export function playScore(
       chordFrequencies.push(midiToFrequency(intMidi));
     }
 
-    // ── MIMB 6-2: Tie (Ligadura de Prolongação) ───────────────────────────
-    // isTie=true: esta nota é a CONTINUAÇÃO de uma tie.
-    //   → NÃO re-atacar. O envelope já foi aberto pela nota origem com
-    //     duração total (tieDuration). Apenas avançar o cursor.
-    //
-    // Nota ORIGEM (não tem isTie): se a próxima nota de mesma altura tiver
-    // isTie=true, o parser já calculou tieDuration em pulsos.
-    //   → Agendar o som com a duração SOMADA (tieDuration → segundos).
-    //   → Registrar em tieActiveUntil para suprimir o re-ataque.
-
-    const isTie          = !!(note as any).isTie || (note as any).tieRole === 'end';
+    // ── Tie MIMB 6-2 ─────────────────────────────────────────────────────
+    const isTie             = !!(note as any).isTie || (note as any).tieRole === 'end';
     const tieDurationPulses = (note as any).tieDuration as number | undefined;
-    const noteKey        = `${note.pitch.toLowerCase()}/${note.octave}`;
+    const noteKey           = `${note.pitch.toLowerCase()}/${note.octave}`;
 
     if (isTie) {
-      // Esta nota é uma continuação — silêncio de ataque, apenas avança cursor.
-      // O envelope da nota origem já cobre este tempo.
-      tieActiveUntil.delete(noteKey); // consumida
-
-      // Callback de highlight (a nota existe musicalmente, só não re-ataca)
+      tieActiveUntil.delete(noteKey);
       if (onElementHighlight !== undefined && note.sourceIndex !== undefined) {
         const noteTime = (cursor - ctx.currentTime) * 1000;
         const srcIdx   = note.sourceIndex;
-        setTimeout(() => {
-          if (!_stopped) onElementHighlight(srcIdx);
-        }, Math.max(0, noteTime));
+        setTimeout(() => { if (!_stopped) onElementHighlight(srcIdx); }, Math.max(0, noteTime));
       }
-
       cursor += metricDur;
-      continue; // ← pula scheduleChord inteiramente
+      continue;
     }
 
-    // ── Verificar se esta nota é ORIGEM de um tie ─────────────────────────
-    // O parser emite tieDuration na nota seguinte (isTie=true), não aqui.
-    // Para saber se esta nota será ligada, olhamos adiante no array:
-    // se o próximo elemento de tipo 'note' com mesmo pitch/octave tiver isTie=true,
-    // esta é a origem e deve usar a duração somada.
-    let soundDur = metricDur; // duração padrão do som
+    let soundDur = metricDur;
 
     if (tieDurationPulses !== undefined) {
-      // A nota atual tem tieDuration — ela É a origem com duração somada já calculada
-      soundDur = (tieDurationPulses / 1) * (60 / _currentBpm);
-      // Registrar que este pitch+octave tem tie ativo até cursor + soundDur
+      soundDur = tieDurationPulses * (60 / _currentBpm);
       tieActiveUntil.set(noteKey, cursor + soundDur);
     } else {
-      // Verificar lookahead: existe próxima nota de mesma altura com isTie=true?
-      // Isso acontece quando o parser emite tieDuration apenas na nota de origem.
       let lookAhead = i + 1 + intervalCount;
-      // Pular barlines, slurs e outros elementos não-notas
       while (lookAhead < elements.length) {
         const nextEl = elements[lookAhead];
         if (nextEl.type === 'note') {
           const nextNote = nextEl as ParsedNote;
           const nextKey  = `${nextNote.pitch.toLowerCase()}/${nextNote.octave}`;
           if (!!(nextNote as any).isTie && nextKey === noteKey) {
-            // Próxima nota de mesma altura tem isTie=true → esta é a origem
             const nextTieDur = (nextNote as any).tieDuration as number | undefined;
             if (nextTieDur !== undefined) {
               soundDur = nextTieDur * (60 / _currentBpm);
               tieActiveUntil.set(noteKey, cursor + soundDur);
             }
           }
-          break; // parar no primeiro elemento 'note' encontrado
+          break;
         }
         if (nextEl.type === 'barline') { lookAhead++; continue; }
-        break; // qualquer outro tipo → parar
+        break;
       }
     }
 
-    // ── Agendar o som ─────────────────────────────────────────────────────
-    // ── Agendar o som (soundfont se pronto, FM como fallback) ─────────────────────────────────────────────────────────────────────────────
-    if (_sfReady && _sfInstrument && _sfCtx) {
-      // Soundfont: agendar cada nota do acorde com offset de tempo correto
-      const offsetSec = cursor - _sfCtx.currentTime;
-      chordFrequencies.forEach(freq => {
-        const noteMidi = Math.round(A4_MIDI + 12 * Math.log2(freq / A4_FREQ));
-        const sfName = midiToSoundfontName(noteMidi);
-        _sfInstrument!.play(sfName, _sfCtx!.currentTime + Math.max(0, offsetSec), {
-          duration: soundDur * 0.96,
-          gain: 1.0,
-        });
-      });
-    } else {
-      scheduleChord(ctx, chordFrequencies, cursor, soundDur * 0.96);
-    }
+    // Agendar som (SF2 ou FM dependendo de _sfReady)
+    scheduleChord(ctx, chordFrequencies, cursor, soundDur * 0.96);
 
-    // ── Callback de highlight ─────────────────────────────────────────────
     if (onElementHighlight !== undefined && note.sourceIndex !== undefined) {
       const noteTime = (cursor - ctx.currentTime) * 1000;
       const srcIdx   = note.sourceIndex;
-      setTimeout(() => {
-        if (!_stopped) onElementHighlight(srcIdx);
-      }, Math.max(0, noteTime));
+      setTimeout(() => { if (!_stopped) onElementHighlight(srcIdx); }, Math.max(0, noteTime));
     }
 
     cursor += metricDur;
   }
 
-  // ── Encerramento ─────────────────────────────────────────────────────────
   if (!_stopped) {
     const remainingMs = Math.max(0, (cursor - ctx.currentTime) * 1000) + 300;
     _finishTimer = setTimeout(() => {
-      if (!_stopped) {
-        _stopped = true;
-        ctx.close().catch(() => {});
-      }
+      if (!_stopped) { _stopped = true; ctx.close().catch(() => {}); }
     }, remainingMs);
   }
 }
 
 /**
- * Toca uma única nota por um curto período (feedback imediato ao digitar).
- * Usa um AudioContext efêmero independente do player principal.
- *
- * Ideal para uso no teclado Perkins: toda vez que o usuário confirma uma célula,
- * chame `playSingleNote(parsedNote, keySignature)` para ouvir a nota
- * com a armadura de clave ativa corretamente aplicada.
+ * Feedback imediato ao digitar — toca uma nota única.
+ * Usa SF2 se disponível, FM como fallback.
  *
  * @param note         — ParsedNote a ser tocada
- * @param keySignature — Armadura de clave ativa na UI (ex: 'G', 'D', 'F'). null = Dó Maior.
- * @param durationMs   — Duração em milissegundos (padrão: 300ms)
+ * @param keySignature — Armadura ativa (ex: 'G', 'D'). null = Dó Maior.
+ * @param durationMs   — Duração em ms (padrão: 300ms)
  */
 export function playSingleNote(
   note:         ParsedNote,
@@ -621,220 +882,97 @@ export function playSingleNote(
     (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
 
   let ctx: AudioContext;
-  try {
-    ctx = new AudioCtx();
-  } catch {
-    return;
-  }
+  try { ctx = new AudioCtx(); } catch { return; }
 
-  // Resolver armadura de clave ativa — aplica delta de semitom implícito.
-  // O KEY_SIGNATURE_MAP usa as chaves do VexFlow (ex: 'G', 'D', 'F', 'Bb', 'Eb').
-  // Se keySignature não for null mas não existir no mapa, keyAcc fica {} →
-  // a nota soará natural. Log defensivo para detectar esse caso em desenvolvimento.
   const keyAcc: KeyAccidentalMap = (() => {
     if (!keySignature) return {};
     const acc = KEY_SIGNATURE_MAP[keySignature];
     if (!acc && process.env.NODE_ENV === 'development') {
-      console.warn(`[playSingleNote] armadura '${keySignature}' não encontrada em KEY_SIGNATURE_MAP`);
+      console.warn(`[playSingleNote] armadura '${keySignature}' não encontrada`);
     }
     return acc ?? {};
   })();
 
-  // Prioridade (idêntica ao playScore/MIMB Cap. 5):
-  //   1. Acidente explícito na nota (accidental !== undefined) → ACCIDENTAL_SEMITONE
-  //   2. Armadura de clave ativa (keyAcc) → resolveNoteDelta com measureAccidentals vazio
-  //      (digitação isolada: não há contexto de compasso — apenas a armadura)
-  //   3. 0 → nota natural (Dó Maior)
-  //
-  // CASO CRÍTICO: nota.accidental === undefined E pitch está na armadura →
-  //   resolveNoteDelta({}, keyAcc) retorna keyAcc[pitch] → semitom correto aplicado.
+  // Prioridade: acidente explícito > armadura de clave > natural
   const finalDelta = note.accidental !== undefined
     ? (ACCIDENTAL_SEMITONE[note.accidental] ?? 0)
     : resolveNoteDelta(note.pitch, {}, keyAcc);
 
   const midi = pitchToMidi(note.pitch, note.octave, finalDelta);
+  const hz   = midiToFrequency(midi);
   const dur  = durationMs / 1000;
 
-  // Estratégia dual: soundfont (realista) se pronto, FM (rápido) como fallback
-  if (_sfReady) {
-    playSoundfontNote(midi, dur);
-  } else {
-    const hz = midiToFrequency(midi);
-    scheduleChord(ctx, [hz], ctx.currentTime + 0.01, dur, 0.65);
-    setTimeout(() => { ctx.close().catch(() => {}); }, durationMs + 200);
-  }
+  scheduleChord(ctx, [hz], ctx.currentTime + 0.01, dur, 0.65);
+
+  setTimeout(() => { ctx.close().catch(() => {}); }, durationMs + 200);
 }
 
-// ─── SOUNDFONT LOADER (amostras reais de piano) ────────────────────────────────────────────
-/**
- * Motor de amostras reais via soundfont-player.
- *
- * Estado:
- *   _sfInstrument  — instância do soundfont-player (null = ainda carregando / não iniciado)
- *   _sfCtx         — AudioContext compartilhado para o soundfont-player
- *   _sfReady       — true quando o instrumento está pronto para tocar
- *   _sfLoading     — true enquanto o carregamento está em andamento (evita duplo carregamento)
- *
- * Estratégia de fallback:
- *   - Enquanto _sfReady === false: usa síntese FM nativa (rápida, zero latência)
- *   - Após _sfReady === true:     usa amostras reais do soundfont-player (realista)
- *   - Em caso de erro no carregamento: mantém FM permanentemente
- */
-type SoundfontInstrument = Awaited<ReturnType<typeof Soundfont.instrument>>;
-let _sfInstrument: SoundfontInstrument | null = null;
-let _sfCtx:        AudioContext | null        = null;
-let _sfReady       = false;
-let _sfLoading     = false;
-
-/** Converte número MIDI para nota no formato do soundfont-player (ex: 60 → 'C4'). */
-function midiToSoundfontName(midi: number): string {
-  const noteNames = ['C','Db','D','Eb','E','F','Gb','G','Ab','A','Bb','B'];
-  const octave = Math.floor(midi / 12) - 1;
-  const name   = noteNames[midi % 12];
-  return `${name}${octave}`;
-}
-
-/**
- * Carrega o instrumento de piano via soundfont-player em background.
- * Usa o repositório FluidR3_GM (amostras MP3 ~2.5 MB) hospedado no jsDelivr CDN.
- * O fallback FM permanece ativo até o carregamento completar.
- *
- * @param url - Ignorado (mantido por compatibilidade com a API anterior).
- *              O soundfont é carregado do CDN jsDelivr automaticamente.
- */
-export async function loadSoundFont(_url?: string): Promise<void> {
-  if (_sfReady || _sfLoading) return;
-  _sfLoading = true;
-  try {
-    const AudioCtx =
-      window.AudioContext ??
-      (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-    _sfCtx = new AudioCtx();
-    _sfInstrument = await Soundfont.instrument(_sfCtx, 'acoustic_grand_piano', {
-      soundfont: 'FluidR3_GM',
-      format: 'mp3',
-    });
-    _sfReady = true;
-  } catch (err) {
-    // Falha silenciosa — FM continua como fallback permanente
-    console.warn('[scoreAudioPlayer] Soundfont não carregado, usando síntese FM.', err);
-    _sfLoading = false;
-  }
-}
-
-/**
- * Toca uma única nota usando soundfont-player (amostras reais).
- * Usado internamente por playSingleNote e playScore quando _sfReady === true.
- */
-function playSoundfontNote(midi: number, durationSeconds: number): void {
-  if (!_sfReady || !_sfInstrument || !_sfCtx) return;
-  const noteName = midiToSoundfontName(midi);
-  _sfInstrument.play(noteName, _sfCtx.currentTime, { duration: durationSeconds, gain: 1.2 });
-}
-
-// ─── TESTES UNITÁRIOS ─────────────────────────────────────────────────────────
-// Compatível com Vitest (configuração padrão do projeto).
-// Execute: pnpm vitest run src/lib/scoreAudioPlayer.test.ts
+// ─── TESTES UNITÁRIOS (Vitest) ───────────────────────────────────────────────
 
 if (import.meta.vitest) {
   const { describe, it, expect } = import.meta.vitest;
 
   describe('pitchToMidi — conversão de nota para MIDI', () => {
-    it('C4 = MIDI 60 (padrão internacional)', () =>
-      expect(pitchToMidi('C', 4, 0)).toBe(60));
-    it('A4 = MIDI 69 (referência 440 Hz)', () =>
-      expect(pitchToMidi('A', 4, 0)).toBe(69));
-    it('C#4 = MIDI 61 (sustenido = +1 semitom)', () =>
-      expect(pitchToMidi('C', 4, 1)).toBe(61));
-    it('Bb4 = MIDI 70 (bemol = -1 semitom)', () =>
-      expect(pitchToMidi('B', 4, -1)).toBe(70));
-    it('C5 = MIDI 72 (oitava acima de C4)', () =>
-      expect(pitchToMidi('C', 5, 0)).toBe(72));
-    it('B3 = MIDI 59 (abaixo de C4)', () =>
-      expect(pitchToMidi('B', 3, 0)).toBe(59));
-    it('F#5 = MIDI 78', () =>
-      expect(pitchToMidi('F', 5, 1)).toBe(78));
+    it('C4 = MIDI 60', ()  => expect(pitchToMidi('C', 4, 0)).toBe(60));
+    it('A4 = MIDI 69', ()  => expect(pitchToMidi('A', 4, 0)).toBe(69));
+    it('C#4 = MIDI 61', () => expect(pitchToMidi('C', 4, 1)).toBe(61));
+    it('Bb4 = MIDI 70', () => expect(pitchToMidi('B', 4, -1)).toBe(70));
+    it('C5 = MIDI 72', ()  => expect(pitchToMidi('C', 5, 0)).toBe(72));
+    it('B3 = MIDI 59', ()  => expect(pitchToMidi('B', 3, 0)).toBe(59));
+    it('F#5 = MIDI 78', () => expect(pitchToMidi('F', 5, 1)).toBe(78));
   });
 
-  describe('midiToFrequency — conversão MIDI → Hz', () => {
-    it('A4 (MIDI 69) = 440.00 Hz', () =>
-      expect(midiToFrequency(69)).toBeCloseTo(440.0, 2));
-    it('A5 (MIDI 81) = 880.00 Hz (oitava acima)', () =>
-      expect(midiToFrequency(81)).toBeCloseTo(880.0, 2));
-    it('C4 (MIDI 60) ≈ 261.63 Hz', () =>
-      expect(midiToFrequency(60)).toBeCloseTo(261.63, 1));
-    it('A3 (MIDI 57) = 220.00 Hz', () =>
-      expect(midiToFrequency(57)).toBeCloseTo(220.0, 2));
+  describe('midiToFrequency', () => {
+    it('A4 = 440 Hz',  () => expect(midiToFrequency(69)).toBeCloseTo(440.0, 2));
+    it('A5 = 880 Hz',  () => expect(midiToFrequency(81)).toBeCloseTo(880.0, 2));
+    it('C4 ≈ 261.63', () => expect(midiToFrequency(60)).toBeCloseTo(261.63, 1));
+    it('A3 = 220 Hz',  () => expect(midiToFrequency(57)).toBeCloseTo(220.0, 2));
   });
 
   describe('resolveNoteDelta — prioridade de acidentes', () => {
-    // Ré maior: F# e C#
     const keyD: KeyAccidentalMap = { F: 1, C: 1 };
-
-    it('sem acidente no compasso: F em Ré maior → sustenido (+1)', () =>
-      expect(resolveNoteDelta('F', {}, keyD)).toBe(1));
-
-    it('sem acidente no compasso: D em Ré maior → natural (0)', () =>
-      expect(resolveNoteDelta('D', {}, keyD)).toBe(0));
-
-    it('bequadro no compasso (null) cancela F# da armadura', () => {
-      const mAcc: MeasureAccidentalMap = {};
-      (mAcc as Record<string, null>)['F'] = null;
-      expect(resolveNoteDelta('F', mAcc, keyD)).toBe(0);
+    it('F em Ré maior → +1', ()  => expect(resolveNoteDelta('F', {}, keyD)).toBe(1));
+    it('D em Ré maior → 0', ()   => expect(resolveNoteDelta('D', {}, keyD)).toBe(0));
+    it('bequadro cancela F#', () => {
+      const m: MeasureAccidentalMap = {};
+      (m as Record<string, null>)['F'] = null;
+      expect(resolveNoteDelta('F', m, keyD)).toBe(0);
     });
-
-    it('acidente do compasso tem prioridade sobre armadura', () => {
-      const mAcc: MeasureAccidentalMap = { C: -1 }; // Cb no compasso
-      expect(resolveNoteDelta('C', mAcc, keyD)).toBe(-1);
+    it('Cb no compasso > C# da armadura', () => {
+      expect(resolveNoteDelta('C', { C: -1 }, keyD)).toBe(-1);
     });
-
-    it('acidente do compasso não afeta outras notas', () => {
-      const mAcc: MeasureAccidentalMap = { F: -1 };
-      expect(resolveNoteDelta('C', mAcc, keyD)).toBe(1); // C# da armadura
+    it('Ré maior não afeta nota não listada', () => {
+      expect(resolveNoteDelta('B', {}, keyD)).toBe(0);
     });
-
-    it('nota sem acidente em Dó maior → natural (0)', () =>
-      expect(resolveNoteDelta('B', {}, {})).toBe(0));
   });
 
-  describe('figureDurationSeconds — duração das figuras', () => {
-    it('semínima a 60 BPM = 1.000s', () =>
-      expect(figureDurationSeconds('q', false, false, 60)).toBeCloseTo(1.0, 5));
-    it('mínima a 60 BPM = 2.000s', () =>
-      expect(figureDurationSeconds('h', false, false, 60)).toBeCloseTo(2.0, 5));
-    it('semibreve a 60 BPM = 4.000s', () =>
-      expect(figureDurationSeconds('w', false, false, 60)).toBeCloseTo(4.0, 5));
-    it('colcheia a 120 BPM = 0.250s', () =>
-      expect(figureDurationSeconds('8', false, false, 120)).toBeCloseTo(0.25, 5));
-    it('semínima pontuada a 60 BPM = 1.500s', () =>
-      expect(figureDurationSeconds('q', true, false, 60)).toBeCloseTo(1.5, 5));
-    it('semínima com ponto duplo a 60 BPM = 1.750s', () =>
-      expect(figureDurationSeconds('q', false, true, 60)).toBeCloseTo(1.75, 5));
-    it('colcheia a 60 BPM = 0.500s', () =>
-      expect(figureDurationSeconds('8', false, false, 60)).toBeCloseTo(0.5, 5));
+  describe('figureDurationSeconds', () => {
+    it('q a 60 BPM = 1.0s',  () => expect(figureDurationSeconds('q', false, false, 60)).toBeCloseTo(1.0, 5));
+    it('h a 60 BPM = 2.0s',  () => expect(figureDurationSeconds('h', false, false, 60)).toBeCloseTo(2.0, 5));
+    it('w a 60 BPM = 4.0s',  () => expect(figureDurationSeconds('w', false, false, 60)).toBeCloseTo(4.0, 5));
+    it('8 a 120 BPM = 0.25s',() => expect(figureDurationSeconds('8', false, false, 120)).toBeCloseTo(0.25, 5));
+    it('q. a 60 BPM = 1.5s', () => expect(figureDurationSeconds('q', true, false, 60)).toBeCloseTo(1.5, 5));
+    it('q.. a 60 BPM = 1.75s',()=> expect(figureDurationSeconds('q', false, true, 60)).toBeCloseTo(1.75, 5));
   });
 
-  describe('KEY_SIGNATURE_MAP — armaduras de clave', () => {
-    it('Dó maior (C): nenhum acidente', () =>
-      expect(KEY_SIGNATURE_MAP['C']).toEqual({}));
-    it('Sol maior (G): F#', () =>
-      expect(KEY_SIGNATURE_MAP['G']).toEqual({ F: 1 }));
-    it('Ré maior (D): F# e C#', () =>
-      expect(KEY_SIGNATURE_MAP['D']).toEqual({ F: 1, C: 1 }));
-    it('Fá maior (F): Bb', () =>
-      expect(KEY_SIGNATURE_MAP['F']).toEqual({ B: -1 }));
-    it('Sib maior (Bb): Bb e Eb', () =>
-      expect(KEY_SIGNATURE_MAP['Bb']).toEqual({ B: -1, E: -1 }));
-    it('Dó# maior (C#): 7 sustenidos', () =>
-      expect(Object.keys(KEY_SIGNATURE_MAP['C#'] ?? {})).toHaveLength(7));
-    it('Dób maior (Cb): 7 bemóis', () =>
-      expect(Object.keys(KEY_SIGNATURE_MAP['Cb'] ?? {})).toHaveLength(7));
+  describe('KEY_SIGNATURE_MAP', () => {
+    it('C: sem acidentes',    () => expect(KEY_SIGNATURE_MAP['C']).toEqual({}));
+    it('G: F#',               () => expect(KEY_SIGNATURE_MAP['G']).toEqual({ F: 1 }));
+    it('D: F# e C#',          () => expect(KEY_SIGNATURE_MAP['D']).toEqual({ F: 1, C: 1 }));
+    it('F: Bb',               () => expect(KEY_SIGNATURE_MAP['F']).toEqual({ B: -1 }));
+    it('Bb: Bb e Eb',         () => expect(KEY_SIGNATURE_MAP['Bb']).toEqual({ B: -1, E: -1 }));
+    it('C#: 7 sustenidos',    () => expect(Object.keys(KEY_SIGNATURE_MAP['C#'] ?? {})).toHaveLength(7));
+    it('Cb: 7 bemóis',        () => expect(Object.keys(KEY_SIGNATURE_MAP['Cb'] ?? {})).toHaveLength(7));
   });
 
-  describe('setBpm — controle de andamento', () => {
-    it('valor mínimo: 20 BPM', () => { setBpm(1); expect(_currentBpm).toBe(20); });
-    it('valor máximo: 400 BPM', () => { setBpm(9999); expect(_currentBpm).toBe(400); });
-    it('valor normal: 120 BPM', () => { setBpm(120); expect(_currentBpm).toBe(120); });
-    it('valor normal: 60 BPM', () => { setBpm(60); expect(_currentBpm).toBe(60); });
+  describe('setBpm', () => {
+    it('mínimo: 20',  () => { setBpm(1);    expect(_currentBpm).toBe(20); });
+    it('máximo: 400', () => { setBpm(9999); expect(_currentBpm).toBe(400); });
+    it('normal: 120', () => { setBpm(120);  expect(_currentBpm).toBe(120); });
+  });
+
+  describe('loadSoundFont — estado SF2', () => {
+    it('_sfReady false antes de carregar', () => expect(_sfReady).toBe(false));
+    it('_sfBuffers vazio antes de carregar', () => expect(_sfBuffers.size).toBe(0));
   });
 }

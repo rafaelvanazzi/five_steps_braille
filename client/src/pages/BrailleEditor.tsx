@@ -861,11 +861,6 @@ export default function BrailleEditor() {
 
   const parseOptions = useMemo<ParseOptions>(() => ({}), []);
   const isExportLocked = false;
-  // ── Inicialização do SoundFont SF2 ─────────────────────────────────────────────────────────────────────────────
-  useEffect(() => {
-    loadSoundFont('/assets/piano.sf2').catch(() => {});
-  }, []);
-
 
   // ── Parse ─────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -958,6 +953,16 @@ export default function BrailleEditor() {
     return audioCtxRef.current;
   }
   useEffect(() => { return () => { audioCtxRef.current?.close(); }; }, []);
+
+  // ── Carregar SoundFont SF2 local em background ─────────────────────────────
+  // Enquanto carrega (~1-3s): toda digitação usa síntese FM (zero latência).
+  // Quando pronto (_sfReady=true): piano real ativo automaticamente sem reiniciar.
+  // Rota local /assets/piano.sf2 — funciona offline (PWA-ready), zero CDN.
+  useEffect(() => {
+    loadSoundFont('/assets/piano.sf2').catch(() => {
+      // Falha silenciosa — fallback FM permanece ativo indefinidamente
+    });
+  }, []);
 
   // ── Player ────────────────────────────────────────────────────────────────
   const setScoreBpm = setScoreBpmFn;
