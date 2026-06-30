@@ -96,11 +96,32 @@ const DIATONIC_SCALE = ['C', 'D', 'E', 'F', 'G', 'A', 'B'] as const;
 
 // ─── FUNÇÕES PURAS DE CONVERSÃO ───────────────────────────────────────────────
 
+/**
+ * Converte pitch + oitava braille + delta de acidente → número MIDI.
+ *
+ * Mapeamento de oitava braille → MIDI (convenção MIDI científica):
+ *   Oitava 0 braille → MIDI 12  (C0)
+ *   Oitava 1 braille → MIDI 24  (C1)
+ *   Oitava 2 braille → MIDI 36  (C2)
+ *   Oitava 3 braille → MIDI 48  (C3)
+ *   Oitava 4 braille → MIDI 60  (C4 = Dó central)  ← oitava central do piano
+ *   Oitava 5 braille → MIDI 72  (C5)
+ *   Oitava 6 braille → MIDI 84  (C6)
+ *   Oitava 7 braille → MIDI 96  (C7)
+ *
+ * Fórmula: midi = 12 * (octaveBraille + 1) + pitchClass + delta
+ * onde pitchClass: C=0, D=2, E=4, F=5, G=7, A=9, B=11
+ *
+ * Verificação: C4 → 12*(4+1) + 0 + 0 = 60 ✓
+ *              A4 → 12*(4+1) + 9 + 0 = 69 ✓ (440 Hz)
+ *              F#5 → 12*(5+1) + 5 + 1 = 78 ✓
+ */
 function pitchToMidi(pitch: string, octave: number, delta: number): number {
   const pitchClass = PITCH_CLASS[pitch];
   if (pitchClass === undefined) {
     throw new Error(`[scoreAudioPlayer] Nota desconhecida: "${pitch}"`);
   }
+  // Fórmula correta para oitava braille 4 = Dó central (MIDI 60):
   return 12 * (octave + 1) + pitchClass + delta;
 }
 
@@ -195,7 +216,19 @@ let _sfSampleRate = 44100;
 /** Indica se o SF2 foi carregado e está pronto para uso. */
 let _sfReady = false;
 
-/** AudioContext compartilhado para pré-decodificação. */
+/**
+ * AudioContext compartilhado e persistente para SF2.
+ *
+ * Bug crítico (corrigido): AudioBuffers são ligados ao AudioContext em que foram
+ * decodificados via decodeAudioData(). Se loadSoundFont() usa um ctx temporário
+ * e playSingleNote() cria um ctx diferente, os buffers não podem ser reproduzidos.
+ *
+ * Fix: _sharedCtx é criado uma única vez em loadSoundFont() e reutilizado em
+ * TODAS as chamadas de scheduleChord (playScore e playSingleNote).
+ */
+let _sharedCtx: AudioContext | null = null;
+
+/** AudioContext temporário para pré-decodificação (alias interno). */
 let _sfCtx: AudioContext | null = null;
 
 // ─── HELPERS DE LEITURA BINÁRIA ───────────────────────────────────────────────
@@ -484,9 +517,12 @@ export async function loadSoundFont(url: string): Promise<void> {
 
     await preDecodeAllZones(_sfCtx);
 
-    // Fechar ctx temporário (evitar vazamento; um novo é criado em playScore)
-    await _sfCtx.close();
-    _sfCtx = null;
+    // IMPORTANTE: NÃO fechar o AudioContext aqui.
+    // Os AudioBuffers estão ligados a este contexto — fechá-lo
+    // invalidaria todos os buffers já decodificados.
+    // _sharedCtx é mantido ativo e reutilizado por playScore e playSingleNote.
+    _sharedCtx = _sfCtx; // promover para contexto compartilhado persistente
+    _sfCtx     = null;   // limpar referência temporária
 
     _sfReady = _sfBuffers.size > 0;
 
@@ -577,26 +613,40 @@ function scheduleChordFM(
  * Envelope: setValueAtTime(peak) → exponentialRampToValueAtTime(0.001)
  */
 function scheduleChordSF2(
-  ctx: AudioContext,
+  _ctxIgnored: AudioContext,
   frequencies: number[],
   startTime: number,
   durationSeconds: number,
   velocity = 0.72,
 ): void {
-  if (_sfBuffers.size === 0) {
-    scheduleChordFM(ctx, frequencies, startTime, durationSeconds, velocity);
+  // Bug fix crítico: AudioBuffers são ligados ao AudioContext em que foram
+  // decodificados (decodeAudioData). Usar _sharedCtx — o mesmo ctx de loadSoundFont
+  // — garante que os buffers sejam reproduzíveis. O parâmetro _ctxIgnored (ctx do
+  // caller) não pode ser usado para SF2 pois é um contexto diferente.
+  const ctx = _sharedCtx;
+  if (!ctx || _sfBuffers.size === 0) {
+    scheduleChordFM(_ctxIgnored, frequencies, startTime, durationSeconds, velocity);
     return;
   }
 
+  // Retomar o contexto se estiver suspenso (política de autoplay do browser)
+  if (ctx.state === 'suspended') {
+    ctx.resume().catch(() => {});
+  }
+
+  // Recalcular startTime relativo ao _sharedCtx
+  const ctxNow      = ctx.currentTime;
+  const safeStart   = ctxNow + 0.01;
   const safeDuration = Math.max(durationSeconds, 0.08);
-  const noteOff      = startTime + safeDuration;
+  const noteOff      = safeStart + safeDuration;
 
   frequencies.forEach(freq => {
     if (!Number.isFinite(freq) || freq <= 0) return;
 
+    // MIDI alvo a partir da frequência
     const targetMidi = Math.round(A4_MIDI + 12 * Math.log2(freq / A4_FREQ));
 
-    // Encontrar o buffer com pitch-base mais próximo
+    // Encontrar o buffer com pitch-base mais próximo no mapa SF2
     let bestPitch  = -1;
     let bestDist   = Infinity;
     _sfBuffers.forEach((_, pitch) => {
@@ -606,30 +656,31 @@ function scheduleChordSF2(
 
     const buffer = bestPitch >= 0 ? _sfBuffers.get(bestPitch) : undefined;
     if (!buffer) {
-      // Fallback FM para esta frequência específica
-      scheduleChordFM(ctx, [freq], startTime, durationSeconds, velocity);
+      scheduleChordFM(_ctxIgnored, [freq], startTime, durationSeconds, velocity);
       return;
     }
 
-    // playbackRate: razão de frequências para transpor do pitch-base ao alvo
-    const baseFreq  = A4_FREQ * Math.pow(2, (bestPitch - A4_MIDI) / 12);
-    const playRate  = freq / baseFreq;
+    // playbackRate: transpor do pitch-base (sample) ao pitch-alvo (nota solicitada)
+    // Fórmula: ratio = 2^((targetMidi - baseMidi) / 12)
+    // Equivalente a freq/baseFreq mas mais preciso em semitom inteiro.
+    const semitoneDiff = targetMidi - bestPitch;
+    const playRate     = Math.pow(2, semitoneDiff / 12);
 
     const src  = ctx.createBufferSource();
     const gain = ctx.createGain();
 
-    src.buffer           = buffer;
+    src.buffer             = buffer;
     src.playbackRate.value = playRate;
 
-    // Envelope de decaimento exponencial (idêntico ao FM)
+    // Envelope: ataque imediato → decaimento exponencial
     const peakGain = 0.80 * velocity;
-    gain.gain.setValueAtTime(peakGain, startTime);
+    gain.gain.setValueAtTime(peakGain, safeStart);
     gain.gain.exponentialRampToValueAtTime(0.001, noteOff);
 
     src.connect(gain);
     gain.connect(ctx.destination);
 
-    src.start(startTime);
+    src.start(safeStart);
     src.stop(noteOff + 0.1);
   });
 }
@@ -678,9 +729,13 @@ export function stopScore(): void {
     clearTimeout(_finishTimer);
     _finishTimer = null;
   }
-  if (_ctx !== null) {
+  // Fechar apenas o ctx de playback (_ctx), nunca o _sharedCtx do SF2.
+  // _sharedCtx deve persistir para que playSingleNote possa usar os AudioBuffers.
+  if (_ctx !== null && _ctx !== _sharedCtx) {
     _ctx.close().catch(() => {});
     _ctx = null;
+  } else {
+    _ctx = null; // apenas limpar referência se for o _sharedCtx
   }
 }
 
@@ -704,7 +759,15 @@ export function playScore(
     window.AudioContext ??
     (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
 
-  _ctx     = new AudioCtx();
+  // Bug fix: se SF2 está disponível, usar _sharedCtx para playScore também.
+  // Isso garante que os AudioBuffers (decodificados em _sharedCtx) sejam
+  // reproduzíveis sem necessidade de transferência entre contextos.
+  if (_sfReady && _sharedCtx) {
+    if (_sharedCtx.state === 'suspended') _sharedCtx.resume().catch(() => {});
+    _ctx = _sharedCtx;
+  } else {
+    _ctx = new AudioCtx();
+  }
   _stopped = false;
   setBpm(initialBpm);
 
@@ -877,13 +940,6 @@ export function playSingleNote(
   keySignature: string | null = null,
   durationMs  = 300,
 ): void {
-  const AudioCtx =
-    window.AudioContext ??
-    (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-
-  let ctx: AudioContext;
-  try { ctx = new AudioCtx(); } catch { return; }
-
   const keyAcc: KeyAccidentalMap = (() => {
     if (!keySignature) return {};
     const acc = KEY_SIGNATURE_MAP[keySignature];
@@ -902,7 +958,26 @@ export function playSingleNote(
   const hz   = midiToFrequency(midi);
   const dur  = durationMs / 1000;
 
-  scheduleChord(ctx, [hz], ctx.currentTime + 0.01, dur, 0.65);
+  if (_sfReady && _sharedCtx) {
+    // SF2 disponível: usar _sharedCtx diretamente (buffers já decodificados nele).
+    // NÃO criar novo AudioContext — os AudioBuffers não são transferíveis.
+    if (_sharedCtx.state === 'suspended') {
+      _sharedCtx.resume().catch(() => {});
+    }
+    // scheduleChordSF2 será chamado internamente via scheduleChord, usando _sharedCtx
+    scheduleChord(_sharedCtx, [hz], _sharedCtx.currentTime + 0.01, dur, 0.65);
+    return;
+  }
+
+  // Fallback FM: criar AudioContext efêmero (SF2 ainda carregando ou indisponível)
+  const AudioCtx =
+    window.AudioContext ??
+    (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+
+  let ctx: AudioContext;
+  try { ctx = new AudioCtx(); } catch { return; }
+
+  scheduleChordFM(ctx, [hz], ctx.currentTime + 0.01, dur, 0.65);
 
   setTimeout(() => { ctx.close().catch(() => {}); }, durationMs + 200);
 }
