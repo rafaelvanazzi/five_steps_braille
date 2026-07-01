@@ -974,8 +974,22 @@ export default function BrailleEditor() {
     if (parsedElements.length === 0) return;
     if (isPlaying) { handleStop(); return; }
     setScoreBpm(playerBpm);
-    playScore(parsedElements, playerBpm, () => setIsPlaying(false));
+    playScore(parsedElements, playerBpm);
     setIsPlaying(true);
+    // Detectar fim da reprodução via polling (scoreAudioPlayer não expe o callback onDone)
+    const pollEnd = setInterval(() => {
+      // stopScore() seta _stopped=true internamente; usamos o próprio stopScore como sinal
+      // Alternativa: verificar se o AudioContext fechou via tentativa de play
+      // Por simplicidade, usamos um timeout baseado no BPM e número de elementos
+      clearInterval(pollEnd);
+    }, 500);
+    const durationToBeats: Record<string, number> = { 'w': 4, 'h': 2, 'q': 1, '8': 0.5, '16': 0.25, '32': 0.125, '64': 0.0625, '128': 0.03125 };
+    const totalBeats = parsedElements.reduce((acc, el) => {
+      if (el.type === 'note' || el.type === 'rest') return acc + (durationToBeats[el.duration] ?? 1);
+      return acc;
+    }, 0);
+    const totalMs = (totalBeats / playerBpm) * 60 * 1000 + 500;
+    setTimeout(() => setIsPlaying(false), totalMs);
   }, [parsedElements, isPlaying, playerBpm, handleStop, setScoreBpm]);
 
   const handleBpmInputChange = useCallback((raw: string) => setBpmInputValue(raw), []);

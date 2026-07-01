@@ -3,15 +3,23 @@
  * ─────────────────────────────────────────────────────────────────────────────
  * Motor de áudio FM nativo puro — Five Steps Braille
  *
- * Síntese FM aditiva via Web Audio API nativa.
- * Zero dependências externas. Funciona 100% offline.
+ * Síntese FM aditiva multi-timbre via Web Audio API nativa.
+ * Zero dependências externas. Funciona 100% offline / PWA-ready.
  *
  * API pública:
- *   loadSoundFont(url?)   → Promise<void>  (stub — mantém assinatura, retorna imediatamente)
- *   playScore(elements, initialBpm, onElementHighlight?)  → void
- *   stopScore()           → void
- *   setBpm(newBpm)        → void
- *   playSingleNote(note, keySignature?, durationMs?)      → void
+ *   loadSoundFont(_url?)                                         → Promise<void>  (stub)
+ *   setInstrument(inst: InstrumentType)                         → void
+ *   setBpm(newBpm)                                              → void
+ *   playScore(elements, initialBpm, startIndex, onHighlight?)   → void
+ *   stopScore()                                                  → void
+ *   pauseScore()                                                 → void
+ *   resumeScore()                                                → void
+ *   playSingleNote(note, keySignature?, durationMs?)            → void
+ *
+ * Timbres FM disponíveis:
+ *   "piano"  — ratioFM=2.756, depthFM=14,  decayFM=0.04  (percussivo, martelo)
+ *   "guitar" — ratioFM=1.0,   depthFM=4,   decayFM=0.08  (dedilhado nylon)
+ *   "flute"  — ratioFM=1.0,   depthFM=1.5, decayFM=0.5,  attackTime=0.05 (sopro)
  *
  * Regras de negócio (MIMB + Dissertação Vanazzi 2014):
  *   1. Apenas 'note' e 'rest' emitem som / avançam cursor.
@@ -21,6 +29,7 @@
  *   5. 'barline' e 'rest' limpam measureAccidentals; armadura global persiste.
  *   6. setBpm() ajusta andamento em tempo real sem reiniciar.
  *   7. playSingleNote() usa AudioContext efêmero de curta duração.
+ *   8. startIndex permite iniciar reprodução a partir do cursor do editor.
  */
 
 import type {
@@ -30,7 +39,7 @@ import type {
 } from './brailleMusic';
 import type { Accidental } from './brailleMusic';
 
-// ─── TIPOS INTERNOS ───────────────────────────────────────────────────────────
+// ─── TIPOS ────────────────────────────────────────────────────────────────────
 
 /** Delta de semitom para cada Accidental. */
 const ACCIDENTAL_SEMITONE: Record<Accidental, number> = {
@@ -49,6 +58,12 @@ type KeyAccidentalMap = Partial<Record<string, number>>;
  * null = sentinela de bequadro (cancela a armadura de clave para este pitch).
  */
 type MeasureAccidentalMap = Partial<Record<string, number | null>>;
+
+/**
+ * Timbres FM disponíveis.
+ * Alternar com setInstrument() — efeito na próxima nota agendada.
+ */
+export type InstrumentType = 'piano' | 'guitar' | 'flute';
 
 // ─── CONSTANTES MUSICAIS ──────────────────────────────────────────────────────
 
@@ -90,6 +105,48 @@ const KEY_SIGNATURE_MAP: Record<string, KeyAccidentalMap> = {
 
 const DIATONIC_SCALE = ['C', 'D', 'E', 'F', 'G', 'A', 'B'] as const;
 
+// ─── PARÂMETROS FM POR TIMBRE ─────────────────────────────────────────────────
+
+interface FMPreset {
+  ratioFM:    number;   // razão freq modulador / portadora
+  depthFM:    number;   // profundidade de modulação (índice FM)
+  decayFM:    number;   // decaimento do modulador (s) — transitório de ataque
+  peakGain:   number;   // ganho de pico do envelope mestre [0, 1]
+  attackTime: number;   // tempo de ataque linear (s) — 0 = imediato (piano/guitar)
+  gains:      readonly number[]; // ganhos dos parciais harmônicos
+}
+
+const FM_PRESETS: Record<InstrumentType, FMPreset> = {
+  piano: {
+    ratioFM:    2.756,
+    depthFM:    14,
+    decayFM:    0.04,
+    peakGain:   0.30,
+    attackTime: 0,        // ataque percussivo — imediato
+    gains:      [1.0, 0.50, 0.25, 0.12],
+  },
+  guitar: {
+    ratioFM:    1.0,
+    depthFM:    4,
+    decayFM:    0.08,
+    peakGain:   0.25,
+    attackTime: 0,        // pizzicato — imediato
+    gains:      [1.0, 0.60, 0.30, 0.08],
+  },
+  flute: {
+    ratioFM:    1.0,
+    depthFM:    1.5,
+    decayFM:    0.5,
+    peakGain:   0.28,
+    attackTime: 0.05,     // sopro gradual — 50 ms de ataque linear
+    gains:      [1.0, 0.20, 0.05, 0.01],
+  },
+};
+
+// ─── ESTADO GLOBAL DO INSTRUMENTO ────────────────────────────────────────────
+
+let _currentInstrument: InstrumentType = 'piano';
+
 // ─── FUNÇÕES PURAS DE CONVERSÃO ───────────────────────────────────────────────
 
 /**
@@ -125,7 +182,7 @@ function midiToFrequency(midi: number): number {
 }
 
 /**
- * Resolve o delta de semitom de uma nota segundo a hierarquia de acidentes:
+ * Resolve o delta de semitom de uma nota pela hierarquia de acidentes:
  *   1. measureAccidentals[pitch] — acidente explícito neste compasso
  *      (null = bequadro: cancela a armadura, retorna 0)
  *   2. keyAccidentals[pitch]     — acidente implícito da armadura de clave
@@ -162,36 +219,32 @@ function figureDurationSeconds(
 
 /**
  * Stub público — mantém a assinatura da API para não quebrar importações.
- * SF2 removido: retorna Promise.resolve() imediatamente.
- * O motor FM está sempre ativo; não há estado de carregamento.
+ * Motor FM puro: retorna Promise.resolve() imediatamente.
  *
  * @param _url — ignorado (mantido por compatibilidade com BrailleEditor.tsx)
  */
 export async function loadSoundFont(_url?: string): Promise<void> {
-  // FM puro — nenhuma operação necessária.
   return Promise.resolve();
 }
 
-// ─── MOTOR FM ─────────────────────────────────────────────────────────────────
+// ─── MOTOR FM MULTI-TIMBRE ────────────────────────────────────────────────────
 //
-// Síntese FM aditiva de piano:
-//   • Modulador senoidal (ratioFM × freq) com decaimento rápido (decayFM)
-//     simula o transitório de ataque percussivo do martelo.
-//   • 4 parciais harmônicos (1×, 2×, 3×, 4× freq) com ganhos decrescentes
-//     reconstituem o timbre rico de cordas em vibração.
-//   • Envelope mestre: ataque imediato → decaimento exponencial até silêncio.
-
-const HARMONIC_GAINS = [1.0, 0.50, 0.25, 0.12] as const;
-
-const FM_PARAMS = {
-  ratioFM:  2.756,  // razão freq modulador / portadora
-  depthFM:  14,     // profundidade de modulação (semelhante ao índice FM)
-  decayFM:  0.04,   // tempo de decaimento do modulador (s) — transitório do martelo
-} as const;
+// Síntese FM aditiva com preset por instrumento (_currentInstrument):
+//
+//   Piano  — modulador de alta frequência (ratio 2.756) com decaimento rápido
+//             simula o transitório percussivo do martelo. Parciais decrescentes
+//             reconstituem o timbre rico das cordas.
+//
+//   Guitar — modulador de baixa modulação (ratio 1.0, depth 4) com decaimento
+//             médio simula o ataque dedilhado e a sustentação curta de nylon.
+//
+//   Flute  — modulação suave (depth 1.5) com envelope de ataque linear de 50 ms
+//             emula o sopro gradual da embocadura. Parciais muito atenuados
+//             resultam no timbre limpo e flautado.
 
 /**
  * Agenda o som de um acorde FM no AudioContext fornecido.
- * Pode ser chamada com qualquer número de frequências (nota simples ou acorde).
+ * Lê _currentInstrument para selecionar os parâmetros FM corretos.
  *
  * @param ctx             — AudioContext ativo
  * @param frequencies     — array de frequências em Hz
@@ -206,8 +259,10 @@ function scheduleChord(
   durationSeconds: number,
   velocity = 0.72,
 ): void {
+  const preset       = FM_PRESETS[_currentInstrument];
   const safeDuration = Math.max(durationSeconds, 0.08);
   const noteOff      = startTime + safeDuration;
+  const attackEnd    = startTime + preset.attackTime;
 
   frequencies.forEach(freq => {
     if (!Number.isFinite(freq) || freq <= 0) return;
@@ -216,22 +271,31 @@ function scheduleChord(
     const oscFM  = ctx.createOscillator();
     const gainFM = ctx.createGain();
     oscFM.type = 'sine';
-    oscFM.frequency.value = freq * FM_PARAMS.ratioFM;
-    gainFM.gain.setValueAtTime(FM_PARAMS.depthFM * velocity, startTime);
-    gainFM.gain.exponentialRampToValueAtTime(0.001, startTime + FM_PARAMS.decayFM);
+    oscFM.frequency.value = freq * preset.ratioFM;
+    gainFM.gain.setValueAtTime(preset.depthFM * velocity, startTime);
+    gainFM.gain.exponentialRampToValueAtTime(0.001, startTime + preset.decayFM);
     oscFM.connect(gainFM);
     oscFM.start(startTime);
-    oscFM.stop(startTime + FM_PARAMS.decayFM + 0.01);
+    oscFM.stop(startTime + preset.decayFM + 0.01);
 
-    // ── Envelope mestre ───────────────────────────────────────────────────────
+    // ── Envelope mestre (ataque + decaimento) ─────────────────────────────────
     const gainMaster = ctx.createGain();
-    const peakGain   = 0.30 * velocity;
-    gainMaster.gain.setValueAtTime(peakGain, startTime);
-    gainMaster.gain.exponentialRampToValueAtTime(0.001, noteOff);
+    const peakGain   = preset.peakGain * velocity;
+
+    if (preset.attackTime > 0) {
+      // Flauta: ataque linear suave (emula sopro)
+      gainMaster.gain.setValueAtTime(0, startTime);
+      gainMaster.gain.linearRampToValueAtTime(peakGain, attackEnd);
+      gainMaster.gain.exponentialRampToValueAtTime(0.001, noteOff);
+    } else {
+      // Piano / Guitar: ataque imediato + decaimento exponencial
+      gainMaster.gain.setValueAtTime(peakGain, startTime);
+      gainMaster.gain.exponentialRampToValueAtTime(0.001, noteOff);
+    }
     gainMaster.connect(ctx.destination);
 
     // ── Parciais harmônicos ───────────────────────────────────────────────────
-    HARMONIC_GAINS.forEach((relGain, harmonicIdx) => {
+    preset.gains.forEach((relGain, harmonicIdx) => {
       const harmFreq = freq * (harmonicIdx + 1);
       if (!Number.isFinite(harmFreq) || harmFreq > 20000) return;
 
@@ -254,12 +318,27 @@ function scheduleChord(
 
 // ─── ESTADO GLOBAL DO PLAYER ──────────────────────────────────────────────────
 
-let _ctx:         AudioContext | null                       = null;
-let _stopped:     boolean                                    = true;
-let _currentBpm:  number                                     = 120;
-let _finishTimer: ReturnType<typeof setTimeout> | null       = null;
+let _ctx:         AudioContext | null                  = null;
+let _stopped:     boolean                              = true;
+let _currentBpm:  number                               = 120;
+let _finishTimer: ReturnType<typeof setTimeout> | null = null;
 
 // ─── API PÚBLICA ──────────────────────────────────────────────────────────────
+
+/**
+ * Alterna o timbre FM ativo.
+ * Efeito imediato na próxima nota agendada (playScore ou playSingleNote).
+ *
+ * @param inst — 'piano' | 'guitar' | 'flute'
+ */
+export function setInstrument(inst: InstrumentType): void {
+  _currentInstrument = inst;
+}
+
+/** Retorna o timbre FM atualmente selecionado. */
+export function getInstrument(): InstrumentType {
+  return _currentInstrument;
+}
 
 /**
  * Altera o andamento (BPM) em tempo real.
@@ -288,15 +367,42 @@ export function stopScore(): void {
 }
 
 /**
- * Percorre o array de elementos e reproduz a partitura completa via síntese FM.
+ * Pausa a reprodução suspendendo o AudioContext.
+ * As notas já agendadas no scheduler são congeladas no tempo.
+ * Chamar resumeScore() continua a partir do ponto exato de pausa.
+ */
+export function pauseScore(): void {
+  if (_ctx !== null && _ctx.state === 'running') {
+    _ctx.suspend().catch(() => {});
+  }
+}
+
+/**
+ * Retoma a reprodução após pauseScore().
+ * Desuspende o AudioContext — o scheduler continua de onde parou.
+ */
+export function resumeScore(): void {
+  if (_ctx !== null && _ctx.state === 'suspended') {
+    _ctx.resume().catch(() => {});
+  }
+}
+
+/**
+ * Percorre o array de elementos e reproduz a partitura via síntese FM.
  *
  * @param elements           — Array de ParsedElement do brailleMusic.ts
  * @param initialBpm         — BPM inicial (padrão: 120)
+ * @param startIndex         — sourceIndex a partir do qual iniciar a reprodução.
+ *                             Elementos com sourceIndex < startIndex são percorridos
+ *                             para atualizar o estado de armadura/acidentes mas
+ *                             NÃO geram som e NÃO avançam o cursor de áudio.
+ *                             0 = reproduzir desde o início.
  * @param onElementHighlight — Callback opcional: sourceIndex da nota atual
  */
 export function playScore(
-  elements: ParsedElement[],
-  initialBpm = 120,
+  elements:            ParsedElement[],
+  initialBpm         = 120,
+  startIndex         = 0,
   onElementHighlight?: (sourceIndex: number) => void,
 ): void {
   stopScore();
@@ -310,14 +416,10 @@ export function playScore(
   setBpm(initialBpm);
 
   // ── Estado de armadura de clave ───────────────────────────────────────────
-  // currentGlobalKeySignature: persiste do 1º ao último compasso.
-  // Atualizada ao encontrar 'keysignature'. Reutilizada para reafirmar
-  // keyAccidentals após barlines e rests (evita vazamento de bequadros locais).
   let currentGlobalKeySignature: string | null = null;
   let keyAccidentals:            KeyAccidentalMap     = {};
   let measureAccidentals:        MeasureAccidentalMap = {};
 
-  // Pré-carregar armadura a partir do primeiro keysignature encontrado
   const firstKS = elements.find(el => el.type === 'keysignature') as ParsedKeySignature | undefined;
   if (firstKS) {
     currentGlobalKeySignature = firstKS.vexKey;
@@ -326,10 +428,10 @@ export function playScore(
 
   // ── Cursor de tempo (Web Audio scheduler) ────────────────────────────────
   let cursor = _ctx.currentTime + 0.05;
-  const ctx  = _ctx; // captura local para closures
+  const ctx  = _ctx;
 
   // ── Tie tracking (MIMB 6-2) ───────────────────────────────────────────────
-  const tieActiveUntil = new Map<string, number>(); // "pitch/octave" → fim do som
+  const tieActiveUntil = new Map<string, number>();
 
   // ── Loop principal ────────────────────────────────────────────────────────
   for (let i = 0; i < elements.length; i++) {
@@ -337,7 +439,7 @@ export function playScore(
 
     const el = elements[i];
 
-    // keysignature → atualiza armadura global
+    // keysignature → atualiza armadura global (SEMPRE, mesmo antes de startIndex)
     if (el.type === 'keysignature') {
       const ks = el as ParsedKeySignature;
       currentGlobalKeySignature = ks.vexKey;
@@ -347,7 +449,6 @@ export function playScore(
     }
 
     // barline → limpa acidentes locais + reafirma armadura global
-    // (previne que bequadros locais atravessem para o próximo compasso)
     if (el.type === 'barline') {
       measureAccidentals = {};
       if (currentGlobalKeySignature) {
@@ -356,15 +457,18 @@ export function playScore(
       continue;
     }
 
-    // rest → avança cursor + limpa acidentes locais
-    // (nota pós-pausa não deve herdar bequadro do compasso anterior)
+    // rest → avança cursor (apenas se >= startIndex) + limpa acidentes locais
     if (el.type === 'rest') {
-      const rest = el as { type: 'rest'; duration: string; dotted: boolean; dotted2: boolean };
+      const rest = el as { type: 'rest'; duration: string; dotted: boolean; dotted2: boolean; sourceIndex?: number };
       measureAccidentals = {};
       if (currentGlobalKeySignature) {
         keyAccidentals = { ...(KEY_SIGNATURE_MAP[currentGlobalKeySignature] ?? {}) };
       }
-      cursor += figureDurationSeconds(rest.duration, rest.dotted, rest.dotted2, _currentBpm);
+      // Avançar cursor apenas se esta pausa está no trecho a ser reproduzido
+      const restSrcIdx = rest.sourceIndex ?? 0;
+      if (restSrcIdx >= startIndex) {
+        cursor += figureDurationSeconds(rest.duration, rest.dotted, rest.dotted2, _currentBpm);
+      }
       continue;
     }
 
@@ -372,7 +476,7 @@ export function playScore(
 
     const note = el as ParsedNote;
 
-    // Registrar acidente explícito no mapa do compasso
+    // Registrar acidente explícito no mapa do compasso (SEMPRE — afeta estado)
     if (note.accidental !== undefined) {
       if (note.accidental === 'natural') {
         (measureAccidentals as Record<string, null>)[note.pitch] = null;
@@ -381,14 +485,21 @@ export function playScore(
       }
     }
 
-    // Duração métrica (quanto o cursor avança — independente de tie)
     const metricDur = figureDurationSeconds(note.duration, note.dotted, note.dotted2, _currentBpm);
+
+    // ── Verificar se esta nota está no trecho a reproduzir ────────────────
+    // Notas antes de startIndex: processam estado (acidentes, armadura) mas
+    // não geram som e não avançam o cursor de áudio.
+    const noteSrcIdx = note.sourceIndex ?? 0;
+    if (noteSrcIdx < startIndex) {
+      // Apenas atualizar estado — sem som, sem avanço de cursor
+      continue;
+    }
 
     // ── Frequências do acorde (nota base + intervalos) ────────────────────
     const chordFrequencies: number[] = [];
     let intervalCount = 0;
 
-    // resolveNoteDelta: measureAccidentals > keyAccidentals > 0
     const delta = resolveNoteDelta(note.pitch, measureAccidentals, keyAccidentals);
     const midi  = pitchToMidi(note.pitch, note.octave, delta);
     chordFrequencies.push(midiToFrequency(midi));
@@ -410,33 +521,28 @@ export function playScore(
     }
 
     // ── Tie MIMB 6-2 (ligadura de prolongação) ────────────────────────────
-    // isTie=true: esta nota é continuação — não re-atacar.
-    // A nota origem já foi agendada com soundDur total.
     const isTie             = !!(note as any).isTie || (note as any).tieRole === 'end';
     const tieDurationPulses = (note as any).tieDuration as number | undefined;
     const noteKey           = `${note.pitch.toLowerCase()}/${note.octave}`;
 
     if (isTie) {
       tieActiveUntil.delete(noteKey);
-      // Callback de highlight (nota existe metricamente, só não re-ataca)
       if (onElementHighlight !== undefined && note.sourceIndex !== undefined) {
         const noteTime = (cursor - ctx.currentTime) * 1000;
         const srcIdx   = note.sourceIndex;
         setTimeout(() => { if (!_stopped) onElementHighlight(srcIdx); }, Math.max(0, noteTime));
       }
       cursor += metricDur;
-      continue; // pula scheduleChord — sem re-ataque
+      continue;
     }
 
     // Calcular duração do som (pode ser maior que metricDur se for origem de tie)
     let soundDur = metricDur;
 
     if (tieDurationPulses !== undefined) {
-      // Esta nota já conhece a duração total da tie
       soundDur = tieDurationPulses * (60 / _currentBpm);
       tieActiveUntil.set(noteKey, cursor + soundDur);
     } else {
-      // Lookahead: verificar se a próxima nota de mesma altura tem isTie=true
       let lookAhead = i + 1 + intervalCount;
       while (lookAhead < elements.length) {
         const nextEl = elements[lookAhead];
@@ -457,10 +563,9 @@ export function playScore(
       }
     }
 
-    // Agendar som FM
+    // Agendar som FM com o timbre selecionado
     scheduleChord(ctx, chordFrequencies, cursor, soundDur * 0.96);
 
-    // Callback de highlight sincronizado com o tempo da nota
     if (onElementHighlight !== undefined && note.sourceIndex !== undefined) {
       const noteTime = (cursor - ctx.currentTime) * 1000;
       const srcIdx   = note.sourceIndex;
@@ -482,13 +587,8 @@ export function playScore(
 /**
  * Reprodução imediata de nota individual — feedback de digitação ao vivo.
  *
- * Usa AudioContext efêmero de curta duração:
- *   1. Cria um novo AudioContext.
- *   2. Dispara o acorde FM (scheduleChord).
- *   3. Fecha o ctx via setTimeout após durationMs + 200ms.
- *
- * Aplica armadura de clave ativa para tocar a frequência correta
- * (ex: Dó em Ré Maior soa Dó# automaticamente).
+ * Usa AudioContext efêmero de curta duração e o timbre FM ativo (_currentInstrument).
+ * Aplica armadura de clave ativa para frequência correta (ex: Dó em Ré Maior → Dó#).
  *
  * @param note         — ParsedNote a ser tocada
  * @param keySignature — Armadura ativa (ex: 'G', 'D'). null = Dó Maior.
@@ -499,22 +599,20 @@ export function playSingleNote(
   keySignature: string | null = null,
   durationMs  = 300,
 ): void {
-  // Resolver armadura de clave ativa
   const keyAcc: KeyAccidentalMap = (() => {
     if (!keySignature) return {};
     const acc = KEY_SIGNATURE_MAP[keySignature];
     if (!acc && process.env.NODE_ENV === 'development') {
-      console.warn(`[playSingleNote] armadura '${keySignature}' não encontrada no KEY_SIGNATURE_MAP`);
+      console.warn(`[playSingleNote] armadura '${keySignature}' não encontrada`);
     }
     return acc ?? {};
   })();
 
-  // Prioridade: acidente explícito da nota > armadura de clave > natural
+  // Prioridade: acidente explícito > armadura de clave > natural
   const finalDelta = note.accidental !== undefined
     ? (ACCIDENTAL_SEMITONE[note.accidental] ?? 0)
     : resolveNoteDelta(note.pitch, {}, keyAcc);
 
-  // pitchToMidi com fórmula correta: C4 (oitava 4 braille) = MIDI 60
   const midi = pitchToMidi(note.pitch, note.octave, finalDelta);
   const hz   = midiToFrequency(midi);
   const dur  = durationMs / 1000;
@@ -528,75 +626,70 @@ export function playSingleNote(
   try {
     ctx = new AudioCtx();
   } catch {
-    return; // browser sem suporte a Web Audio API
+    return;
   }
 
   scheduleChord(ctx, [hz], ctx.currentTime + 0.01, dur, 0.65);
 
-  // Fechar ctx após o som terminar (liberar recursos do browser)
   setTimeout(() => { ctx.close().catch(() => {}); }, durationMs + 200);
 }
 
 // ─── TESTES UNITÁRIOS (Vitest) ────────────────────────────────────────────────
 
 if (import.meta.vitest) {
-  const { describe, it, expect } = import.meta.vitest;
+  const { describe, it, expect, beforeEach } = import.meta.vitest;
 
-  describe('pitchToMidi — conversão de nota para MIDI', () => {
-    it('C4 = MIDI 60 (Dó central)',  () => expect(pitchToMidi('C', 4, 0)).toBe(60));
-    it('A4 = MIDI 69 (440 Hz ref)',  () => expect(pitchToMidi('A', 4, 0)).toBe(69));
-    it('C#4 = MIDI 61',              () => expect(pitchToMidi('C', 4, 1)).toBe(61));
-    it('Bb4 = MIDI 70',              () => expect(pitchToMidi('B', 4, -1)).toBe(70));
-    it('C5 = MIDI 72',               () => expect(pitchToMidi('C', 5, 0)).toBe(72));
-    it('B3 = MIDI 59',               () => expect(pitchToMidi('B', 3, 0)).toBe(59));
-    it('F#5 = MIDI 78',              () => expect(pitchToMidi('F', 5, 1)).toBe(78));
-    it('C0 = MIDI 12',               () => expect(pitchToMidi('C', 0, 0)).toBe(12));
-    it('C7 = MIDI 96',               () => expect(pitchToMidi('C', 7, 0)).toBe(96));
+  describe('pitchToMidi — oitava central C4 = MIDI 60', () => {
+    it('C4 = 60 (Dó central)',  () => expect(pitchToMidi('C', 4, 0)).toBe(60));
+    it('A4 = 69 (440 Hz ref)', () => expect(pitchToMidi('A', 4, 0)).toBe(69));
+    it('C#4 = 61',             () => expect(pitchToMidi('C', 4, 1)).toBe(61));
+    it('Bb4 = 70',             () => expect(pitchToMidi('B', 4, -1)).toBe(70));
+    it('C5 = 72',              () => expect(pitchToMidi('C', 5, 0)).toBe(72));
+    it('B3 = 59',              () => expect(pitchToMidi('B', 3, 0)).toBe(59));
+    it('F#5 = 78',             () => expect(pitchToMidi('F', 5, 1)).toBe(78));
+    it('C0 = 12',              () => expect(pitchToMidi('C', 0, 0)).toBe(12));
+    it('C7 = 96',              () => expect(pitchToMidi('C', 7, 0)).toBe(96));
   });
 
   describe('midiToFrequency', () => {
-    it('A4 (69) = 440.00 Hz',  () => expect(midiToFrequency(69)).toBeCloseTo(440.0, 2));
-    it('A5 (81) = 880.00 Hz',  () => expect(midiToFrequency(81)).toBeCloseTo(880.0, 2));
-    it('C4 (60) ≈ 261.63 Hz',  () => expect(midiToFrequency(60)).toBeCloseTo(261.63, 1));
-    it('A3 (57) = 220.00 Hz',  () => expect(midiToFrequency(57)).toBeCloseTo(220.0, 2));
+    it('A4 (69) = 440 Hz',   () => expect(midiToFrequency(69)).toBeCloseTo(440.0, 2));
+    it('A5 (81) = 880 Hz',   () => expect(midiToFrequency(81)).toBeCloseTo(880.0, 2));
+    it('C4 (60) ≈ 261.63 Hz',() => expect(midiToFrequency(60)).toBeCloseTo(261.63, 1));
+    it('A3 (57) = 220 Hz',   () => expect(midiToFrequency(57)).toBeCloseTo(220.0, 2));
   });
 
   describe('resolveNoteDelta — prioridade de acidentes', () => {
     const keyD: KeyAccidentalMap = { F: 1, C: 1 };
-
-    it('F em Ré maior → +1 (armadura)',    () => expect(resolveNoteDelta('F', {}, keyD)).toBe(1));
-    it('D em Ré maior → 0 (sem acidente)', () => expect(resolveNoteDelta('D', {}, keyD)).toBe(0));
-    it('bequadro no compasso cancela F#', () => {
+    it('F em Ré maior → +1',          () => expect(resolveNoteDelta('F', {}, keyD)).toBe(1));
+    it('D em Ré maior → 0',           () => expect(resolveNoteDelta('D', {}, keyD)).toBe(0));
+    it('bequadro cancela F#', () => {
       const m: MeasureAccidentalMap = {};
       (m as Record<string, null>)['F'] = null;
       expect(resolveNoteDelta('F', m, keyD)).toBe(0);
     });
-    it('Cb no compasso > C# da armadura', () => {
-      expect(resolveNoteDelta('C', { C: -1 }, keyD)).toBe(-1);
-    });
-    it('Ré maior não altera nota não listada', () => {
-      expect(resolveNoteDelta('B', {}, keyD)).toBe(0);
-    });
+    it('Cb no compasso > C# da armadura', () =>
+      expect(resolveNoteDelta('C', { C: -1 }, keyD)).toBe(-1));
+    it('nota não listada → 0',        () => expect(resolveNoteDelta('B', {}, keyD)).toBe(0));
   });
 
   describe('figureDurationSeconds', () => {
-    it('q a 60 BPM = 1.0s',    () => expect(figureDurationSeconds('q',  false, false, 60)).toBeCloseTo(1.0,  5));
-    it('h a 60 BPM = 2.0s',    () => expect(figureDurationSeconds('h',  false, false, 60)).toBeCloseTo(2.0,  5));
-    it('w a 60 BPM = 4.0s',    () => expect(figureDurationSeconds('w',  false, false, 60)).toBeCloseTo(4.0,  5));
-    it('8 a 120 BPM = 0.25s',  () => expect(figureDurationSeconds('8',  false, false, 120)).toBeCloseTo(0.25, 5));
-    it('q. a 60 BPM = 1.5s',   () => expect(figureDurationSeconds('q',  true,  false, 60)).toBeCloseTo(1.5,  5));
-    it('q.. a 60 BPM = 1.75s', () => expect(figureDurationSeconds('q',  false, true,  60)).toBeCloseTo(1.75, 5));
-    it('16 a 120 BPM = 0.125s',() => expect(figureDurationSeconds('16', false, false, 120)).toBeCloseTo(0.125,5));
+    it('q 60 BPM = 1.0s',     () => expect(figureDurationSeconds('q',  false, false, 60)).toBeCloseTo(1.0,  5));
+    it('h 60 BPM = 2.0s',     () => expect(figureDurationSeconds('h',  false, false, 60)).toBeCloseTo(2.0,  5));
+    it('w 60 BPM = 4.0s',     () => expect(figureDurationSeconds('w',  false, false, 60)).toBeCloseTo(4.0,  5));
+    it('8 120 BPM = 0.25s',   () => expect(figureDurationSeconds('8',  false, false, 120)).toBeCloseTo(0.25, 5));
+    it('q. 60 BPM = 1.5s',    () => expect(figureDurationSeconds('q',  true,  false, 60)).toBeCloseTo(1.5,  5));
+    it('q.. 60 BPM = 1.75s',  () => expect(figureDurationSeconds('q',  false, true,  60)).toBeCloseTo(1.75, 5));
+    it('16 120 BPM = 0.125s', () => expect(figureDurationSeconds('16', false, false, 120)).toBeCloseTo(0.125,5));
   });
 
   describe('KEY_SIGNATURE_MAP', () => {
-    it('C: sem acidentes',  () => expect(KEY_SIGNATURE_MAP['C']).toEqual({}));
-    it('G: F#',             () => expect(KEY_SIGNATURE_MAP['G']).toEqual({ F: 1 }));
-    it('D: F# e C#',        () => expect(KEY_SIGNATURE_MAP['D']).toEqual({ F: 1, C: 1 }));
-    it('F: Bb',             () => expect(KEY_SIGNATURE_MAP['F']).toEqual({ B: -1 }));
-    it('Bb: Bb e Eb',       () => expect(KEY_SIGNATURE_MAP['Bb']).toEqual({ B: -1, E: -1 }));
-    it('C#: 7 sustenidos',  () => expect(Object.keys(KEY_SIGNATURE_MAP['C#'] ?? {})).toHaveLength(7));
-    it('Cb: 7 bemóis',      () => expect(Object.keys(KEY_SIGNATURE_MAP['Cb'] ?? {})).toHaveLength(7));
+    it('C: sem acidentes', () => expect(KEY_SIGNATURE_MAP['C']).toEqual({}));
+    it('G: F#',            () => expect(KEY_SIGNATURE_MAP['G']).toEqual({ F: 1 }));
+    it('D: F# e C#',       () => expect(KEY_SIGNATURE_MAP['D']).toEqual({ F: 1, C: 1 }));
+    it('F: Bb',            () => expect(KEY_SIGNATURE_MAP['F']).toEqual({ B: -1 }));
+    it('Bb: Bb e Eb',      () => expect(KEY_SIGNATURE_MAP['Bb']).toEqual({ B: -1, E: -1 }));
+    it('C#: 7 sustenidos', () => expect(Object.keys(KEY_SIGNATURE_MAP['C#'] ?? {})).toHaveLength(7));
+    it('Cb: 7 bemóis',     () => expect(Object.keys(KEY_SIGNATURE_MAP['Cb'] ?? {})).toHaveLength(7));
   });
 
   describe('setBpm', () => {
@@ -606,12 +699,24 @@ if (import.meta.vitest) {
     it('normal: 80',  () => { setBpm(80);   expect(_currentBpm).toBe(80);  });
   });
 
+  describe('setInstrument / getInstrument', () => {
+    beforeEach(() => { setInstrument('piano'); });
+
+    it('padrão é piano',         () => expect(getInstrument()).toBe('piano'));
+    it('muda para guitar',       () => { setInstrument('guitar'); expect(getInstrument()).toBe('guitar'); });
+    it('muda para flute',        () => { setInstrument('flute');  expect(getInstrument()).toBe('flute');  });
+    it('volta para piano',       () => { setInstrument('flute'); setInstrument('piano'); expect(getInstrument()).toBe('piano'); });
+    it('FM_PRESETS piano correto',  () => expect(FM_PRESETS.piano.ratioFM).toBeCloseTo(2.756, 3));
+    it('FM_PRESETS guitar ratio',   () => expect(FM_PRESETS.guitar.ratioFM).toBe(1.0));
+    it('FM_PRESETS flute attack',   () => expect(FM_PRESETS.flute.attackTime).toBeCloseTo(0.05, 3));
+    it('FM_PRESETS flute depth < guitar', () =>
+      expect(FM_PRESETS.flute.depthFM).toBeLessThan(FM_PRESETS.guitar.depthFM));
+  });
+
   describe('loadSoundFont — stub FM puro', () => {
-    it('retorna Promise resolvida imediatamente', async () => {
-      await expect(loadSoundFont('/qualquer/caminho.sf2')).resolves.toBeUndefined();
-    });
-    it('sem argumento também resolve', async () => {
-      await expect(loadSoundFont()).resolves.toBeUndefined();
-    });
+    it('resolve imediatamente com url',   async () =>
+      await expect(loadSoundFont('/assets/piano.sf2')).resolves.toBeUndefined());
+    it('resolve imediatamente sem args',  async () =>
+      await expect(loadSoundFont()).resolves.toBeUndefined());
   });
 }
