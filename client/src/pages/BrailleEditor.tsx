@@ -16,7 +16,7 @@ import {
   type ParseOptions,
 } from "@/lib/brailleMusic";
 import { brailleToRoman } from "@/lib/brailleRomano";
-import { playScore, stopScore, setBpm as setScoreBpmFn, loadSoundFont } from "@/lib/scoreAudioPlayer";
+import { playScore, stopScore, pauseScore, resumeScore, setBpm as setScoreBpmFn, loadSoundFont, setInstrument, type InstrumentType } from "@/lib/scoreAudioPlayer";
 import { asciiToUnicodeBraille, detectBrailleFormat } from "@/lib/brailleAscii";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -33,6 +33,7 @@ import {
   Info,
   Upload,
   Play,
+  Pause,
   Square,
   Volume2,
   VolumeX,
@@ -833,6 +834,8 @@ export default function BrailleEditor() {
 
   // ── Audio state ───────────────────────────────────────────────────────────
   const [isPlaying,     setIsPlaying]     = useState(false);
+  const [isPaused,      setIsPaused]      = useState(false);
+  const [instrument,    setInstrumentState] = useState<InstrumentType>('piano');
   const [playerBpm,     setPlayerBpm]     = useState(120);
   const [bpmInputValue, setBpmInputValue] = useState("120");
   const [soundOnType,   setSoundOnType]   = useState(true);
@@ -968,31 +971,81 @@ export default function BrailleEditor() {
   const setScoreBpm = setScoreBpmFn;
   useEffect(() => { return () => stopScore(); }, []);
 
-  const handleStop = useCallback(() => { stopScore(); setIsPlaying(false); }, []);
+  const handleStop   = useCallback(() => { stopScore();  setIsPlaying(false); setIsPaused(false); }, []);
+  const handlePause  = useCallback(() => {
+    if (isPlaying && !isPaused) {
+      pauseScore();
+      setIsPaused(true);
+    }
+  }, [isPlaying, isPaused]);
 
   const handlePlay = useCallback(() => {
     if (parsedElements.length === 0) return;
-    if (isPlaying) { handleStop(); return; }
+    if (isPlaying && !isPaused) { handleStop(); return; }
+
+    if (isPaused) {
+      // Retomar reprodução pausada
+      resumeScore();
+      setIsPaused(false);
+      return;
+    }
+
     setScoreBpm(playerBpm);
-    playScore(parsedElements, playerBpm);
+    // Nova assinatura: playScore(elements, bpm, startIndex, onHighlight?)
+    // onDone removido — o player encerra internamente via _finishTimer.
+    // Calcular duração total para desativar o botão automaticamente.
+    // cursorPos (posição do cursor no texto Braille) é mapeado para
+    // o sourceIndex do elemento correspondente via parsedElements.
+    // playScore percorre todos os elementos ANTES do startIndex para
+    // preservar armadura de clave e acidentes do compasso vigentes —
+    // a nota iniciada soa com o contexto harmônico correto.
+    const activeSourceIndex = (() => {
+      // Encontrar o ParsedNote com sourceIndex mais próximo do cursorPos
+      const notes = parsedElements.filter(
+        e => e.type === 'note' || e.type === 'rest'
+      );
+      if (notes.length === 0) return 0;
+      // Usar o maior sourceIndex que não ultrapasse cursorPos
+      let best = 0;
+      for (const el of notes) {
+        const si = (el as any).sourceIndex as number ?? 0;
+        if (si <= cursorPos && si >= best) best = si;
+      }
+      return best;
+    })();
+    playScore(parsedElements, playerBpm, activeSourceIndex);
     setIsPlaying(true);
-    // Detectar fim da reprodução via polling (scoreAudioPlayer não expe o callback onDone)
-    const pollEnd = setInterval(() => {
-      // stopScore() seta _stopped=true internamente; usamos o próprio stopScore como sinal
-      // Alternativa: verificar se o AudioContext fechou via tentativa de play
-      // Por simplicidade, usamos um timeout baseado no BPM e número de elementos
-      clearInterval(pollEnd);
-    }, 500);
-    const durationToBeats: Record<string, number> = { 'w': 4, 'h': 2, 'q': 1, '8': 0.5, '16': 0.25, '32': 0.125, '64': 0.0625, '128': 0.03125 };
+    setIsPaused(false);
+
+    // Estimar duração total (beats / bpm × 60s × 1000ms) + margem de 500ms
     const totalBeats = parsedElements.reduce((acc, el) => {
-      if (el.type === 'note' || el.type === 'rest') return acc + (durationToBeats[el.duration] ?? 1);
-      return acc;
+      if (el.type !== 'note' && el.type !== 'rest') return acc;
+      const dur = (el as any).duration as string ?? 'q';
+      const dot  = (el as any).dotted  as boolean ?? false;
+      const dot2 = (el as any).dotted2 as boolean ?? false;
+      const PULSES: Record<string, number> = {
+        w: 4, h: 2, q: 1, '8': 0.5, '16': 0.25, '32': 0.125, '64': 0.0625, '128': 0.03125,
+      };
+      const pulses = (PULSES[dur] ?? 1) * (dot2 ? 1.75 : dot ? 1.5 : 1);
+      return acc + pulses;
     }, 0);
-    const totalMs = (totalBeats / playerBpm) * 60 * 1000 + 500;
-    setTimeout(() => setIsPlaying(false), totalMs);
-  }, [parsedElements, isPlaying, playerBpm, handleStop, setScoreBpm]);
+    const durationMs = (totalBeats / playerBpm) * 60 * 1000 + 500;
+
+    const timerId = setTimeout(() => {
+      setIsPlaying(false);
+      setIsPaused(false);
+    }, durationMs);
+
+    // Limpar timer se o usuário parar manualmente
+    return () => clearTimeout(timerId);
+  }, [parsedElements, isPlaying, isPaused, playerBpm, handleStop, setScoreBpm]);
 
   const handleBpmInputChange = useCallback((raw: string) => setBpmInputValue(raw), []);
+  const handleInstrumentChange = useCallback((inst: InstrumentType) => {
+    setInstrument(inst);
+    setInstrumentState(inst);
+  }, []);
+
   const handleBpmCommit = useCallback((raw: string) => {
     const parsed  = parseInt(raw, 10);
     const clamped = Number.isNaN(parsed) ? 120 : Math.max(20, Math.min(400, parsed));
@@ -1720,8 +1773,10 @@ export default function BrailleEditor() {
 
           <div className="h-4 w-px bg-border mx-0.5" />
 
-          {/* Player */}
-          <div className="flex items-center gap-1.5">
+          {/* ── Controles de Transporte ──────────────────────────────────── */}
+          <div className="flex items-center gap-1.5" role="group" aria-label="Controles de reprodução">
+
+            {/* BPM */}
             <div className="flex items-center gap-1">
               <label htmlFor="bpm-inp" className="text-[10px] text-muted-foreground">BPM</label>
               <input
@@ -1732,18 +1787,80 @@ export default function BrailleEditor() {
                 onBlur={e  => handleBpmCommit(e.target.value)}
                 onKeyDown={e => { if (e.key === "Enter") { handleBpmCommit((e.target as HTMLInputElement).value); (e.target as HTMLInputElement).blur(); } }}
                 className="w-12 h-6 text-center text-xs border rounded bg-card focus:outline-none focus:ring-1 focus:ring-primary/50"
+                aria-label="Andamento em BPM"
               />
             </div>
+
+            {/* Play / Resume */}
             <button
               onClick={handlePlay}
               disabled={parsedElements.length === 0}
+              aria-label={isPaused ? "Retomar reprodução" : isPlaying ? "Iniciando do cursor" : "Reproduzir partitura a partir do cursor"}
+              aria-pressed={isPlaying && !isPaused}
+              title={isPaused ? "Retomar (a partir do ponto pausado)" : isPlaying ? "Reproduzindo…" : "Reproduzir a partir do cursor"}
               className={`flex items-center gap-1 text-xs px-2 py-1 rounded font-medium transition-colors disabled:opacity-40 ${
-                isPlaying ? "bg-red-500 text-white hover:bg-red-600" : "bg-primary text-primary-foreground hover:opacity-90"
+                isPlaying && !isPaused
+                  ? "bg-primary/20 text-primary border border-primary/40"
+                  : "bg-primary text-primary-foreground hover:opacity-90"
               }`}
-              title={isPlaying ? "Parar" : "Ouvir partitura"}
             >
-              {isPlaying ? <><Square className="w-3 h-3" /> Parar</> : <><Play className="w-3 h-3" /> Ouvir</>}
+              <Play className="w-3 h-3" aria-hidden="true" />
+              <span>{isPaused ? "Retomar" : isPlaying ? "Tocando" : "Ouvir"}</span>
             </button>
+
+            {/* Pause / Resume toggle */}
+            <button
+              onClick={handlePause}
+              disabled={!isPlaying || parsedElements.length === 0}
+              aria-label={isPaused ? "Reprodução pausada — clique para retomar" : "Pausar reprodução"}
+              aria-pressed={isPaused}
+              title={isPaused ? "Pausado — clique em Retomar" : "Pausar"}
+              className={`flex items-center gap-1 text-xs px-2 py-1 rounded font-medium transition-colors disabled:opacity-30 ${
+                isPaused
+                  ? "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400 border border-yellow-400/40"
+                  : "bg-card border border-border text-muted-foreground hover:text-foreground hover:border-primary/50"
+              }`}
+            >
+              <Pause className="w-3 h-3" aria-hidden="true" />
+              <span className="sr-only">{isPaused ? "Pausado" : "Pausar"}</span>
+            </button>
+
+            {/* Stop */}
+            <button
+              onClick={handleStop}
+              disabled={!isPlaying && !isPaused}
+              aria-label="Parar reprodução e reiniciar cursor"
+              title="Parar"
+              className="flex items-center gap-1 text-xs px-2 py-1 rounded font-medium transition-colors disabled:opacity-30 bg-card border border-border text-muted-foreground hover:text-red-600 hover:border-red-400/50"
+            >
+              <Square className="w-3 h-3" aria-hidden="true" />
+              <span className="sr-only">Parar</span>
+            </button>
+
+          </div>
+
+          <div className="h-4 w-px bg-border mx-0.5" aria-hidden="true" />
+
+          {/* ── Seletor de Timbre FM ──────────────────────────────────────── */}
+          <div className="flex items-center gap-1">
+            <label
+              htmlFor="instrument-sel"
+              className="text-[10px] text-muted-foreground hidden sm:inline"
+            >
+              Timbre
+            </label>
+            <select
+              id="instrument-sel"
+              value={instrument}
+              onChange={e => handleInstrumentChange(e.target.value as InstrumentType)}
+              aria-label="Selecionar timbre de instrumento"
+              title="Timbre FM do instrumento"
+              className="h-6 text-xs rounded border border-border bg-card px-1.5 focus:outline-none focus:ring-1 focus:ring-primary/50 text-foreground cursor-pointer"
+            >
+              <option value="piano">🎹 Piano</option>
+              <option value="guitar">🎸 Violão</option>
+              <option value="flute">🎵 Flauta</option>
+            </select>
           </div>
 
           <div className="h-4 w-px bg-border mx-0.5" />
