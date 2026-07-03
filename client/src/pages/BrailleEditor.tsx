@@ -1680,12 +1680,15 @@ export default function BrailleEditor() {
         <div className="relative flex-1 min-h-[120px]">
           {/* Camada de destaque visual: sobrepõe o textarea com spans coloridos
               na posição da nota ativa no playback (playingSourceIndex).
-              Visível apenas durante a reprodução de áudio. */}
+              Visível apenas durante a reprodução de áudio.
+              CRÍTICO: classes estruturais/tipográficas IDÊNTICAS ao textarea
+              abaixo (padding, fonte, line-height, wrapping) — qualquer diferença
+              causa desalinhamento de caracteres em telas estreitas ou fontes grandes. */}
           {playingSourceIndex !== null && (
             <div
               aria-hidden="true"
               style={{ fontSize: brailleFontSize }}
-              className="absolute inset-0 p-3 font-mono leading-relaxed pointer-events-none whitespace-pre-wrap break-all z-10 overflow-hidden"
+              className="absolute inset-0 w-full h-full p-3 font-mono leading-relaxed pointer-events-none whitespace-pre-wrap z-10 overflow-hidden border border-transparent bg-transparent"
             >
               {Array.from(brailleContent).map((char, idx) => (
                 <span
@@ -1708,8 +1711,14 @@ export default function BrailleEditor() {
             onSelect={e => updateCursor(e.currentTarget)}
             onClick={e  => updateCursor(e.currentTarget)}
             onKeyUp={e  => updateCursor(e.currentTarget)}
+            onScroll={e => {
+              // Sincronizar o scroll do overlay de destaque com o textarea,
+              // evitando que o realce fique deslocado em partituras longas.
+              const overlay = e.currentTarget.previousSibling as HTMLDivElement | null;
+              if (overlay) overlay.scrollTop = e.currentTarget.scrollTop;
+            }}
             style={{ fontSize: brailleFontSize }}
-            className="absolute inset-0 w-full h-full p-3 font-mono leading-relaxed resize-none focus:outline-none bg-transparent z-20 caret-primary"
+            className="absolute inset-0 w-full h-full p-3 font-mono leading-relaxed resize-none focus:outline-none bg-transparent z-20 caret-primary border border-transparent"
             placeholder="⠐⠹⠱⠫⠻⠳⠪⠺"
             aria-label="Área de entrada em Braille musical"
             spellCheck={false}
