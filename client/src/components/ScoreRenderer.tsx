@@ -52,6 +52,12 @@ interface ScoreRendererProps {
    * Range recomendado: 0.4–1.5
    */
   scaleRatio?: number;
+  /**
+   * sourceIndex da nota atualmente ativa no playback.
+   * A StaveNote correspondente recebe fillStyle/strokeStyle azul (#3b82f6).
+   * null ou undefined = nenhum destaque.
+   */
+  activeSourceIndex?: number | null;
   /** Chamado quando o usuário clica em uma nota — recebe sourceIndex */
   onNoteClick?: (sourceIndex: number) => void;
   /** @deprecated Use onNoteClick */
@@ -450,6 +456,7 @@ function renderStaveSystem(
   showMeasureNumbers: boolean = false,
   availableWidth:  number = 900,
   systemHeight:    number = 110,
+  activeSourceIndex?: number | null,
 ): { staves: Stave[]; totalHeight: number } {
   const staves: Stave[] = [];
   const MARGIN_RIGHT = 20;
@@ -634,6 +641,19 @@ function renderStaveSystem(
 
         if (noteEl.dotted) Dot.buildAndAttach([vn], { all: true });
 
+        // ── Destaque visual da nota ativa no playback ─────────────────────
+        // activeSourceIndex vem do BrailleEditor via prop; sincronizado
+        // com o callback onElementHighlight do scoreAudioPlayer.
+        if (
+          activeSourceIndex !== null &&
+          activeSourceIndex !== undefined &&
+          (noteEl as any).sourceIndex === activeSourceIndex
+        ) {
+          try {
+            vn.setStyle({ fillStyle: '#3b82f6', strokeStyle: '#3b82f6' });
+          } catch { /* VexFlow version sem setStyle — ignorar */ }
+        }
+
         // ── Ligaduras e Prolongações — Modelo Neutro (Cérebro) ───────────────
         // O parser (brailleMusic.ts) marcou cada nota com papéis exatos:
         //   tieRole:   'start' | 'end'          → prolongação (mesma altura)
@@ -777,6 +797,7 @@ export default function ScoreRenderer({
   maxLevel = 3,
   grandStaff: grandStaffProp,
   scaleRatio = 0.8,
+  activeSourceIndex,
   onNoteClick,
   onMeasureClick,
 }: ScoreRendererProps) {
@@ -900,33 +921,66 @@ export default function ScoreRenderer({
 
     // ── Pauta estéril: só tokens de cabeçalho (sem notas ainda) ────────────
     // Quando o usuário digitou apenas keysignature/timesignature/clef,
-    // desenhamos uma única pauta com os modificadores sem criar Voice/Formatter.
+    // desenhamos a(s) pauta(s) com modificadores sem Voice/Formatter.
+    // Suporta Grand Staff (hasBothHands): nesse caso renderiza treble + bass
+    // com StaveConnector BRACE e DOUBLE.
     if (trebleMeasures.length === 0 && hasHeaderTokens) {
       const renderer = new Renderer(containerRef.current, Renderer.Backends.SVG);
-      const staveWidth = Math.max(width - 30, 200);
-      renderer.resize(staveWidth + 40, 160);
+      const staveWidth  = Math.max(width - 60, 200);
+      const logicWidth  = staveWidth / scaleRatio;
+      const svgH        = hasBothHands ? 280 : 160;
+      renderer.resize(staveWidth + 60, svgH);
       const ctx = renderer.getContext();
       ctx.scale(scaleRatio, scaleRatio);
 
-      const stave = new Stave(30, 40, staveWidth / scaleRatio);
-      stave.setContext(ctx);
-      stave.addClef(activeClef);
+      // Função auxiliar: adicionar modificadores comuns
+      const addModifiers = (stave: Stave, clefName: string) => {
+        stave.addClef(clefName);
+        if (keySignature && (VALID_KEYS as readonly string[]).includes(keySignature)) {
+          try { stave.addKeySignature(keySignature); } catch { /* ignora */ }
+        }
+        if (timeSignatureEl) {
+          const abbr = timeSignatureEl._abbreviated;
+          const num  = timeSignatureEl.numerator as number;
+          const den  = timeSignatureEl.denominator as number;
+          try {
+            if      (abbr === 'C')  stave.addTimeSignature('C');
+            else if (abbr === 'C|') stave.addTimeSignature('C|');
+            else if (num && den)    stave.addTimeSignature(`${num}/${den}`);
+          } catch { /* ignora */ }
+        }
+      };
 
-      if (keySignature && (VALID_KEYS as readonly string[]).includes(keySignature)) {
-        try { stave.addKeySignature(keySignature); } catch { /* ignora */ }
-      }
-      if (timeSignatureEl) {
-        const abbr = timeSignatureEl._abbreviated;
-        const num  = timeSignatureEl.numerator as number;
-        const den  = timeSignatureEl.denominator as number;
-        try {
-          if      (abbr === 'C')  stave.addTimeSignature('C');
-          else if (abbr === 'C|') stave.addTimeSignature('C|');
-          else if (num && den)    stave.addTimeSignature(`${num}/${den}`);
-        } catch { /* ignora */ }
+      if (hasBothHands) {
+        // Grand Staff: treble (y=40) + bass (y=160) + BRACE + DOUBLE
+        const staveTreble = new Stave(30, 40,  logicWidth);
+        const staveBass   = new Stave(30, 160, logicWidth);
+        staveTreble.setContext(ctx);
+        staveBass.setContext(ctx);
+
+        addModifiers(staveTreble, 'treble');
+        addModifiers(staveBass,   'bass');
+
+        // StaveConnector BRACE (chave de piano à esquerda)
+        const brace = new StaveConnector(staveTreble, staveBass);
+        brace.setType(StaveConnector.type.BRACE);
+        brace.setContext(ctx).draw();
+
+        // StaveConnector DOUBLE (barra dupla à esquerda)
+        const dbl = new StaveConnector(staveTreble, staveBass);
+        dbl.setType(StaveConnector.type.DOUBLE);
+        dbl.setContext(ctx).draw();
+
+        staveTreble.draw();
+        staveBass.draw();
+      } else {
+        // Pauta simples
+        const stave = new Stave(30, 40, logicWidth);
+        stave.setContext(ctx);
+        addModifiers(stave, activeClef);
+        stave.draw();
       }
 
-      stave.draw();
       return; // pauta estéril desenhada — sair sem criar Voice/Formatter
     }
 
@@ -968,12 +1022,12 @@ export default function ScoreRenderer({
       hasBothHands ? 'treble' : activeClef,
       hasBothHands ? 'descending' : intervalDirection,
       keySignature, timeSignatureEl, timeSignature,
-      noteHitAreas.current,
+            noteHitAreas.current,
       true,
       logicAvailW,
       logicSysH,
+      activeSourceIndex,
     );
-
     // ── Pauta bass (grand staff) ──────────────────────────────────────────
     let bassStaves: Stave[] = [];
     if (hasBothHands && bassMeasures.length > 0) {
@@ -986,6 +1040,7 @@ export default function ScoreRenderer({
         false,
         logicAvailW,
         logicSysH,
+        activeSourceIndex,
       );
       bassStaves = bs;
     }
@@ -1009,6 +1064,7 @@ export default function ScoreRenderer({
     elements, filteredElements, trebleMeasures, bassMeasures, staveWidths,
     width, height, activeClef, intervalDirection, hasBothHands,
     keySignature, timeSignatureEl, timeSignature, bassStartY, grandStaffProp, maxLevel, scaleRatio,
+    activeSourceIndex,
   ]);
 
   // ── Click listener ────────────────────────────────────────────────────────

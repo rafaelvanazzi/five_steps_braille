@@ -833,9 +833,11 @@ export default function BrailleEditor() {
   }, [layoutMode]);
 
   // ── Audio state ───────────────────────────────────────────────────────────
-  const [isPlaying,     setIsPlaying]     = useState(false);
-  const [isPaused,      setIsPaused]      = useState(false);
-  const [instrument,    setInstrumentState] = useState<InstrumentType>('piano');
+  const [isPlaying,          setIsPlaying]          = useState(false);
+  const [isPaused,           setIsPaused]           = useState(false);
+  const [instrument,         setInstrumentState]    = useState<InstrumentType>('piano');
+  /** sourceIndex da nota ativa no playback — null quando parado. */
+  const [playingSourceIndex, setPlayingSourceIndex] = useState<number | null>(null);
   const [playerBpm,     setPlayerBpm]     = useState(120);
   const [bpmInputValue, setBpmInputValue] = useState("120");
   const [soundOnType,   setSoundOnType]   = useState(true);
@@ -971,7 +973,12 @@ export default function BrailleEditor() {
   const setScoreBpm = setScoreBpmFn;
   useEffect(() => { return () => stopScore(); }, []);
 
-  const handleStop   = useCallback(() => { stopScore();  setIsPlaying(false); setIsPaused(false); }, []);
+  const handleStop   = useCallback(() => {
+    stopScore();
+    setIsPlaying(false);
+    setIsPaused(false);
+    setPlayingSourceIndex(null); // limpar destaque visual ao parar
+  }, []);
   const handlePause  = useCallback(() => {
     if (isPlaying && !isPaused) {
       pauseScore();
@@ -1013,7 +1020,11 @@ export default function BrailleEditor() {
       }
       return best;
     })();
-    playScore(parsedElements, playerBpm, activeSourceIndex);
+    // Callback onElementHighlight: sincroniza destaque visual (nota + texto Braille)
+    // com o scheduler de áudio. Chamado a cada nota reproduzida.
+    playScore(parsedElements, playerBpm, activeSourceIndex, (srcIdx) => {
+      setPlayingSourceIndex(srcIdx);
+    });
     setIsPlaying(true);
     setIsPaused(false);
 
@@ -1034,6 +1045,7 @@ export default function BrailleEditor() {
     const timerId = setTimeout(() => {
       setIsPlaying(false);
       setIsPaused(false);
+      setPlayingSourceIndex(null); // limpar destaque ao terminar
     }, durationMs);
 
     // Limpar timer se o usuário parar manualmente
@@ -1547,6 +1559,7 @@ export default function BrailleEditor() {
             width={scoreWidth}
             height={layoutMode === "vertical" ? 160 : 200}
             scaleRatio={scoreScaleRatio}
+            activeSourceIndex={playingSourceIndex}
             onMeasureClick={(srcIdx) => {
               const ta = brailleTextareaRef.current;
               if (!ta) return;
@@ -1664,19 +1677,44 @@ export default function BrailleEditor() {
 
       {/* Área de texto — muda conforme o modo */}
       {inputMode === "braille" ? (
-        <textarea
-          ref={brailleTextareaRef}
-          value={brailleContent}
-          onChange={e => handleBrailleChange(e.target.value)}
-          onSelect={e => updateCursor(e.currentTarget)}
-          onClick={e  => updateCursor(e.currentTarget)}
-          onKeyUp={e  => updateCursor(e.currentTarget)}
-          style={{ fontSize: brailleFontSize }}
-          className="flex-1 p-3 font-mono leading-relaxed resize-none focus:outline-none bg-transparent min-h-[120px]"
-          placeholder="⠐⠹⠱⠫⠻⠳⠪⠺"
-          aria-label="Área de entrada em Braille musical"
-          spellCheck={false}
-        />
+        <div className="relative flex-1 min-h-[120px]">
+          {/* Camada de destaque visual: sobrepõe o textarea com spans coloridos
+              na posição da nota ativa no playback (playingSourceIndex).
+              Visível apenas durante a reprodução de áudio. */}
+          {playingSourceIndex !== null && (
+            <div
+              aria-hidden="true"
+              style={{ fontSize: brailleFontSize }}
+              className="absolute inset-0 p-3 font-mono leading-relaxed pointer-events-none whitespace-pre-wrap break-all z-10 overflow-hidden"
+            >
+              {Array.from(brailleContent).map((char, idx) => (
+                <span
+                  key={idx}
+                  className={
+                    idx === playingSourceIndex
+                      ? "bg-blue-200 dark:bg-blue-900/50 rounded-sm transition-colors"
+                      : undefined
+                  }
+                >
+                  {char}
+                </span>
+              ))}
+            </div>
+          )}
+          <textarea
+            ref={brailleTextareaRef}
+            value={brailleContent}
+            onChange={e => handleBrailleChange(e.target.value)}
+            onSelect={e => updateCursor(e.currentTarget)}
+            onClick={e  => updateCursor(e.currentTarget)}
+            onKeyUp={e  => updateCursor(e.currentTarget)}
+            style={{ fontSize: brailleFontSize }}
+            className="absolute inset-0 w-full h-full p-3 font-mono leading-relaxed resize-none focus:outline-none bg-transparent z-20 caret-primary"
+            placeholder="⠐⠹⠱⠫⠻⠳⠪⠺"
+            aria-label="Área de entrada em Braille musical"
+            spellCheck={false}
+          />
+        </div>
       ) : (
         <textarea
           ref={romanTextareaRef}
