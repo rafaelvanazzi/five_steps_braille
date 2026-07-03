@@ -497,9 +497,17 @@ function renderStaveSystem(
     const mNotes = measure.notes.filter(n =>
       n.type === 'note' || n.type === 'rest' || n.type === 'interval'
     );
-    // Compasso sem notas reais: ignorar (não criar stave vazio) a menos que seja barra final
-    const hasRealNotes = mNotes.some(n => n.type === 'note' || n.type === 'rest');
-    if (!hasRealNotes && measure.barlineType !== 'end' && measure.barlineType !== 'end-section') {
+    // Compasso sem notas: ignorar (não criar stave vazio) exceto:
+    //   (a) barra final — sempre renderizar
+    //   (b) primeiro compasso com tokens de cabeçalho (keysignature/timesignature)
+    //       — renderizar pauta estéril para mostrar clave/armadura/compasso imediatamente
+    const hasRealNotes  = mNotes.some(n => n.type === 'note' || n.type === 'rest');
+    const hasHeaderOnly = !hasRealNotes && measure.notes.some(
+      n => n.type === 'keysignature' || n.type === 'timesignature' || n.type === 'clef'
+    );
+    const isFinalBar = measure.barlineType === 'end' || measure.barlineType === 'end-section';
+
+    if (!hasRealNotes && !hasHeaderOnly && !isFinalBar) {
       x += staveW; continue;
     }
 
@@ -543,7 +551,11 @@ function renderStaveSystem(
       addMeasureNumber(ctx, stave, i);
     }
 
-    if (mNotes.length === 0) { x += staveW; continue; }
+    // Compasso com só tokens de cabeçalho (sem notas/pausas): pauta já desenhada,
+    // pular criação de Voice/Formatter para não gerar erro de voz vazia.
+    if (mNotes.length === 0 || (hasHeaderOnly && !hasRealNotes)) {
+      x += staveW; continue;
+    }
 
     // ── Construir StaveNotes ─────────────────────────────────────────────
     const vexNotes:  StaveNote[]             = [];
@@ -867,8 +879,16 @@ export default function ScoreRenderer({
   }, [trebleMeasures, bassMeasures, keySignature, timeSignatureEl]);
 
   // ── Efeito principal de renderização ──────────────────────────────────────
+  // Renderizar mesmo quando trebleMeasures está vazio (só há tokens de cabeçalho:
+  // keysignature, timesignature, clef). Nesse caso, desenhamos a pauta estéril
+  // com Clave + Armadura + Fórmula de Compasso sem nenhuma voz/formatter.
   useEffect(() => {
-    if (!containerRef.current || trebleMeasures.length === 0) return;
+    if (!containerRef.current) return;
+    // Se não há compassos E não há elementos de cabeçalho, não há nada a desenhar
+    const hasHeaderTokens = filteredElements.some(
+      e => e.type === 'keysignature' || e.type === 'timesignature' || e.type === 'clef'
+    );
+    if (trebleMeasures.length === 0 && !hasHeaderTokens) return;
     containerRef.current.innerHTML = '';
     noteHitAreas.current = [];
 
@@ -877,6 +897,38 @@ export default function ScoreRenderer({
     const AVAIL_WIDTH = Math.max(width - 10, 400);
     const SYSTEM_H    = hasBothHands ? GRAND_GAP * 2 + 80 : 110;
     const totalWidth  = AVAIL_WIDTH;
+
+    // ── Pauta estéril: só tokens de cabeçalho (sem notas ainda) ────────────
+    // Quando o usuário digitou apenas keysignature/timesignature/clef,
+    // desenhamos uma única pauta com os modificadores sem criar Voice/Formatter.
+    if (trebleMeasures.length === 0 && hasHeaderTokens) {
+      const renderer = new Renderer(containerRef.current, Renderer.Backends.SVG);
+      const staveWidth = Math.max(width - 30, 200);
+      renderer.resize(staveWidth + 40, 160);
+      const ctx = renderer.getContext();
+      ctx.scale(scaleRatio, scaleRatio);
+
+      const stave = new Stave(30, 40, staveWidth / scaleRatio);
+      stave.setContext(ctx);
+      stave.addClef(activeClef);
+
+      if (keySignature && (VALID_KEYS as readonly string[]).includes(keySignature)) {
+        try { stave.addKeySignature(keySignature); } catch { /* ignora */ }
+      }
+      if (timeSignatureEl) {
+        const abbr = timeSignatureEl._abbreviated;
+        const num  = timeSignatureEl.numerator as number;
+        const den  = timeSignatureEl.denominator as number;
+        try {
+          if      (abbr === 'C')  stave.addTimeSignature('C');
+          else if (abbr === 'C|') stave.addTimeSignature('C|');
+          else if (num && den)    stave.addTimeSignature(`${num}/${den}`);
+        } catch { /* ignora */ }
+      }
+
+      stave.draw();
+      return; // pauta estéril desenhada — sair sem criar Voice/Formatter
+    }
 
     // Primeiro passo: estimar a altura total necessária
     // (quantos sistemas serão necessários para todos os compassos)
