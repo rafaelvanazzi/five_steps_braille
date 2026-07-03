@@ -10,6 +10,7 @@ import {
   parseBrailleSelection,
   perkinsDotsToUnicode,
   getQuickReference,
+  describeBrailleChar,
   type ParsedElement,
   type ParsedNote,
   type PerkinsKeyState,
@@ -230,6 +231,70 @@ function FontSizeControl({
 }
 
 // ─── PERKINS KEYBOARD ─────────────────────────────────────────────────────────
+// ─── ABREVIAÇÃO DE DESCRIÇÃO DE CÉLULA (~Desc) ───────────────────────────────
+//
+// Consulta describeBrailleChar() (brailleMusic.ts) e comprime a descrição
+// completa em um rótulo curto (≤6 caracteres) para caber sob cada célula
+// na renderização estruturada. Mapa de compressão cobre os casos mais comuns
+// de notas, durações, oitavas, acidentes e símbolos de compasso.
+
+const PITCH_ABBR: Record<string, string> = {
+  C: 'dó', D: 'ré', E: 'mi', F: 'fá', G: 'sol', A: 'lá', B: 'si',
+};
+
+const DURATION_ABBR: Record<string, string> = {
+  w: 'semibr', h: 'mín', q: 'semín', '8': 'colch', '16': 'semic',
+};
+
+function abbreviateCellDescription(char: string): string {
+  if (!char.trim()) return '';
+
+  const full = describeBrailleChar(char);
+
+  // Nota musical: "C (q)" → "dó·semín"
+  const noteMatch = full.match(/^([A-G])\s*\(([whq0-9]+)\)$/);
+  if (noteMatch) {
+    const [, pitch, dur] = noteMatch;
+    const p = PITCH_ABBR[pitch] ?? pitch.toLowerCase();
+    const d = DURATION_ABBR[dur] ?? dur;
+    return `${p}·${d}`;
+  }
+
+  // Pausa: "Pausa (q)" → "pausa·semín"
+  const restMatch = full.match(/^Pausa\s*\(([whq0-9]+)\)$/);
+  if (restMatch) {
+    const d = DURATION_ABBR[restMatch[1]] ?? restMatch[1];
+    return `pausa·${d}`;
+  }
+
+  // Oitava: "Oitava 4" → "oit4"
+  const octMatch = full.match(/^Oitava\s*(\d)$/);
+  if (octMatch) return `oit${octMatch[1]}`;
+
+  // Acidentes
+  if (full === 'Sustenido')          return 'sust';
+  if (full === 'Bemol')              return 'bem';
+  if (full === 'Bequadro')           return 'beq';
+  if (full === 'Dobrado sustenido')  return 'dsust';
+  if (full === 'Dobrado bemol')      return 'dbem';
+
+  // Ligaduras
+  if (full === 'Ligadura')                  return 'lig';
+  if (full === 'Início de Ligadura')        return 'ligIn';
+  if (full === 'Início de Ligadura Longa')  return 'ligLIn';
+  if (full === 'Fim de Ligadura Longa')     return 'ligLFim';
+
+  // Staccato e articulações
+  if (full === 'Staccato') return 'stac';
+
+  // Fórmula de compasso — já vem curta o suficiente (ex: "4/4")
+  if (/^\d+\/\d+$/.test(full)) return full;
+
+  // Fallback: truncar em 6 caracteres
+  if (full === 'Símbolo desconhecido') return '';
+  return full.length > 6 ? full.slice(0, 6) : full;
+}
+
 // ─── TECLADO PERKINS VIRTUAL ─────────────────────────────────────────────────
 //
 // Suporte completo a:
@@ -780,6 +845,7 @@ export default function BrailleEditor() {
   const [showProjects,  setShowProjects]  = useState(true);
   const [showReference, setShowReference] = useState(false);
   const [showRomano,    setShowRomano]    = useState(false);
+  const [showCellDescriptions, setShowCellDescriptions] = useState(false);
   const [inputMode,     setInputMode]     = useState<InputMode>("braille");
   const [layoutMode,    setLayoutMode]    = useState<LayoutMode>("horizontal");
   const [panelOrder,    setPanelOrder]    = useState<PanelOrder>("braille-first");
@@ -1635,8 +1701,20 @@ export default function BrailleEditor() {
               onClick={() => setShowRomano(v => !v)}
               className={`text-[9px] px-1.5 py-0.5 rounded transition-colors ${showRomano ? "bg-primary/20 text-primary" : "text-muted-foreground hover:text-foreground"}`}
               title="Mostrar mapeamento romano abaixo"
+              aria-pressed={showRomano}
             >
               ~Abc
+            </button>
+          )}
+          {/* Mostrar descrição abreviada sob cada célula Braille */}
+          {inputMode === "braille" && (
+            <button
+              onClick={() => setShowCellDescriptions(v => !v)}
+              className={`text-[9px] px-1.5 py-0.5 rounded transition-colors ${showCellDescriptions ? "bg-primary/20 text-primary" : "text-muted-foreground hover:text-foreground"}`}
+              title="Mostrar descrição abreviada sob cada célula"
+              aria-pressed={showCellDescriptions}
+            >
+              ~Desc
             </button>
           )}
           {/* Referência */}
@@ -1677,53 +1755,120 @@ export default function BrailleEditor() {
 
       {/* Área de texto — muda conforme o modo */}
       {inputMode === "braille" ? (
-        <div className="relative flex-1 min-h-[120px]">
-          {/* Camada de destaque visual: sobrepõe o textarea com spans coloridos
-              na posição da nota ativa no playback (playingSourceIndex).
-              Visível apenas durante a reprodução de áudio.
-              CRÍTICO: classes estruturais/tipográficas IDÊNTICAS ao textarea
-              abaixo (padding, fonte, line-height, wrapping) — qualquer diferença
-              causa desalinhamento de caracteres em telas estreitas ou fontes grandes. */}
-          {playingSourceIndex !== null && (
+        showCellDescriptions ? (
+          // ── Modo ~Desc: renderização estruturada célula-a-célula ──────────
+          // Cada caractere Braille é encapsulado em um container vertical com
+          // o símbolo em cima e a descrição abreviada embaixo. O textarea real
+          // permanece funcional, sobreposto de forma invisível para capturar
+          // digitação, cursor e seleção sem duplicar a lógica de edição.
+          <div className="relative flex-1 min-h-[120px]">
             <div
+              className="w-full h-full p-3 overflow-auto"
               aria-hidden="true"
-              style={{ fontSize: brailleFontSize }}
-              className="absolute inset-0 w-full h-full p-3 font-mono leading-relaxed pointer-events-none whitespace-pre-wrap z-10 overflow-hidden border border-transparent bg-transparent"
             >
-              {Array.from(brailleContent).map((char, idx) => (
-                <span
-                  key={idx}
-                  className={
-                    idx === playingSourceIndex
-                      ? "bg-blue-200 dark:bg-blue-900/50 rounded-sm transition-colors"
-                      : undefined
-                  }
-                >
-                  {char}
-                </span>
-              ))}
+              {brailleContent.split("\n").map((line, lineIdx) => {
+                // Calcular o offset absoluto do início desta linha no brailleContent
+                const lineOffset = brailleContent
+                  .split("\n")
+                  .slice(0, lineIdx)
+                  .reduce((acc, l) => acc + l.length + 1, 0);
+
+                return (
+                  <div key={lineIdx} className="flex flex-wrap items-start gap-0.5 mb-1">
+                    {Array.from(line).map((char, charIdx) => {
+                      const absoluteIdx = lineOffset + charIdx;
+                      const isActive    = absoluteIdx === playingSourceIndex;
+                      const desc        = abbreviateCellDescription(char);
+                      return (
+                        <div
+                          key={charIdx}
+                          className={`inline-flex flex-col items-center text-center select-none rounded-sm transition-colors ${
+                            isActive ? "bg-blue-200 dark:bg-blue-900/50" : ""
+                          }`}
+                          style={{ minWidth: Math.max(brailleFontSize * 0.6, 18) }}
+                          title={describeBrailleChar(char)}
+                        >
+                          <span style={{ fontSize: brailleFontSize }} className="leading-none">
+                            {char === " " ? "\u00A0" : char}
+                          </span>
+                          <span
+                            style={{ fontSize: Math.max(8, Math.round(brailleFontSize * 0.28)) }}
+                            className="text-muted-foreground leading-tight mt-0.5 whitespace-nowrap"
+                          >
+                            {desc}
+                          </span>
+                        </div>
+                      );
+                    })}
+                    {line.length === 0 && <span className="opacity-0 select-none">&nbsp;</span>}
+                  </div>
+                );
+              })}
             </div>
-          )}
-          <textarea
-            ref={brailleTextareaRef}
-            value={brailleContent}
-            onChange={e => handleBrailleChange(e.target.value)}
-            onSelect={e => updateCursor(e.currentTarget)}
-            onClick={e  => updateCursor(e.currentTarget)}
-            onKeyUp={e  => updateCursor(e.currentTarget)}
-            onScroll={e => {
-              // Sincronizar o scroll do overlay de destaque com o textarea,
-              // evitando que o realce fique deslocado em partituras longas.
-              const overlay = e.currentTarget.previousSibling as HTMLDivElement | null;
-              if (overlay) overlay.scrollTop = e.currentTarget.scrollTop;
-            }}
-            style={{ fontSize: brailleFontSize }}
-            className="absolute inset-0 w-full h-full p-3 font-mono leading-relaxed resize-none focus:outline-none bg-transparent z-20 caret-primary border border-transparent"
-            placeholder="⠐⠹⠱⠫⠻⠳⠪⠺"
-            aria-label="Área de entrada em Braille musical"
-            spellCheck={false}
-          />
-        </div>
+            {/* Textarea real — invisível mas funcional, captura toda a edição */}
+            <textarea
+              ref={brailleTextareaRef}
+              value={brailleContent}
+              onChange={e => handleBrailleChange(e.target.value)}
+              onSelect={e => updateCursor(e.currentTarget)}
+              onClick={e  => updateCursor(e.currentTarget)}
+              onKeyUp={e  => updateCursor(e.currentTarget)}
+              style={{ fontSize: brailleFontSize, color: "transparent", caretColor: "transparent" }}
+              className="absolute inset-0 w-full h-full p-3 font-mono leading-relaxed resize-none focus:outline-none bg-transparent opacity-0 z-20"
+              placeholder="⠐⠹⠱⠫⠻⠳⠪⠺"
+              aria-label="Área de entrada em Braille musical — modo descrição de células"
+              spellCheck={false}
+            />
+          </div>
+        ) : (
+          <div className="relative flex-1 min-h-[120px]">
+            {/* Camada de destaque visual: sobrepõe o textarea com spans coloridos
+                na posição da nota ativa no playback (playingSourceIndex).
+                Visível apenas durante a reprodução de áudio.
+                CRÍTICO: classes estruturais/tipográficas IDÊNTICAS ao textarea
+                abaixo (padding, fonte, line-height, wrapping) — qualquer diferença
+                causa desalinhamento de caracteres em telas estreitas ou fontes grandes. */}
+            {playingSourceIndex !== null && (
+              <div
+                aria-hidden="true"
+                style={{ fontSize: brailleFontSize }}
+                className="absolute inset-0 w-full h-full p-3 font-mono leading-relaxed pointer-events-none whitespace-pre-wrap z-10 overflow-hidden border border-transparent bg-transparent"
+              >
+                {Array.from(brailleContent).map((char, idx) => (
+                  <span
+                    key={idx}
+                    className={
+                      idx === playingSourceIndex
+                        ? "bg-blue-200 dark:bg-blue-900/50 rounded-sm transition-colors"
+                        : undefined
+                    }
+                  >
+                    {char}
+                  </span>
+                ))}
+              </div>
+            )}
+            <textarea
+              ref={brailleTextareaRef}
+              value={brailleContent}
+              onChange={e => handleBrailleChange(e.target.value)}
+              onSelect={e => updateCursor(e.currentTarget)}
+              onClick={e  => updateCursor(e.currentTarget)}
+              onKeyUp={e  => updateCursor(e.currentTarget)}
+              onScroll={e => {
+                // Sincronizar o scroll do overlay de destaque com o textarea,
+                // evitando que o realce fique deslocado em partituras longas.
+                const overlay = e.currentTarget.previousSibling as HTMLDivElement | null;
+                if (overlay) overlay.scrollTop = e.currentTarget.scrollTop;
+              }}
+              style={{ fontSize: brailleFontSize }}
+              className="absolute inset-0 w-full h-full p-3 font-mono leading-relaxed resize-none focus:outline-none bg-transparent z-20 caret-primary border border-transparent"
+              placeholder="⠐⠹⠱⠫⠻⠳⠪⠺"
+              aria-label="Área de entrada em Braille musical"
+              spellCheck={false}
+            />
+          </div>
+        )
       ) : (
         <textarea
           ref={romanTextareaRef}
