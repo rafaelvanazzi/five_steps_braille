@@ -6,8 +6,6 @@ import SiteLayout from "@/components/SiteLayout";
 import ScoreRenderer from "@/components/ScoreRenderer";
 import {
   parseBrailleMusic,
-  parseBrailleLine,
-  parseBrailleSelection,
   perkinsDotsToUnicode,
   getQuickReference,
   describeBrailleChar,
@@ -934,40 +932,26 @@ export default function BrailleEditor() {
   const isExportLocked = false;
 
   // ── Parse ─────────────────────────────────────────────────────────────────
+  // BUG CORRIGIDO: este efeito usava parseBrailleLine()/parseBrailleSelection(),
+  // que retornam APENAS os elementos da linha (ou seleção) atual — herdando de
+  // linhas anteriores somente contexto invisível (oitava, compasso), nunca as
+  // notas em si. Como parsedElements é a ÚNICA fonte que alimenta tanto o
+  // ScoreRenderer quanto o playScore, isso fazia a partitura visual e o áudio
+  // "esquecerem" tudo antes do cursor sempre que o usuário pressionava Enter
+  // ou movia o cursor para uma nova linha.
+  //
+  // Fix: parsedElements agora SEMPRE reflete o documento INTEIRO via
+  // parseBrailleMusic(brailleContent). O cursor/seleção continuam disponíveis
+  // (cursorPos, selectionRange) para outras finalidades (ex: startIndex do
+  // playScore, mapeamento de clique), mas nunca mais recortam o conteúdo
+  // que é renderizado ou reproduzido.
   useEffect(() => {
     if (!brailleContent.trim()) { setParsedElements([]); return; }
     try {
-      const lines = brailleContent.split("\n");
-      const firstLine = lines[0] ?? "";
-      let charCount = 0, cursorLineIdx = 0;
-      for (let li = 0; li < lines.length; li++) {
-        if (cursorPos <= charCount + lines[li].length) { cursorLineIdx = li; break; }
-        charCount += lines[li].length + 1;
-      }
-      let result;
-      if (selectionRange && selectionRange[0] !== selectionRange[1]) {
-        result = parseBrailleSelection(brailleContent, selectionRange[0], selectionRange[1], parseOptions);
-      } else {
-        result = parseBrailleLine(brailleContent, cursorPos, parseOptions);
-      }
-      if (cursorLineIdx > 0 && firstLine.trim()) {
-        const fullResult = parseBrailleMusic(lines.slice(0, Math.max(1, cursorLineIdx)).join("\n"), parseOptions);
-        let lastClef: ParsedElement | null = null;
-        let lastKS:   ParsedElement | null = null;
-        for (const el of fullResult.elements) {
-          if (el.type === "clef" || el.type === "hand") lastClef = el;
-          if (el.type === "keysignature")               lastKS   = el;
-        }
-        const hasOwnKS   = result.elements.some(e => e.type === "keysignature");
-        const hasOwnClef = result.elements.some(e => e.type === "clef" || e.type === "hand");
-        const prefix: ParsedElement[] = [];
-        if (!hasOwnClef && lastClef) prefix.push(lastClef);
-        if (!hasOwnKS   && lastKS)   prefix.push(lastKS);
-        if (prefix.length) result = { ...result, elements: [...prefix, ...result.elements] };
-      }
+      const result = parseBrailleMusic(brailleContent, parseOptions);
       setParsedElements(result.elements);
     } catch { setParsedElements([]); }
-  }, [brailleContent, cursorPos, selectionRange, parseOptions]);
+  }, [brailleContent, parseOptions]);
 
   // ── Sync braille → romano ─────────────────────────────────────────────────
   useEffect(() => {
