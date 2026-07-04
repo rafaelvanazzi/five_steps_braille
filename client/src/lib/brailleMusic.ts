@@ -905,7 +905,7 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
     | { kind: 'text'; char: string; idx: number }
     | { kind: 'pedagogic'; pedagogicType: 'start' | 'end'; idx: number };
 
-  type RawMeasure = { tokens: RawToken[]; barlineType: string };
+  type RawMeasure = { tokens: RawToken[]; barlineType: string; barlineIdx?: number };
   const measures: RawMeasure[] = [];
   let curTokens: RawToken[] = [];
 
@@ -931,21 +931,29 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
     const two = ch + ch2;
     const three = two + (i + 2 < len ? input[i + 2] : '');
 
-    if (ch === '\n' || ch === '\r') { i++; continue; }
-
-    // Espaço = barra de compasso simples (com exclusão estrutural)
-    // Regra: o espaço só cria barra de compasso se:
+    // Espaço (' '/⠀) OU quebra de linha (Enter/\r\n) = barra de compasso simples.
+    // Ambos disparam EXATAMENTE a mesma lógica: o usuário não precisa digitar
+    // um espaço antes ou depois do Enter para obter a separação de compasso —
+    // pressionar Enter sozinho já produz a barra, com sourceIndex correto
+    // apontando para a posição real do caractere de quebra de linha no texto.
+    //
+    // Regra de criação de barra (idêntica para espaço e quebra de linha):
     //   (1) O contexto musical está ativo (já encontrou clave, mão ou ⠼)
     //   (2) O bloco atual (curTokens) contém notas, pausas ou intervalos reais
     //       — blocos com APENAS configurações (hand, clef, ks, ts, oct) são
-    //         "espaços decorativos de cabeçalho" e não incrementam o compasso.
-    if (ch === ' ' || ch === '\u2800') {
+    //         "espaços/quebras decorativas de cabeçalho" e não incrementam
+    //         o compasso.
+    //
+    // Nota sobre \r\n (Windows): o \r é processado primeiro e, se já tiver
+    // esvaziado curTokens, o \n subsequente encontra hasRealMusic=false e
+    // não gera um segundo compasso vazio — sem duplicação.
+    if (ch === ' ' || ch === '\u2800' || ch === '\n' || ch === '\r') {
       if (isMusicContextActive) {
         const hasRealMusic = curTokens.some(
           tk => tk.kind === 'note' || tk.kind === 'rest' || tk.kind === 'interval'
         );
         if (hasRealMusic) {
-          measures.push({ tokens: curTokens, barlineType: 'single' });
+          measures.push({ tokens: curTokens, barlineType: 'single', barlineIdx: i });
           curTokens = [];
         }
         // Bloco só com configurações: descartar tokens decorativos de cabeçalho
@@ -961,7 +969,7 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
     if (BARLINE_TWO_CELL[two]) {
       const bType = BARLINE_TWO_CELL[two];
       // Sempre encerrar: barra final (end/end-section) fecha mesmo compasso vazio
-      measures.push({ tokens: curTokens, barlineType: bType });
+      measures.push({ tokens: curTokens, barlineType: bType, barlineIdx: i });
       curTokens = [];
       i += 2; continue;
     }
@@ -1261,7 +1269,7 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
     // No contexto musical, pular caractere desconhecido sem gerar elemento
     i++;
   }
-  if (curTokens.length > 0) measures.push({ tokens: curTokens, barlineType: 'single' });
+  if (curTokens.length > 0) measures.push({ tokens: curTokens, barlineType: 'single', barlineIdx: Math.max(0, len - 1) });
 
   // ── Fase 2: desambiguar e resolver oitavas ────────────────────────────────
   const elements: ParsedElement[] = [];
@@ -1667,7 +1675,7 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
     }
 
     // Emitir barra de compasso com measureIndex da mão ativa
-    elements.push({ type: 'barline', sourceIndex: 0, barlineType: measure.barlineType as any, measureIndex, level: 1 as const, isPremium: false } as any);
+    elements.push({ type: 'barline', sourceIndex: (measure as any).barlineIdx ?? 0, barlineType: measure.barlineType as any, measureIndex, level: 1 as const, isPremium: false } as any);
     // Incrementar o índice da mão ativa
     if (activeMeasureHand === 'left') {
       bassMeasureIndex++;
