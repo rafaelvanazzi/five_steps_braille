@@ -211,6 +211,13 @@ const SLUR_DOUBLE       = '\u2809\u2809';  // ⠉⠉          — ligadura dupla
 const TIE               = '\u2808\u2809';  // ⠈⠉ (4)+(1,4) — ligadura de prolongação
 const PHRASE_START      = '\u2830\u2803';  // ⠰⠃ (5,6)+(1,2) — início ligadura de frase
 const PHRASE_END        = '\u2818\u2806';  // ⠘⠆ (4,5)+(2,3) — fim ligadura de frase
+// Ligadura Longa Pedagógica: início ⠃ isolado (dots 1,2 — mesmo glifo do intervalo de 3ª).
+// Desambiguado por contexto: só é "início de frase pedagógica" quando NÃO há nota
+// base ativa (!inNoteContext). Quando há nota base ativa, ⠃ mantém seu papel
+// tradicional de intervalo (INTERVAL_MAP). Fecha com o mesmo PHRASE_END (⠘⠆),
+// mas mantém estado INDEPENDENTE do escopo de frase ⠰⠃/⠘⠆ — os dois podem
+// coexistir sem que a abertura/fechamento de um corrompa o estado do outro.
+const PEDAGOGIC_PHRASE_START = '\u2803'; // ⠃ isolado (1,2) — início frase pedagógica
 
 // Articulações
 const FERMATA           = '\u2823\u2807';  // ⠣⠇ (1,2,6)+(1,2,3) — fermata (após nota)
@@ -370,6 +377,15 @@ export interface ParsedNote {
    * Permite que o VexFlow construa um arco limpo sem linhas diagonais.
    */
   slurLongId?: string;
+  /**
+   * Papel de ligadura longa PEDAGÓGICA (⠃ isolado … ⠘⠆) — Cap. 6 estendido.
+   * Campo totalmente independente de slurRole/slurLongId: permite que uma
+   * frase pedagógica e uma ligadura de frase comum (⠰⠃/⠉⠉…⠘⠆) coexistam
+   * e se sobreponham na mesma região da partitura sem conflito de estado.
+   */
+  slurRolePedagogic?: 'start' | 'end';
+  /** ID de escopo da ligadura longa pedagógica — independente de slurLongId. */
+  slurLongIdPedagogic?: string;
 }
 
 export interface ParsedRest {
@@ -886,7 +902,8 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
     | { kind: 'articulation'; name: string; idx: number }
     | { kind: 'quialtera'; name: string; idx: number }
     | { kind: 'repetition'; name: string; idx: number }
-    | { kind: 'text'; char: string; idx: number };
+    | { kind: 'text'; char: string; idx: number }
+    | { kind: 'pedagogic'; pedagogicType: 'start' | 'end'; idx: number };
 
   type RawMeasure = { tokens: RawToken[]; barlineType: string };
   const measures: RawMeasure[] = [];
@@ -1141,6 +1158,16 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
       curTokens.push({ kind: 'ks', fifths: ks.fifths, vexKey: ks.vexKey, idx: i }); i += 2; continue;
     }
 
+    // ── Ligadura Longa Pedagógica: ⠃ isolado (SOMENTE fora de contexto de nota) ──
+    // Desambiguação: ⠃ (U+2803) é o mesmo glifo do intervalo de 3ª (INTERVAL_MAP).
+    // Se NÃO há nota base ativa (!inNoteContext), ⠃ não pode ser um intervalo
+    // legítimo — reinterpretamos como abertura de frase pedagógica.
+    // Se HÁ nota base ativa, ⠃ mantém seu papel de intervalo (cai no bloco abaixo).
+    if (ch === PEDAGOGIC_PHRASE_START && !inNoteContext) {
+      curTokens.push({ kind: 'pedagogic', pedagogicType: 'start', idx: i });
+      i++; continue;
+    }
+
     // Intervalo — captura acidentes, oitavas, staccato e slur pendentes
     // como modificadores específicos desta nota do intervalo.
     // CONDIÇÃO OBRIGATÓRIA: inNoteContext deve ser true (há nota base no compasso).
@@ -1247,6 +1274,46 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
   // inNoteContext já declarado antes do while loop — reinicializar por compasso
   inNoteContext = false;
 
+  // ── ESTADO DE LIGADURAS — ESCOPO DE FUNÇÃO (não por compasso) ────────────────
+  // BUG CORRIGIDO: estas variáveis eram anteriormente declaradas DENTRO do loop
+  // for(measure), sendo reinicializadas a cada novo compasso. Isso corrompia
+  // qualquer ligadura de prolongação (⠉) ou frase longa que cruzasse uma barline,
+  // pois o estado "pendente" era perdido exatamente na transição de compasso.
+  // Hoisting para aqui garante que o estado sobrevive através de barlines,
+  // espaços em branco e quebras de linha — apenas o token de fechamento correto
+  // (mesma altura para tie; ⠘⠆/⠉ contextual para frases) consome o estado.
+
+  // Contador global e monotônico para geração de IDs de escopo de ligadura longa.
+  // Cada abertura (⠉⠉, ⠰⠃, ou ⠃ pedagógico) consome um novo ID único —
+  // elimina colisões e não depende de measureIndex/sourceIndex.
+  let slurIdCounter = 0;
+
+  // Canal de ligadura simples (⠉) / tie explícito (⠈⠉)
+  let nextNoteIsSlurTarget = false;  // ⠉ simples foi lido → próxima nota é destino
+  let nextNoteIsTieTarget  = false;  // ⠈⠉ foi lido → próxima nota é destino de tie
+  let pendingTie           = false;  // ⠈⠉ explícito (mantido para compatibilidade)
+
+  // Canal de ligadura longa de FRASE (⠉⠉ ou ⠰⠃ … ⠉ contextual ou ⠘⠆)
+  let activeSlurLongId: string | null = null;
+  let nextNoteIsLongSlurEnd = false;
+
+  // Canal de ligadura longa PEDAGÓGICA (⠃ isolado … ⠘⠆) — INDEPENDENTE do canal
+  // de frase acima. Abrir/fechar um NUNCA afeta o estado do outro: são variáveis
+  // distintas, permitindo sobreposição/coexistência simultânea na partitura.
+  let activePedagogicPhraseId: string | null = null;
+  let nextNoteIsPedagogicEnd = false;
+
+  // Mapa de ties pendentes por altura — "pitch/octave" → nota de origem (referência
+  // mutável). Permite rastrear múltiplas prolongações simultâneas (ex: acorde onde
+  // duas alturas diferentes têm tie ativo ao mesmo tempo) e fechar corretamente
+  // mesmo que a nota de destino apareça no compasso seguinte.
+  const pendingTies = new Map<string, ParsedNote>();
+
+  // Última nota emitida — usada para comparação de pitch+octave na resolução de tie.
+  // Também hoisted: sem isso, uma tie pendente no fim do compasso N perderia a
+  // referência da nota de origem ao processar o compasso N+1.
+  let lastNoteForTie: { pitch: string; octave: number; duration: Duration; dotted: boolean; dotted2: boolean } | null = null;
+
   // Processar cada compasso
   // trebleMeasureIndex e bassMeasureIndex: índices separados por mão,
   // cada um reseta para 0 ao encontrar o token da mão correspondente.
@@ -1270,28 +1337,15 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
     // nome E oitava até o token de barline limpar o estado.
     // O estado é reinicializado a cada compasso no loop externo for(measure).
     const measureAccidentals = new Map<string, Accidental>(); // "pitch/octave" → acidente
-    // Sinalizadores de ligadura — modelo de acumulação estável (Gemini/MIMB):
-    // São setados ao encontrar o token e consumidos apenas ao processar a próxima nota.
-    // Isso garante que barras de compasso e quebras de linha não percam a referência.
-    // ── Modelo Retroativo de Ligaduras (Cérebro) ────────────────────────────
-    // O parser marca a nota ORIGEM e a nota DESTINO diretamente no array elements[].
-    // Não há flags flutuantes orientadas ao futuro — apenas retroação sobre o array.
+    // NOTA: nextNoteIsSlurTarget, nextNoteIsTieTarget, activeSlurLongId,
+    // nextNoteIsLongSlurEnd, activePedagogicPhraseId, nextNoteIsPedagogicEnd,
+    // lastNoteForTie, pendingTie e slurIdCounter foram movidos para escopo de
+    // FUNÇÃO (antes deste for-loop) — ver comentário "ESTADO DE LIGADURAS"
+    // acima. Isso corrige o bug de perda de estado ao cruzar barlines.
     //
-    // nextNoteIsSlurTarget: flag efêmera — a próxima nota recebe slurRole:'end' / tieRole:'end'
-    let nextNoteIsSlurTarget = false;  // ⠉ simples foi lido → próxima nota é destino
-    let nextNoteIsTieTarget  = false;  // ⠈⠉ foi lido → próxima nota é destino de tie
-    //
-    // Escopo de Ligadura Longa — ID único compartilhado entre início e fim
-    // activeSlurLongId: ID ativo enquanto aguarda o token de fechamento
-    let activeSlurLongId: string | null = null;
-    let nextNoteIsLongSlurEnd = false; // próxima nota fecha o escopo longo
-    //
-    // Contador de notas no compasso — para geração de ID único
+    // Contador de notas no compasso — para geração de ID único (não confundir
+    // com slurIdCounter, que é global e usado apenas para IDs de ligadura longa)
     let noteSeqInMeasure = 0;
-    //
-    // Para tie MIMB 6-2: guardar última nota emitida para comparar pitch+octave
-    let lastNoteForTie: { pitch: string; octave: number; duration: Duration; dotted: boolean; dotted2: boolean } | null = null;
-    let pendingTie = false; // ⠈⠉ explícito (mantido para compatibilidade)
     /** Duração da última nota emitida neste compasso — herdada pelos intervalos do acorde. */
     let lastNoteDuration: Duration | null = null;
 
@@ -1366,14 +1420,16 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
             nextNoteIsSlurTarget = true; // flag efêmera: próxima nota = destino
           }
         } else {
-          // ⠉⠉ DUPLO — abre escopo de ligadura longa:
-          // Gerar ID único e marcar a nota anterior como 'start' do escopo
+          // ⠉⠉ DUPLO — abre escopo de ligadura longa de FRASE.
+          // ID gerado por contador global monotônico — nunca colide, independe
+          // de measureIndex/sourceIndex (que podiam repetir entre mãos/vozes).
           const lastNote = Array.from(elements).reverse().find(e => e.type === 'note') as ParsedNote | undefined;
           if (lastNote) {
-            const longId = `slur-long-${lastNote.measureIndex}-${lastNote.sourceIndex}`;
+            slurIdCounter++;
+            const longId = `slur-long-${slurIdCounter}`;
             (lastNote as any).slurLongId = longId;
             (lastNote as any).slurRole   = 'start';
-            activeSlurLongId    = longId;
+            activeSlurLongId      = longId;
             nextNoteIsLongSlurEnd = false; // aguardar token de fechamento
           }
         }
@@ -1391,20 +1447,48 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
         elements.push({ type: 'phrase', phraseType: phTk.phraseType, sourceIndex: phTk.idx, level: 1 as const, isPremium: true });
 
         if (phTk.phraseType === 'start') {
-          // ⠰⠃ — intercambiável com ⠉⠉: abre escopo longo
+          // ⠰⠃ — intercambiável com ⠉⠉: abre escopo longo de FRASE
           const lastNote = Array.from(elements).reverse().find(e => e.type === 'note') as ParsedNote | undefined;
           if (lastNote) {
-            const longId = `slur-long-${lastNote.measureIndex}-${lastNote.sourceIndex}`;
+            slurIdCounter++;
+            const longId = `slur-long-${slurIdCounter}`;
             (lastNote as any).slurLongId = longId;
             (lastNote as any).slurRole   = 'start';
             activeSlurLongId      = longId;
             nextNoteIsLongSlurEnd = false;
           }
         } else {
-          // ⠘⠆ — fecha escopo longo: próxima nota recebe 'end'
+          // ⠘⠆ — fecha escopo(s) longo(s) ativo(s). Compartilhado entre o
+          // escopo de FRASE (⠰⠃/⠉⠉) e o escopo PEDAGÓGICO (⠃ isolado).
+          // Cada canal é independente: fechar um NÃO afeta o outro. Se ambos
+          // estiverem abertos simultaneamente, ambos são fechados pela mesma
+          // ocorrência de ⠘⠆ (cada um marcará sua própria nota-destino).
           if (activeSlurLongId !== null) {
             nextNoteIsLongSlurEnd = true;
           }
+          if (activePedagogicPhraseId !== null) {
+            nextNoteIsPedagogicEnd = true;
+          }
+        }
+        continue;
+      }
+      if (tk.kind === 'pedagogic') {
+        // ⠃ isolado (fora de contexto de nota) — Ligadura Longa Pedagógica.
+        // Canal totalmente independente do escopo de frase (⠰⠃/⠉⠉/⠘⠆) acima:
+        // usa suas PRÓPRIAS variáveis de estado e seu PRÓPRIO campo na
+        // ParsedNote (slurRolePedagogic/slurLongIdPedagogic), permitindo
+        // sobreposição/coexistência sem cancelar o outro canal.
+        const pedTk = tk as { kind: 'pedagogic'; pedagogicType: 'start'; idx: number };
+        elements.push({ type: 'phrase', phraseType: 'start', sourceIndex: pedTk.idx, level: 1 as const, isPremium: true });
+
+        const lastNote = Array.from(elements).reverse().find(e => e.type === 'note') as ParsedNote | undefined;
+        if (lastNote) {
+          slurIdCounter++;
+          const pedId = `phrase-ped-${slurIdCounter}`;
+          (lastNote as any).slurLongIdPedagogic = pedId;
+          (lastNote as any).slurRolePedagogic   = 'start';
+          activePedagogicPhraseId = pedId;
+          nextNoteIsPedagogicEnd  = false;
         }
         continue;
       }
@@ -1477,12 +1561,23 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
         let resolvedTieRole:  'start' | 'end' | undefined = undefined;
         let resolvedTieDuration: number | undefined        = undefined;
         let resolvedSlurLongId:  string | undefined        = undefined;
+        let resolvedSlurRolePedagogic: 'start' | 'end' | undefined = undefined;
+        let resolvedSlurLongIdPedagogic: string | undefined        = undefined;
 
         const BEAT_MAP: Record<string, number> = {
           w: 4, h: 2, q: 1, '8': 0.5, '16': 0.25, '32': 0.125, '64': 0.0625, '128': 0.03125,
         };
 
-        // ── CASO 1: Esta nota é destino de ligadura longa (⠉⠉/⠰⠃ … ⠘⠆) ──────
+        // ── CASO 0: Esta nota é destino de ligadura longa PEDAGÓGICA (⠃ … ⠘⠆) ──
+        // Canal independente — processado ANTES e SEM interferir nos demais casos.
+        if (nextNoteIsPedagogicEnd && activePedagogicPhraseId !== null) {
+          resolvedSlurRolePedagogic   = 'end';
+          resolvedSlurLongIdPedagogic = activePedagogicPhraseId;
+          activePedagogicPhraseId  = null;
+          nextNoteIsPedagogicEnd   = false;
+        }
+
+        // ── CASO 1: Esta nota é destino de ligadura longa de FRASE (⠉⠉/⠰⠃ … ⠘⠆) ──
         if (nextNoteIsLongSlurEnd && activeSlurLongId !== null) {
           resolvedSlurRole   = 'end';
           resolvedSlurLongId = activeSlurLongId;
@@ -1505,9 +1600,12 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
             const originNote = Array.from(elements).reverse().find(e => e.type === 'note') as ParsedNote | undefined;
             if (originNote) {
               (originNote as any).tieRole = 'start';
+              const originKey = `${originNote.pitch}/${originNote.octave}`;
+              pendingTies.set(originKey, originNote); // registrar no mapa (robustez multi-voz)
               const prevPulses = (BEAT_MAP[lastNoteForTie!.duration] ?? 1) * (lastNoteForTie!.dotted ? 1.5 : 1);
               const thisPulses = (BEAT_MAP[dur] ?? 1) * (n.dotted ? 1.5 : 1);
               resolvedTieDuration = prevPulses + thisPulses;
+              pendingTies.delete(originKey); // tie resolvida nesta mesma passagem — consumida
             }
           } else {
             // Pitches diferentes → slur de expressão curta
@@ -1557,6 +1655,8 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
           tieRole:     resolvedTieRole,
           tieDuration: resolvedTieDuration,
           slurLongId:  resolvedSlurLongId,
+          slurRolePedagogic:   resolvedSlurRolePedagogic,
+          slurLongIdPedagogic: resolvedSlurLongIdPedagogic,
         });
         lastNoteForTie   = { pitch: n.pitch, octave, duration: dur, dotted: n.dotted, dotted2: n.dotted2 };
         lastNoteDuration = dur;

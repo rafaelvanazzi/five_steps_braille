@@ -441,6 +441,47 @@ function splitByHand(elements: ParsedElement[]): HandSplit {
  * Renderiza uma sequência de compassos em um contexto VexFlow.
  * Retorna o array de Stave criados (para StaveConnector do grand staff).
  */
+/**
+ * Empilha um StaveTie (ou par de StaveTies parciais) conectando duas notas.
+ *
+ * Se ambas as notas estão no MESMO sistema (Y aproximadamente igual), desenha
+ * um único arco contínuo StaveTie({ firstNote, lastNote }).
+ *
+ * Se as notas estão em SISTEMAS DIFERENTES (quebra de linha vertical entre
+ * elas), usa o suporte nativo do VexFlow para arcos parciais/abertos:
+ *   - StaveTie({ firstNote: origem })  → desenha do noteheads até a borda
+ *     direita da pauta de origem (sem lastNote, o VexFlow estende o arco).
+ *   - StaveTie({ lastNote: destino })  → desenha da borda esquerda da pauta
+ *     de destino até o notehead (sem firstNote, o VexFlow inicia do início
+ *     da pauta).
+ * O resultado visual: o arco "se estende até o fim da pauta superior e
+ * continua a partir do início da pauta inferior", sem cancelar a ligadura.
+ */
+function pushTieOrPartial(
+  tiesToDraw: StaveTie[],
+  originNote: StaveNote,
+  originY:    number,
+  destNote:   StaveNote,
+  destY:      number,
+): void {
+  const sameSystem = Math.abs(destY - originY) < 5;
+
+  if (sameSystem) {
+    try {
+      tiesToDraw.push(new StaveTie({ firstNote: originNote, lastNote: destNote } as any));
+    } catch { /* ignora falha de API */ }
+    return;
+  }
+
+  // Sistemas diferentes: dois arcos parciais nativos do VexFlow
+  try {
+    tiesToDraw.push(new StaveTie({ firstNote: originNote } as any)); // até o fim da pauta superior
+  } catch { /* ignora */ }
+  try {
+    tiesToDraw.push(new StaveTie({ lastNote: destNote } as any)); // a partir do início da pauta inferior
+  } catch { /* ignora */ }
+}
+
 function renderStaveSystem(
   ctx:            ReturnType<Renderer['getContext']>,
   measures:       MeasureInfo[],
@@ -470,13 +511,19 @@ function renderStaveSystem(
   // Modelo: nota com tieRole='start' guarda a StaveNote. A próxima com tieRole='end'
   // fecha o arco. Separado por pitch/octave para suportar acordes (múltiplos ties).
   let activeTieStartNote: StaveNote | null = null;  // tie simples (nota única)
-  let activeTieStartY:    number           = 0;     // Y de origem (salvaguarda)
+  let activeTieStartY:    number           = 0;     // Y de origem (para decidir arco único vs. parcial)
 
-  // Canal 2 — Slurs de expressão (slurRole: 'start'/'end' + slurLongId)
+  // Canal 2 — Slurs de expressão / frase (slurRole: 'start'/'end' + slurLongId)
   // O Cérebro gera slurLongId único para cada arco, curto ou longo.
   // O mapa persiste entre compassos — um slur pode cruzar barlines.
   const activeSlurMap:  Map<string, StaveNote> = new Map(); // slurLongId → StaveNote de início
   const activeSlurYMap: Map<string, number>    = new Map(); // slurLongId → Y de origem
+
+  // Canal 3 — Ligadura Longa PEDAGÓGICA (slurRolePedagogic + slurLongIdPedagogic)
+  // Totalmente independente do Canal 2: usa seu próprio mapa e seus próprios
+  // campos vindos do parser, permitindo coexistência/sobreposição sem conflito.
+  const activePedagogicMap:  Map<string, StaveNote> = new Map(); // id → StaveNote de início
+  const activePedagogicYMap: Map<string, number>    = new Map(); // id → Y de origem
 
   // Construir mapa matricial para acesso por índice real
   const measureTrack = buildMeasureTrack(measures);
@@ -667,21 +714,19 @@ function renderStaveSystem(
         const noteTieRole  = (noteEl as any).tieRole   as 'start' | 'end' | undefined;
         const noteSlurRole = (noteEl as any).slurRole  as 'start' | 'end' | undefined;
         const noteLongId   = (noteEl as any).slurLongId as string | undefined;
+        const notePedRole  = (noteEl as any).slurRolePedagogic   as 'start' | 'end' | undefined;
+        const notePedId    = (noteEl as any).slurLongIdPedagogic as string | undefined;
 
         // ── Canal 1: Tie de Prolongação (tieRole) ────────────────────────────
+        // Sem salvaguarda restritiva de Y — pushTieOrPartial decide nativamente
+        // entre arco único (mesmo sistema) ou par de arcos parciais (sistemas
+        // diferentes), usando o suporte nativo do VexFlow para ties abertas.
         if (noteTieRole === 'start') {
-          // Guardar esta nota como origem do tie
           activeTieStartNote = vn;
           activeTieStartY    = y;
         }
         if (noteTieRole === 'end' && activeTieStartNote !== null) {
-          // Salvaguarda: cancelar se os sistemas forem diferentes (Y muito distante)
-          if (Math.abs(y - activeTieStartY) < 5) {
-            tiesToDraw.push(
-              new StaveTie({ firstNote: activeTieStartNote, lastNote: vn } as any)
-            );
-          }
-          // Sempre limpar após tentativa (com ou sem sucesso)
+          pushTieOrPartial(tiesToDraw, activeTieStartNote, activeTieStartY, vn, y);
           activeTieStartNote = null;
         }
 
@@ -689,7 +734,6 @@ function renderStaveSystem(
         // O slurLongId é gerado pelo Cérebro para TODOS os slurs (curtos e longos),
         // portanto basta usar o ID como chave do mapa — comportamento uniforme.
         if (noteSlurRole === 'start' && noteLongId) {
-          // Registrar a StaveNote de início, indexada pelo ID único do arco
           activeSlurMap.set(noteLongId, vn);
           activeSlurYMap.set(noteLongId, y);
         }
@@ -697,17 +741,27 @@ function renderStaveSystem(
           const startVn = activeSlurMap.get(noteLongId);
           const startY  = activeSlurYMap.get(noteLongId);
           if (startVn !== undefined && startY !== undefined) {
-            // Salvaguarda de quebra de sistema:
-            // Se início e fim estão no mesmo sistema (Y próximo), desenhar arco normal.
-            // Se estão em sistemas diferentes, cancelar (evita diagonal cruzada).
-            if (Math.abs(y - startY) < 5) {
-              tiesToDraw.push(
-                new StaveTie({ firstNote: startVn, lastNote: vn } as any)
-              );
-            }
-            // Limpar o ID consumido (evita reutilização de arco fantasma)
+            pushTieOrPartial(tiesToDraw, startVn, startY, vn, y);
             activeSlurMap.delete(noteLongId);
             activeSlurYMap.delete(noteLongId);
+          }
+        }
+
+        // ── Canal 3: Ligadura Longa PEDAGÓGICA (slurRolePedagogic + slurLongIdPedagogic) ──
+        // Canal totalmente independente do Canal 2 — usa seu próprio mapa,
+        // permitindo que uma frase pedagógica e uma ligadura de frase comum
+        // coexistam e se sobreponham sem interferência mútua.
+        if (notePedRole === 'start' && notePedId) {
+          activePedagogicMap.set(notePedId, vn);
+          activePedagogicYMap.set(notePedId, y);
+        }
+        if (notePedRole === 'end' && notePedId) {
+          const startVn = activePedagogicMap.get(notePedId);
+          const startY  = activePedagogicYMap.get(notePedId);
+          if (startVn !== undefined && startY !== undefined) {
+            pushTieOrPartial(tiesToDraw, startVn, startY, vn, y);
+            activePedagogicMap.delete(notePedId);
+            activePedagogicYMap.delete(notePedId);
           }
         }
 
@@ -743,6 +797,24 @@ function renderStaveSystem(
         : Beam.generateBeams(vexNotes);
       // Definir contexto de desenho em cada viga
       beams.forEach(b => b.setContext(ctx));
+
+      // ── Destaque de viga: se a nota ativa pertence a este beam ────────────
+      // Evita o artefato visual de nota azul + viga preta desconectada.
+      // Beam.notes contém as StaveNotes agrupadas; comparamos por referência
+      // com vexNotes[idx] cujo srcIdxs[idx] === activeSourceIndex.
+      if (activeSourceIndex !== null && activeSourceIndex !== undefined) {
+        const activeVexNote = vexNotes.find((_, idx) => srcIdxs[idx] === activeSourceIndex);
+        if (activeVexNote) {
+          beams.forEach(b => {
+            const beamNotes = (b as any).notes as StaveNote[] | undefined;
+            if (beamNotes?.includes(activeVexNote)) {
+              try {
+                b.setStyle({ fillStyle: '#3b82f6', strokeStyle: '#3b82f6' });
+              } catch { /* VexFlow version sem setStyle em Beam — ignorar */ }
+            }
+          });
+        }
+      }
     } catch {
       // Fallback silencioso: vexNotes sem beamáveis ou erro de API
       beams = [];
