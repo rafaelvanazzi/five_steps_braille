@@ -643,6 +643,8 @@ function PerkinsPhysicalOverlay({
             className={`flex-1 flex items-center justify-center border-r border-b border-white/10 transition-colors ${
               active.has(slot) ? 'bg-primary/30' : 'bg-black/5'
             }`}
+            inputMode="none"
+            tabIndex={-1}
             onTouchStart={e => handleSlotStart(e, slot)}
             onTouchEnd={e => handleSlotEnd(e, slot)}
             onTouchCancel={e => handleSlotEnd(e, slot)}
@@ -663,6 +665,8 @@ function PerkinsPhysicalOverlay({
             className={`flex-1 flex items-center justify-center border-b border-white/10 transition-colors ${
               active.has(slot) ? 'bg-primary/30' : 'bg-black/5'
             }`}
+            inputMode="none"
+            tabIndex={-1}
             onTouchStart={e => handleSlotStart(e, slot)}
             onTouchEnd={e => handleSlotEnd(e, slot)}
             onTouchCancel={e => handleSlotEnd(e, slot)}
@@ -851,6 +855,10 @@ export default function BrailleEditor() {
   const [importing,     setImporting]     = useState(false);
   // Modo Perkins físico para mobile em paisagem — overlay invisível de tela cheia
   const [isMobileScreenInputMode, setIsMobileScreenInputMode] = useState(false);
+  // Detecção estreita de dispositivo móvel/tablet — controla a visibilidade
+  // do botão de overlay Perkins físico. Evita que listeners de touch/inputMode
+  // fiquem ativos desnecessariamente em desktop (risco de congelamento de UI).
+  const [isMobile, setIsMobile] = useState(false);
 
   // ── Font sizes ────────────────────────────────────────────────────────────
   const [brailleFontSize, setBrailleFontSize] = useState(28);
@@ -1008,6 +1016,18 @@ export default function BrailleEditor() {
     return audioCtxRef.current;
   }
   useEffect(() => { return () => { audioCtxRef.current?.close(); }; }, []);
+
+  // ── Detecção de dispositivo móvel/tablet (largura + user agent) ────────────
+  useEffect(() => {
+    const checkIsMobile = () => {
+      const narrowViewport = window.innerWidth < 1024;
+      const mobileUA = /Android|iPhone|iPad|iPod|Mobile|Tablet/i.test(navigator.userAgent);
+      setIsMobile(narrowViewport || mobileUA);
+    };
+    checkIsMobile();
+    window.addEventListener("resize", checkIsMobile);
+    return () => window.removeEventListener("resize", checkIsMobile);
+  }, []);
 
   // ── Carregar SoundFont SF2 local em background ─────────────────────────────
   // Enquanto carrega (~1-3s): toda digitação usa síntese FM (zero latência).
@@ -1662,8 +1682,11 @@ export default function BrailleEditor() {
           >
             Abc
           </button>
-          {/* Botão de ativação do overlay Perkins físico (mobile paisagem) */}
-          {inputMode === "braille" && (
+          {/* Botão de ativação do overlay Perkins físico — SOMENTE em mobile/tablet.
+              Em desktop este botão é removido do fluxo de renderização (não apenas
+              escondido via CSS), evitando que listeners de touch fiquem registrados
+              desnecessariamente e possam congelar a interface. */}
+          {isMobile && inputMode === "braille" && (
             <button
               type="button"
               inputMode="none"
