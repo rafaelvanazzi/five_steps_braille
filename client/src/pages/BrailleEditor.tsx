@@ -277,7 +277,7 @@ function abbreviateCellDescription(char: string): string {
   if (full === 'Dobrado bemol')      return 'dbem';
 
   // Ligaduras
-  if (full === 'Ligadura')                  return 'lig';
+  if (full === 'Ligadura de Duração')       return 'ligDur';
   if (full === 'Início de Ligadura')        return 'ligIn';
   if (full === 'Início de Ligadura Longa')  return 'ligLIn';
   if (full === 'Fim de Ligadura Longa')     return 'ligLFim';

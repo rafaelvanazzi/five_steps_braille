@@ -1303,7 +1303,10 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
 
   // Canal de ligadura longa de FRASE (⠉⠉ ou ⠰⠃ … ⠉ contextual ou ⠘⠆)
   let activeSlurLongId: string | null = null;
-  let nextNoteIsLongSlurEnd = false;
+  // ⠰⠃ (Início de Ligadura Longa explícito): NÃO marca a nota anterior.
+  // Ativa esta flag prospectiva — a PRÓXIMA nota processada é que recebe
+  // slurRole='start' e um novo ID de escopo (gerado no momento da resolução).
+  let pendingLongSlurStart = false;
 
   // Canal de ligadura longa PEDAGÓGICA (⠃ isolado … ⠘⠆) — INDEPENDENTE do canal
   // de frase acima. Abrir/fechar um NUNCA afeta o estado do outro: são variáveis
@@ -1346,7 +1349,7 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
     // O estado é reinicializado a cada compasso no loop externo for(measure).
     const measureAccidentals = new Map<string, Accidental>(); // "pitch/octave" → acidente
     // NOTA: nextNoteIsSlurTarget, nextNoteIsTieTarget, activeSlurLongId,
-    // nextNoteIsLongSlurEnd, activePedagogicPhraseId, nextNoteIsPedagogicEnd,
+    // pendingLongSlurStart, activePedagogicPhraseId, nextNoteIsPedagogicEnd,
     // lastNoteForTie, pendingTie e slurIdCounter foram movidos para escopo de
     // FUNÇÃO (antes deste for-loop) — ver comentário "ESTADO DE LIGADURAS"
     // acima. Isso corrige o bug de perda de estado ao cruzar barlines.
@@ -1437,8 +1440,7 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
             const longId = `slur-long-${slurIdCounter}`;
             (lastNote as any).slurLongId = longId;
             (lastNote as any).slurRole   = 'start';
-            activeSlurLongId      = longId;
-            nextNoteIsLongSlurEnd = false; // aguardar token de fechamento
+            activeSlurLongId = longId;
           }
         }
         continue;
@@ -1455,25 +1457,24 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
         elements.push({ type: 'phrase', phraseType: phTk.phraseType, sourceIndex: phTk.idx, level: 1 as const, isPremium: true });
 
         if (phTk.phraseType === 'start') {
-          // ⠰⠃ — intercambiável com ⠉⠉: abre escopo longo de FRASE
-          const lastNote = Array.from(elements).reverse().find(e => e.type === 'note') as ParsedNote | undefined;
-          if (lastNote) {
-            slurIdCounter++;
-            const longId = `slur-long-${slurIdCounter}`;
-            (lastNote as any).slurLongId = longId;
-            (lastNote as any).slurRole   = 'start';
-            activeSlurLongId      = longId;
-            nextNoteIsLongSlurEnd = false;
-          }
+          // ⠰⠃ (Início de Ligadura Longa) — NÃO marca a nota anterior.
+          // Ativa flag prospectiva: a PRÓXIMA nota processada recebe
+          // slurRole='start' (ver bloco de resolução de nota).
+          pendingLongSlurStart = true;
         } else {
-          // ⠘⠆ — fecha escopo(s) longo(s) ativo(s). Compartilhado entre o
-          // escopo de FRASE (⠰⠃/⠉⠉) e o escopo PEDAGÓGICO (⠃ isolado).
-          // Cada canal é independente: fechar um NÃO afeta o outro. Se ambos
-          // estiverem abertos simultaneamente, ambos são fechados pela mesma
-          // ocorrência de ⠘⠆ (cada um marcará sua própria nota-destino).
+          // ⠘⠆ (Fim de Ligadura Longa) — retrocede ao array de elementos e
+          // aplica o fechamento (slurRole='end') na nota IMEDIATAMENTE
+          // ANTERIOR ao sinal, usando o escopo atualmente ativo.
           if (activeSlurLongId !== null) {
-            nextNoteIsLongSlurEnd = true;
+            const lastNote = Array.from(elements).reverse().find(e => e.type === 'note') as ParsedNote | undefined;
+            if (lastNote) {
+              (lastNote as any).slurRole   = 'end';
+              (lastNote as any).slurLongId = activeSlurLongId;
+            }
+            activeSlurLongId = null;
           }
+          // Canal PEDAGÓGICO (⠃ isolado) — independente, mantém seu próprio
+          // fluxo prospectivo (não alterado por esta refatoração).
           if (activePedagogicPhraseId !== null) {
             nextNoteIsPedagogicEnd = true;
           }
@@ -1585,16 +1586,20 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
           nextNoteIsPedagogicEnd   = false;
         }
 
-        // ── CASO 1: Esta nota é destino de ligadura longa de FRASE (⠉⠉/⠰⠃ … ⠘⠆) ──
-        if (nextNoteIsLongSlurEnd && activeSlurLongId !== null) {
-          resolvedSlurRole   = 'end';
-          resolvedSlurLongId = activeSlurLongId;
-          activeSlurLongId      = null;
-          nextNoteIsLongSlurEnd = false;
+        // ── CASO 1: Esta nota é destino PROSPECTIVO de ⠰⠃ (Início de Ligadura Longa) ──
+        // ⠰⠃ não marcou a nota anterior — esta é a nota que efetivamente abre
+        // o escopo. Gera o ID aqui, no momento em que a nota real é conhecida.
+        if (pendingLongSlurStart) {
+          slurIdCounter++;
+          const newLongId    = `slur-long-${slurIdCounter}`;
+          resolvedSlurRole   = 'start';
+          resolvedSlurLongId = newLongId;
+          activeSlurLongId   = newLongId; // ativo até o ⠘⠆ correspondente
+          pendingLongSlurStart = false;
         }
 
-        // ── CASO 2: Esta nota é destino de ⠉ simples (retroação) ─────────────
-        else if (nextNoteIsSlurTarget) {
+        // ── CASO 2: Esta nota é destino de ⠉ simples (retroação contextual) ───
+        if (nextNoteIsSlurTarget) {
           nextNoteIsSlurTarget = false;
           const samePitchOctave =
             lastNoteForTie !== null &&
@@ -1602,7 +1607,7 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
             lastNoteForTie.octave === octave;
 
           if (samePitchOctave || nextNoteIsTieTarget) {
-            // Mesma altura ou tie explícito → prolongação (MIMB 6-2)
+            // Mesma altura (ou tie explícito) → "Ligadura de Duração" (MIMB 6-2)
             resolvedTieRole = 'end';
             // Retroativamente marcar a nota-origem como 'start'
             const originNote = Array.from(elements).reverse().find(e => e.type === 'note') as ParsedNote | undefined;
@@ -1615,10 +1620,20 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
               resolvedTieDuration = prevPulses + thisPulses;
               pendingTies.delete(originKey); // tie resolvida nesta mesma passagem — consumida
             }
+          } else if (activeSlurLongId !== null) {
+            // Altura DIFERENTE e HÁ um escopo de ligadura longa de frase ATIVO
+            // (aberto por ⠉⠉ ou ⠰⠃) — o ⠉ simples fecha ESSE escopo existente,
+            // conectando a nota de partida original (possivelmente vários
+            // compassos atrás) à nota de chegada atual — em vez de criar uma
+            // ligadura curta redundante isolada entre apenas as duas últimas notas.
+            resolvedSlurRole   = 'end';
+            resolvedSlurLongId = activeSlurLongId;
+            activeSlurLongId   = null;
           } else {
-            // Pitches diferentes → slur de expressão curta
+            // Altura diferente e NENHUM escopo longo ativo → ligadura de
+            // expressão curta, conectando apenas a nota imediatamente
+            // anterior (origem) à nota atual.
             resolvedSlurRole = 'end';
-            // Retroativamente marcar a nota-origem como 'start'
             const originNote = Array.from(elements).reverse().find(e => e.type === 'note') as ParsedNote | undefined;
             if (originNote) {
               (originNote as any).slurRole = 'start';
@@ -1886,9 +1901,9 @@ export function getQuickReference(): QuickRefEntry[] {
   ref.push({ char: AUGMENTATION_DOT2,     dots: '3,3',     description: 'Ponto duplo de aumento', category: 'other' });
 
   // Ligaduras
-  ref.push({ char: SLUR_SIMPLE,           dots: '1,4',     description: 'Ligadura',                category: 'ligadura' });
+  ref.push({ char: SLUR_SIMPLE,           dots: '1,4',     description: 'Ligadura de Duração',     category: 'ligadura' });
   ref.push({ char: SLUR_DOUBLE,           dots: '1,4 1,4', description: 'Início de Ligadura',      category: 'ligadura' });
-  ref.push({ char: TIE,                   dots: '4 1,4',   description: 'Lig. prolongação',        category: 'ligadura' });
+  ref.push({ char: TIE,                   dots: '4 1,4',   description: 'Ligadura de Duração',     category: 'ligadura' });
   ref.push({ char: PHRASE_START,          dots: '5,6 1,2', description: 'Início de Ligadura Longa', category: 'ligadura' });
   ref.push({ char: PHRASE_END,            dots: '4,5 2,3', description: 'Fim de Ligadura Longa',   category: 'ligadura' });
 
