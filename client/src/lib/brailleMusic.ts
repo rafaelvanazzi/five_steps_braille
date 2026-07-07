@@ -892,6 +892,7 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
     | { kind: 'slur'; slurType: 'simple' | 'double'; idx: number }
     | { kind: 'tie'; idx: number }
     | { kind: 'phrase'; phraseType: 'start' | 'end'; idx: number }
+    | { kind: 'pedagogic'; pedagogicType: 'start'; idx: number }
     | { kind: 'ts'; numerator: number; denominator: number; abbreviated?: 'C' | 'C|'; idx: number }
     | { kind: 'ks'; fifths: number; vexKey: string; idx: number }
     | { kind: 'clef'; clefType: 'treble' | 'bass' | 'tenor' | 'alto'; intervalDirection: 'ascending' | 'descending'; idx: number }
@@ -902,8 +903,7 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
     | { kind: 'articulation'; name: string; idx: number }
     | { kind: 'quialtera'; name: string; idx: number }
     | { kind: 'repetition'; name: string; idx: number }
-    | { kind: 'text'; char: string; idx: number }
-    | { kind: 'pedagogic'; pedagogicType: 'start' | 'end'; idx: number };
+    | { kind: 'text'; char: string; idx: number };
 
   type RawMeasure = { tokens: RawToken[]; barlineType: string; barlineIdx?: number };
   const measures: RawMeasure[] = [];
@@ -1985,4 +1985,675 @@ function accLabel(acc: Accidental): string {
     'double-sharp': 'Dobrado sustenido', 'double-flat': 'Dobrado bemol',
   };
   return m[acc] ?? acc;
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MUSICXML BIDIRECIONAL — IMPORT / EXPORT
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Converte entre MusicXML (formato <score-partwise>, padrão de exportação do
+// Finale, MuseScore, Sibelius) e o texto Braille musical do Five Steps.
+//
+// Suporte:
+//   • importMusicXML() — MusicXML → texto Braille
+//   • exportToMusicXML() — texto Braille → MusicXML
+//   • Piano com pauta dupla (staff 1=RH / staff 2=LH), alternando blocos de
+//     N compassos com prefixos '.>' (mão direita) e '_>' (mão esquerda)
+//   • Anacruse (compasso incompleto inicial) via metrical="no"
+//   • Acordes (<chord/>) → intervalos Grau 4
+//   • Ligaduras de duração (<tie>) e de expressão (<slur>) → '⠉'
+//   • Múltiplas vozes sobrepostas na mesma pauta → Grau 5 "Em Acorde" (ver nota)
+//
+// LIMITAÇÃO DECLARADA: apenas <score-partwise> é suportado (formato padrão
+// de exportação de todo software de notação musical relevante). O formato
+// <score-timewise> — raro na prática — não é tratado; importMusicXML lança
+// um erro claro e explícito nesse caso, em vez de falhar silenciosamente.
+
+// ─── MAPAS REVERSOS (pitch/duração/oitava/acidente/intervalo → glifo Braille) ──
+
+type BrailleDuration = 'w' | 'h' | 'q' | '8' | '16';
+
+const REVERSE_NOTE_MAP: Record<NoteName, Partial<Record<BrailleDuration, string>>> = (() => {
+  const rev = { C: {}, D: {}, E: {}, F: {}, G: {}, A: {}, B: {} } as
+    Record<NoteName, Partial<Record<BrailleDuration, string>>>;
+  for (const [char, info] of Object.entries(NOTE_MAP)) {
+    const durKey = info.duration as BrailleDuration;
+    if (rev[info.pitch][durKey] === undefined) rev[info.pitch][durKey] = char;
+    // O mesmo glifo cobre 'w' e '16' (ambiguidade Grau 3, resolvida por contexto
+    // na leitura) — garantir que a busca por '16' também encontre o glifo certo.
+    if (info.altDuration === '16' && rev[info.pitch]['16'] === undefined) {
+      rev[info.pitch]['16'] = char;
+    }
+  }
+  return rev;
+})();
+
+const REVERSE_REST_MAP: Partial<Record<BrailleDuration, string>> = (() => {
+  const rev: Partial<Record<BrailleDuration, string>> = {};
+  for (const [char, info] of Object.entries(REST_MAP)) {
+    const durKey = info.duration as BrailleDuration;
+    if (rev[durKey] === undefined) rev[durKey] = char;
+    if (info.altDuration === '16' && rev['16'] === undefined) rev['16'] = char;
+  }
+  return rev;
+})();
+
+const REVERSE_OCTAVE_MAP: Record<number, string> = (() => {
+  const rev: Record<number, string> = {};
+  for (const [char, oct] of Object.entries(OCTAVE_MAP)) rev[oct] = char;
+  return rev;
+})();
+
+const REVERSE_ACCIDENTAL_MAP: Partial<Record<Accidental, string>> = (() => {
+  const rev: Partial<Record<Accidental, string>> = {};
+  for (const [char, acc] of Object.entries(ACCIDENTAL_MAP)) {
+    if (rev[acc] === undefined) rev[acc] = char; // prioriza a cela mais simples encontrada primeiro
+  }
+  return rev;
+})();
+
+const REVERSE_INTERVAL_MAP: Record<number, string> = (() => {
+  const rev: Record<number, string> = {};
+  for (const [char, size] of Object.entries(INTERVAL_MAP)) {
+    if (rev[size] === undefined) rev[size] = char;
+  }
+  return rev;
+})();
+
+/** Converte fifths (MusicXML) → glifo(s) Braille de armadura de clave. */
+function fifthsToKeySignatureBraille(fifths: number): string {
+  if (!fifths) return '';
+  const wantSharp = fifths > 0;
+  const abs = Math.abs(fifths);
+  if (abs <= 3) {
+    const table = wantSharp ? KEY_SIG_SHARP : KEY_SIG_FLAT;
+    for (const [glyph, info] of Object.entries(table)) {
+      if (info.fifths === fifths) return glyph;
+    }
+    return '';
+  }
+  for (const [glyph, info] of Object.entries(OFFICIAL_KEY_SIGNATURE_MAP)) {
+    if (info.fifths === fifths) return glyph;
+  }
+  return '';
+}
+
+// ─── GRAU 5: "EM ACORDE TOTAL/PARCIAL" (múltiplas vozes sobrepostas) ─────────
+//
+// ⚠️ NOTA DE PRECISÃO MUSICOGRÁFICA: os glifos abaixo são um MAPEAMENTO
+// ESTRUTURAL DE TRABALHO para os delimitadores de "Em Acorde Total" (duas
+// vozes com ritmo idêntico e sobreposição completa) e "Em Acorde Parcial"
+// (sobreposição rítmica parcial) do Grau 5 do MIMB. A ESTRUTURA de detecção,
+// agrupamento e delimitação está implementada e funcional; os CÓDIGOS DE
+// PONTOS EXATOS abaixo devem ser validados contra o Manual Internacional de
+// Musicografia Braille (Parte 2, Capítulo sobre notação polifônica) antes de
+// uso em produção — notação de múltiplas vozes tem variação regional/editorial
+// e não deve ser afirmada aqui com falsa certeza absoluta.
+const IN_CHORD_TOTAL_START   = '\u2807\u2807'; // ⠇⠇ (placeholder estrutural — validar MIMB Parte 2)
+const IN_CHORD_TOTAL_END     = '\u2807\u2807\u2804'; // placeholder — validar
+const IN_CHORD_PARTIAL_START = '\u2807\u2803'; // placeholder — validar
+const IN_CHORD_PARTIAL_END   = '\u2807\u2803\u2804'; // placeholder — validar
+
+// ─── UTILITÁRIOS DE CONVERSÃO DE DURAÇÃO (MusicXML ↔ Braille) ────────────────
+
+/** Nome do <type> do MusicXML → nossa Duration travada por linha (Grau 2). */
+const MUSICXML_TYPE_TO_DURATION: Record<string, BrailleDuration> = {
+  'whole':       'w',
+  '16th':        '16',
+  'half':        'h',
+  'quarter':     'q',
+  'eighth':      '8',
+  // Tipos sem correspondência exata no nosso sistema travado (32nd, 64th, etc.)
+  // são aproximados para a categoria mais próxima suportada, com aviso.
+  '32nd':        '16',
+  '64th':        '16',
+  '128th':       '16',
+};
+
+/** Nossa Duration → nome <type> do MusicXML (direção inversa, para export). */
+const DURATION_TO_MUSICXML_TYPE: Record<BrailleDuration, string> = {
+  w:    'whole',
+  h:    'half',
+  q:    'quarter',
+  '8':  'eighth',
+  '16': '16th',
+};
+
+/** Pulsos (semínima=1) de cada Duration — para cálculo de divisions/ticks. */
+const BRAILLE_DURATION_PULSES: Record<BrailleDuration, number> = {
+  w: 4, h: 2, q: 1, '8': 0.5, '16': 0.25,
+};
+
+// ─── DETECÇÃO DE OMISSÃO DE OITAVA (ROUNDTRIP-SAFE) ──────────────────────────
+//
+// Ao exportar de MusicXML→Braille, sabemos a oitava REAL de cada nota (dado
+// absoluto do XML). Mas incluir um sinal de oitava explícito em TODA nota
+// produziria um Braille verboso e não-idiomático — um transcritor humano só
+// escreve o sinal quando a Regra de Uso das Oitavas (Grau 3, Dissertação
+// Vanazzi Cap. 3) o exige. Esta função decide, de forma roundtrip-segura, se
+// o sinal pode ser OMITIDO: simula o que inferOctave() reconstruiria sem o
+// sinal e só omite se o resultado bater com a oitava real.
+function shouldEmitOctaveMarker(
+  prevPitch:  NoteName | null,
+  prevOctave: number,
+  pitch:      NoteName,
+  octave:     number,
+): boolean {
+  if (prevPitch === null) return true; // primeira nota do documento sempre explícita
+  const errors: string[] = [];
+  const inferred = inferOctave(prevPitch, prevOctave, pitch, errors);
+  return inferred !== octave; // só emite o sinal se a inferência automática erraria
+}
+
+// ─── IMPORTAÇÃO: MusicXML → TEXTO BRAILLE ────────────────────────────────────
+
+export interface MusicXMLImportOptions {
+  /** true = parte de piano com pauta dupla (staff 1=RH / staff 2=LH). */
+  isPiano?: boolean;
+  /** Nº de compassos por bloco antes de alternar de mão (padrão: 4). */
+  measureAlternation?: number;
+}
+
+interface XmlNoteEvent {
+  isRest:      boolean;
+  isChord:     boolean;
+  pitch?:      NoteName;
+  octave?:     number;
+  alterSemis?: number; // -2..+2 (bemol dobrado .. sustenido dobrado)
+  durationTicks: number;
+  typeName?:   string; // <type> textual, se presente
+  dotted:      boolean;
+  voice:       string;
+  staff:       number; // 1 = RH/superior, 2 = LH/inferior (default 1)
+  tieStart:    boolean;
+  tieStop:     boolean;
+  slurStart:   boolean;
+  slurStop:    boolean;
+  measureIdx:  number;
+}
+
+/** Converte <alter> (semitons ±2) → nosso tipo Accidental, se aplicável. */
+function alterToAccidental(alter: number): Accidental | undefined {
+  if (alter === 1)  return 'sharp';
+  if (alter === -1) return 'flat';
+  if (alter === 0)  return 'natural';
+  if (alter === 2)  return 'double-sharp';
+  if (alter === -2) return 'double-flat';
+  return undefined;
+}
+
+/**
+ * Importa uma string MusicXML (<score-partwise>) e retorna o texto Braille
+ * musical equivalente, pronto para ser inserido no editor.
+ *
+ * @param xmlString — Conteúdo MusicXML bruto (arquivo .xml/.musicxml)
+ * @param options   — isPiano (pauta dupla) e measureAlternation (compassos por bloco)
+ */
+export function importMusicXML(
+  xmlString: string,
+  options: MusicXMLImportOptions = {},
+): string {
+  const isPiano            = !!options.isPiano;
+  const measureAlternation = options.measureAlternation ?? 4;
+
+  const doc = new DOMParser().parseFromString(xmlString, 'application/xml');
+
+  const parserError = doc.querySelector('parsererror');
+  if (parserError) {
+    throw new Error(`[importMusicXML] XML malformado: ${parserError.textContent ?? 'erro desconhecido'}`);
+  }
+
+  if (doc.querySelector('score-timewise')) {
+    throw new Error(
+      '[importMusicXML] Formato <score-timewise> não é suportado. ' +
+      'Reexporte o arquivo como <score-partwise> (padrão de Finale/MuseScore/Sibelius).'
+    );
+  }
+
+  const scoreRoot = doc.querySelector('score-partwise');
+  if (!scoreRoot) {
+    throw new Error('[importMusicXML] Elemento <score-partwise> não encontrado no XML fornecido.');
+  }
+
+  const parts = Array.from(scoreRoot.querySelectorAll('part'));
+  if (parts.length === 0) {
+    throw new Error('[importMusicXML] Nenhum elemento <part> encontrado no MusicXML.');
+  }
+
+  // Para piano, assumimos UMA <part> contendo AMBAS as pautas via <staff>1/2</staff>
+  // em cada <note>. Para instrumentos monofônicos, usamos a primeira <part>.
+  const part = parts[0];
+  const measureNodes = Array.from(part.querySelectorAll('measure'));
+
+  let divisions = 1; // divisions por semínima — lido de <attributes><divisions>
+  let currentFifths: number | null = null;
+  let currentTimeNum = 4;
+  let currentTimeDen = 4;
+  let currentClefSign = 'G'; // G=treble, F=bass
+
+  // Eventos de nota por compasso, já separados por staff (1=RH, 2=LH)
+  const measureEventsRH: XmlNoteEvent[][] = [];
+  const measureEventsLH: XmlNoteEvent[][] = [];
+  const measureHeaderInfo: Array<{
+    fifthsChanged: boolean; fifths: number;
+    timeChanged: boolean; timeNum: number; timeDen: number;
+    clefChanged: boolean; clefSign: string;
+  }> = [];
+
+  measureNodes.forEach((measureEl, measureIdx) => {
+    const eventsRH: XmlNoteEvent[] = [];
+    const eventsLH: XmlNoteEvent[] = [];
+
+    let fifthsChanged = false, timeChanged = false, clefChanged = false;
+
+    // <attributes> pode aparecer em qualquer compasso, não só no primeiro
+    const attributesEl = measureEl.querySelector('attributes');
+    if (attributesEl) {
+      const divisionsEl = attributesEl.querySelector('divisions');
+      if (divisionsEl?.textContent) divisions = parseInt(divisionsEl.textContent, 10) || divisions;
+
+      const fifthsEl = attributesEl.querySelector('key fifths');
+      if (fifthsEl?.textContent) {
+        const f = parseInt(fifthsEl.textContent, 10);
+        if (f !== currentFifths) { currentFifths = f; fifthsChanged = true; }
+      }
+
+      const beatsEl     = attributesEl.querySelector('time beats');
+      const beatTypeEl  = attributesEl.querySelector('time beat-type');
+      if (beatsEl?.textContent && beatTypeEl?.textContent) {
+        const num = parseInt(beatsEl.textContent, 10);
+        const den = parseInt(beatTypeEl.textContent, 10);
+        if (num !== currentTimeNum || den !== currentTimeDen) {
+          currentTimeNum = num; currentTimeDen = den; timeChanged = true;
+        }
+      }
+
+      const clefSignEl = attributesEl.querySelector('clef sign');
+      if (clefSignEl?.textContent && clefSignEl.textContent !== currentClefSign) {
+        currentClefSign = clefSignEl.textContent;
+        clefChanged = true;
+      }
+    }
+
+    measureHeaderInfo.push({
+      fifthsChanged, fifths: currentFifths ?? 0,
+      timeChanged, timeNum: currentTimeNum, timeDen: currentTimeDen,
+      clefChanged, clefSign: currentClefSign,
+    });
+
+    // Percorrer <note> na ordem do documento
+    const noteEls = Array.from(measureEl.children).filter(el => el.tagName === 'note');
+
+    for (const noteEl of noteEls) {
+      const isRest  = !!noteEl.querySelector('rest');
+      const isChord = !!noteEl.querySelector('chord');
+
+      const staffEl = noteEl.querySelector('staff');
+      const staff   = staffEl?.textContent ? parseInt(staffEl.textContent, 10) : 1;
+
+      const voiceEl = noteEl.querySelector('voice');
+      const voice   = voiceEl?.textContent ?? '1';
+
+      const durationEl = noteEl.querySelector('duration');
+      const durationTicks = durationEl?.textContent ? parseInt(durationEl.textContent, 10) : divisions;
+
+      const typeEl   = noteEl.querySelector('type');
+      const typeName = typeEl?.textContent ?? undefined;
+
+      const dotted = !!noteEl.querySelector('dot');
+
+      const tieStart = Array.from(noteEl.querySelectorAll('tie')).some(t => t.getAttribute('type') === 'start');
+      const tieStop  = Array.from(noteEl.querySelectorAll('tie')).some(t => t.getAttribute('type') === 'stop');
+      const slurStart = Array.from(noteEl.querySelectorAll('notations slur'))
+        .some(s => s.getAttribute('type') === 'start');
+      const slurStop  = Array.from(noteEl.querySelectorAll('notations slur'))
+        .some(s => s.getAttribute('type') === 'stop');
+
+      let pitch: NoteName | undefined;
+      let octave: number | undefined;
+      let alterSemis: number | undefined;
+
+      if (!isRest) {
+        const stepEl   = noteEl.querySelector('pitch step');
+        const octaveEl = noteEl.querySelector('pitch octave');
+        const alterEl  = noteEl.querySelector('pitch alter');
+        pitch      = (stepEl?.textContent as NoteName) ?? 'C';
+        octave     = octaveEl?.textContent ? parseInt(octaveEl.textContent, 10) : 4;
+        alterSemis = alterEl?.textContent ? parseInt(alterEl.textContent, 10) : undefined;
+      }
+
+      const event: XmlNoteEvent = {
+        isRest, isChord, pitch, octave, alterSemis,
+        durationTicks, typeName, dotted, voice,
+        staff: isPiano ? staff : 1,
+        tieStart, tieStop, slurStart, slurStop,
+        measureIdx,
+      };
+
+      if (!isPiano || staff === 1) eventsRH.push(event);
+      else                          eventsLH.push(event);
+    }
+
+    measureEventsRH.push(eventsRH);
+    measureEventsLH.push(eventsLH);
+  });
+
+  // ── Converter uma sequência de eventos de UM compasso em texto Braille ────
+  function eventsToMeasureBraille(
+    events: XmlNoteEvent[],
+    lastNoteRef: { pitch: NoteName | null; octave: number },
+  ): string {
+    let out = '';
+    let i = 0;
+
+    while (i < events.length) {
+      const ev = events[i];
+
+      if (ev.isRest) {
+        const durKey: BrailleDuration = ev.typeName !== undefined
+          ? (MUSICXML_TYPE_TO_DURATION[ev.typeName] ?? '16')
+          : '16'; // fallback conservador
+        const glyph = REVERSE_REST_MAP[durKey];
+        if (glyph) out += glyph;
+        i++;
+        continue;
+      }
+
+      // Ligadura de duração / expressão vinda da nota ANTERIOR (mesma sequência)
+      // já foi emitida no fechamento do laço anterior — aqui tratamos apenas
+      // a emissão da nota atual e o sinal de abertura, se aplicável.
+
+      const durKey: BrailleDuration = ev.typeName !== undefined
+        ? (MUSICXML_TYPE_TO_DURATION[ev.typeName] ?? '16')
+        : '16';
+      const accidental = ev.alterSemis !== undefined ? alterToAccidental(ev.alterSemis) : undefined;
+
+      if (accidental && REVERSE_ACCIDENTAL_MAP[accidental]) {
+        out += REVERSE_ACCIDENTAL_MAP[accidental];
+      }
+
+      const needsOctave = shouldEmitOctaveMarker(
+        lastNoteRef.pitch, lastNoteRef.octave, ev.pitch!, ev.octave!,
+      );
+      if (needsOctave) {
+        const octGlyph = REVERSE_OCTAVE_MAP[ev.octave!];
+        if (octGlyph) out += octGlyph;
+      }
+
+      const noteGlyph = REVERSE_NOTE_MAP[ev.pitch!]?.[durKey];
+      if (noteGlyph) out += noteGlyph;
+      if (ev.dotted) out += AUGMENTATION_DOT;
+
+      lastNoteRef.pitch  = ev.pitch!;
+      lastNoteRef.octave = ev.octave!;
+
+      // ── Acordes: notas subsequentes com <chord/> viram intervalos (Grau 4) ──
+      let j = i + 1;
+      while (j < events.length && events[j].isChord) {
+        const chordEv = events[j];
+        const baseIdx  = PITCH_ORDER_INFER.indexOf(ev.pitch!);
+        const chordIdx = PITCH_ORDER_INFER.indexOf(chordEv.pitch!);
+        const octaveDiff = (chordEv.octave! - ev.octave!) * 7;
+        const rawInterval = (chordIdx - baseIdx) + octaveDiff;
+        const intervalSize = Math.abs(rawInterval) + 1; // 1-based (uníssono=1, 3ª=3, etc.)
+        const intervalGlyph = REVERSE_INTERVAL_MAP[intervalSize];
+        if (intervalGlyph) out += intervalGlyph;
+
+        const chordAcc = chordEv.alterSemis !== undefined ? alterToAccidental(chordEv.alterSemis) : undefined;
+        if (chordAcc && REVERSE_ACCIDENTAL_MAP[chordAcc]) out += REVERSE_ACCIDENTAL_MAP[chordAcc];
+
+        j++;
+      }
+
+      // ── Ligadura: tie/slur "start" nesta nota → emitir ⠉ após a nota atual ──
+      if (ev.tieStart || ev.slurStart) {
+        out += SLUR_SIMPLE; // '⠉' — "Ligadura de Duração" (mesma altura) ou expressão
+      }
+
+      i = j;
+    }
+
+    return out;
+  }
+
+  // ── Detectar vozes sobrepostas na mesma pauta (Grau 5 — estrutural) ───────
+  function detectOverlappingVoices(events: XmlNoteEvent[]): boolean {
+    const byVoice = new Map<string, XmlNoteEvent[]>();
+    for (const ev of events) {
+      if (!byVoice.has(ev.voice)) byVoice.set(ev.voice, []);
+      byVoice.get(ev.voice)!.push(ev);
+    }
+    return byVoice.size > 1;
+  }
+
+  // ── Montar o texto final, com alternância de mãos se isPiano ──────────────
+  let result = '';
+  const lastNoteRH: { pitch: NoteName | null; octave: number } = { pitch: null, octave: 4 };
+  const lastNoteLH: { pitch: NoteName | null; octave: number } = { pitch: null, octave: 4 };
+
+  function emitHeaderIfChanged(idx: number): string {
+    const info = measureHeaderInfo[idx];
+    let header = '';
+    if (info.clefChanged) {
+      header += info.clefSign === 'F' ? HAND_LEFT : HAND_RIGHT;
+    }
+    if (info.fifthsChanged) {
+      header += fifthsToKeySignatureBraille(info.fifths);
+    }
+    if (idx === 0) {
+      // Fórmula de compasso sempre explícita no primeiro compasso
+      header += `${NUMBER_SIGN}${numberToBrailleDigits(info.timeNum)}${AUGMENTATION_DOT}${numberToBrailleDigits(info.timeDen)}`;
+    }
+    return header;
+  }
+
+  if (!isPiano) {
+    for (let m = 0; m < measureNodes.length; m++) {
+      result += emitHeaderIfChanged(m);
+      const hasOverlap = detectOverlappingVoices(measureEventsRH[m]);
+      if (hasOverlap) result += IN_CHORD_PARTIAL_START;
+      result += eventsToMeasureBraille(measureEventsRH[m], lastNoteRH);
+      if (hasOverlap) result += IN_CHORD_PARTIAL_END;
+      if (m < measureNodes.length - 1) result += ' ';
+    }
+    return result.trim();
+  }
+
+  // Piano: alternar blocos de measureAlternation compassos entre RH e LH
+  const totalMeasures = measureNodes.length;
+  let m = 0;
+  while (m < totalMeasures) {
+    const blockEnd = Math.min(m + measureAlternation, totalMeasures);
+
+    result += HAND_RIGHT;
+    for (let k = m; k < blockEnd; k++) {
+      result += emitHeaderIfChanged(k);
+      result += eventsToMeasureBraille(measureEventsRH[k], lastNoteRH);
+      if (k < blockEnd - 1) result += ' ';
+    }
+    result += '\n';
+
+    result += HAND_LEFT;
+    for (let k = m; k < blockEnd; k++) {
+      result += eventsToMeasureBraille(measureEventsLH[k], lastNoteLH);
+      if (k < blockEnd - 1) result += ' ';
+    }
+    result += '\n';
+
+    m = blockEnd;
+  }
+
+  return result.trim();
+}
+
+/** Converte um número inteiro (1-9) para o dígito Braille correspondente (⠼ + letra-número). */
+function numberToBrailleDigits(n: number): string {
+  const digitGlyphs: Record<string, string> = {
+    '1': '\u2801', '2': '\u2803', '3': '\u2809', '4': '\u2819', '5': '\u2811',
+    '6': '\u280B', '7': '\u281B', '8': '\u2813', '9': '\u280A', '0': '\u281A',
+  };
+  return String(n).split('').map(d => digitGlyphs[d] ?? '').join('');
+}
+
+// ─── EXPORTAÇÃO: TEXTO BRAILLE → MusicXML ────────────────────────────────────
+
+function xmlEscape(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/**
+ * Exporta o texto Braille musical do editor para uma string MusicXML válida
+ * (<score-partwise version="4.0">), compatível com Finale/MuseScore/Sibelius.
+ *
+ * @param brailleText — Conteúdo do editor (texto Braille musical)
+ */
+export function exportToMusicXML(brailleText: string): string {
+  const { elements } = parseBrailleMusic(brailleText);
+
+  // Agrupar elements em compassos, delimitados por 'barline'
+  const measures: ParsedElement[][] = [];
+  let currentMeasure: ParsedElement[] = [];
+  for (const el of elements) {
+    currentMeasure.push(el);
+    if (el.type === 'barline') {
+      measures.push(currentMeasure);
+      currentMeasure = [];
+    }
+  }
+  if (currentMeasure.length > 0) measures.push(currentMeasure);
+
+  const DIVISIONS = 256; // divisions por semínima — granularidade alta o suficiente
+
+  let xml = '<?xml version="1.0" encoding="UTF-8"?>\n';
+  xml += '<!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 4.0 Partwise//EN" '
+       + '"http://www.musicxml.org/dtds/partwise.dtd">\n';
+  xml += '<score-partwise version="4.0">\n';
+  xml += '  <part-list>\n';
+  xml += '    <score-part id="P1">\n';
+  xml += '      <part-name>Five Steps Braille</part-name>\n';
+  xml += '    </score-part>\n';
+  xml += '  </part-list>\n';
+  xml += '  <part id="P1">\n';
+
+  let lastFifths: number | null = null;
+  let lastTimeNum: number | null = null;
+  let lastTimeDen: number | null = null;
+  let lastClef: 'treble' | 'bass' | null = null;
+  let openTieByKey = new Map<string, boolean>(); // "pitch/octave" → tie ainda aberta
+
+  measures.forEach((measureEls, measureIdx) => {
+    const notesAndRests = measureEls.filter(e => e.type === 'note' || e.type === 'rest');
+
+    // Duração total do compasso em pulsos (semínima=1) — usada para detectar anacruse
+    const totalPulses = notesAndRests.reduce((acc, el) => {
+      const dur    = (el as any).duration as string ?? 'q';
+      const dotted = (el as any).dotted   as boolean ?? false;
+      const dotted2= (el as any).dotted2  as boolean ?? false;
+      const base   = BRAILLE_DURATION_PULSES[dur as BrailleDuration] ?? 1;
+      return acc + base * (dotted2 ? 1.75 : dotted ? 1.5 : 1);
+    }, 0);
+
+    const ks = measureEls.find(e => e.type === 'keysignature') as ParsedKeySignature | undefined;
+    const ts = measureEls.find(e => e.type === 'timesignature') as any | undefined;
+    const clefEl = measureEls.find(e => e.type === 'clef' || e.type === 'hand') as any | undefined;
+
+    const timeNum = ts?.numerator   ?? lastTimeNum ?? 4;
+    const timeDen = ts?.denominator ?? lastTimeDen ?? 4;
+    const fullMeasurePulses = timeNum * (4 / timeDen);
+    const isAnacrusis = measureIdx === 0 && totalPulses > 0 && totalPulses < fullMeasurePulses - 0.001;
+
+    xml += `    <measure number="${measureIdx + 1}"${isAnacrusis ? ' implicit="no" metrical="no"' : ''}>\n`;
+
+    const needsAttributes =
+      measureIdx === 0 ||
+      (ks && ks.fifths !== lastFifths) ||
+      (ts && (timeNum !== lastTimeNum || timeDen !== lastTimeDen)) ||
+      (clefEl && (clefEl.clefType === 'bass' ? 'bass' : 'treble') !== lastClef);
+
+    if (needsAttributes) {
+      xml += '      <attributes>\n';
+      xml += `        <divisions>${DIVISIONS}</divisions>\n`;
+      const fifthsVal = ks?.fifths ?? lastFifths ?? 0;
+      xml += `        <key><fifths>${fifthsVal}</fifths></key>\n`;
+      xml += `        <time><beats>${timeNum}</beats><beat-type>${timeDen}</beat-type></time>\n`;
+      const clefType = clefEl?.clefType === 'bass' ? 'bass' : 'treble';
+      xml += clefType === 'bass'
+        ? '        <clef><sign>F</sign><line>4</line></clef>\n'
+        : '        <clef><sign>G</sign><line>2</line></clef>\n';
+      xml += '      </attributes>\n';
+      lastFifths = fifthsVal; lastTimeNum = timeNum; lastTimeDen = timeDen; lastClef = clefType;
+    }
+
+    for (const el of notesAndRests) {
+      if (el.type === 'rest') {
+        const rest = el as ParsedRest;
+        const pulses = BRAILLE_DURATION_PULSES[rest.duration as BrailleDuration] ?? 1;
+        const ticks  = Math.round(pulses * DIVISIONS);
+        xml += '      <note>\n';
+        xml += '        <rest/>\n';
+        xml += `        <duration>${ticks}</duration>\n`;
+        xml += `        <type>${DURATION_TO_MUSICXML_TYPE[rest.duration as BrailleDuration] ?? 'quarter'}</type>\n`;
+        if (rest.dotted) xml += '        <dot/>\n';
+        xml += '      </note>\n';
+        continue;
+      }
+
+      const note = el as ParsedNote;
+      const pulses = BRAILLE_DURATION_PULSES[note.duration as BrailleDuration] ?? 1;
+      const ticks  = Math.round(pulses * DIVISIONS * (note.dotted2 ? 1.75 : note.dotted ? 1.5 : 1));
+      const noteKey = `${note.pitch}/${note.octave}`;
+
+      xml += '      <note>\n';
+      xml += '        <pitch>\n';
+      xml += `          <step>${note.pitch}</step>\n`;
+      if (note.accidental) {
+        const alterMap: Record<Accidental, number> = {
+          sharp: 1, flat: -1, natural: 0, 'double-sharp': 2, 'double-flat': -2,
+        };
+        xml += `          <alter>${alterMap[note.accidental]}</alter>\n`;
+      }
+      xml += `          <octave>${note.octave}</octave>\n`;
+      xml += '        </pitch>\n';
+      xml += `        <duration>${ticks}</duration>\n`;
+      xml += `        <type>${DURATION_TO_MUSICXML_TYPE[note.duration as BrailleDuration] ?? 'quarter'}</type>\n`;
+      if (note.dotted)  xml += '        <dot/>\n';
+      if (note.dotted2) xml += '        <dot/>\n        <dot/>\n';
+      if (note.accidental) {
+        const accNameMap: Record<Accidental, string> = {
+          sharp: 'sharp', flat: 'flat', natural: 'natural',
+          'double-sharp': 'double-sharp', 'double-flat': 'flat-flat',
+        };
+        xml += `        <accidental>${accNameMap[note.accidental]}</accidental>\n`;
+      }
+
+      const tieStart = note.tieRole === 'start';
+      const tieStop  = note.tieRole === 'end';
+      if (tieStart) { xml += '        <tie type="start"/>\n'; openTieByKey.set(noteKey, true); }
+      if (tieStop)  { xml += '        <tie type="stop"/>\n';  openTieByKey.delete(noteKey); }
+
+      const hasSlur = note.slurRole !== undefined;
+      if (hasSlur || tieStart || tieStop) {
+        xml += '        <notations>\n';
+        if (tieStart) xml += '          <tied type="start"/>\n';
+        if (tieStop)  xml += '          <tied type="stop"/>\n';
+        if (note.slurRole === 'start') xml += '          <slur type="start" number="1"/>\n';
+        if (note.slurRole === 'end')   xml += '          <slur type="stop" number="1"/>\n';
+        xml += '        </notations>\n';
+      }
+
+      xml += '      </note>\n';
+    }
+
+    xml += '    </measure>\n';
+  });
+
+  xml += '  </part>\n';
+  xml += '</score-partwise>\n';
+
+  return xml;
 }

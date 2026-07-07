@@ -293,6 +293,125 @@ function abbreviateCellDescription(char: string): string {
   return full.length > 6 ? full.slice(0, 6) : full;
 }
 
+// ─── DESCRIÇÃO SEMÂNTICA ANALÍTICA COMPLETA (ARIA / Leitores de Tela) ────────
+//
+// Gera uma descrição textual completa em português para uma célula Braille,
+// destinada a sintetizadores de voz (JAWS, NVDA, VoiceOver) via aria-label.
+// Diferente de abbreviateCellDescription() (abreviação visual curta), esta
+// função produz frases analíticas completas — ex: "Nota Mi da 4ª Oitava com
+// Ligadura de Duração", "Intervalo de Quinta Diatônica".
+//
+// O parâmetro `contextEl` é OPCIONAL: quando fornecido (o ParsedElement real
+// correspondente a esta posição, já disponível via parsedElements no editor),
+// a descrição é enriquecida com informação contextual real (oitava resolvida,
+// ligaduras ativas nesta ocorrência específica, acidentes, staccato) que uma
+// análise puramente do caractere isolado não pode determinar — o mesmo glifo
+// de nota pode ou não ter uma ligadura ativa dependendo do que vem antes/depois
+// dele no documento.
+const FULL_DURATION_NAME: Record<string, string> = {
+  w: 'Semibreve', h: 'Mínima', q: 'Semínima', '8': 'Colcheia', '16': 'Semicolcheia',
+};
+
+const FULL_ACCIDENTAL_NAME: Record<string, string> = {
+  sharp: 'sustenido', flat: 'bemol', natural: 'bequadro',
+  'double-sharp': 'dobrado sustenido', 'double-flat': 'dobrado bemol',
+};
+
+function getBrailleSemanticDescription(
+  char: string,
+  contextEl?: ParsedElement,
+): string {
+  if (!char || !char.trim()) {
+    return 'Espaço — separador de compasso';
+  }
+
+  const full = describeBrailleChar(char);
+
+  // ── Nota musical: "C (q)" → descrição analítica completa ──────────────────
+  const noteMatch = full.match(/^([A-G])\s*\(([whq0-9]+)\)$/);
+  if (noteMatch) {
+    const [, pitchLetter, durCode] = noteMatch;
+    const pitchNameRaw = PITCH_ABBR[pitchLetter] ?? pitchLetter.toLowerCase();
+    const pitchName    = pitchNameRaw.charAt(0).toUpperCase() + pitchNameRaw.slice(1);
+    const durName      = FULL_DURATION_NAME[durCode] ?? durCode;
+
+    let desc = `Nota ${pitchName}`;
+
+    const noteCtx = (contextEl && contextEl.type === 'note') ? (contextEl as ParsedNote) : undefined;
+
+    if (noteCtx) {
+      desc += ` da ${noteCtx.octave}ª Oitava`;
+    }
+
+    desc += `, duração ${durName}`;
+
+    if (noteCtx) {
+      if (noteCtx.tieRole === 'start' || noteCtx.tieRole === 'end') {
+        desc += ', com Ligadura de Duração';
+      } else if (noteCtx.slurRole === 'start' || noteCtx.slurRole === 'end') {
+        desc += ', com Ligadura de Expressão';
+      }
+      if (noteCtx.slurRolePedagogic === 'start' || noteCtx.slurRolePedagogic === 'end') {
+        desc += ', parte de Frase Pedagógica';
+      }
+      if (noteCtx.staccato)  desc += ', staccato';
+      if (noteCtx.dotted)    desc += ', pontuada';
+      if (noteCtx.accidental) {
+        desc += `, ${FULL_ACCIDENTAL_NAME[noteCtx.accidental] ?? ''}`;
+      }
+    }
+
+    return desc;
+  }
+
+  // ── Pausa: "Pausa (q)" → "Pausa de Semínima" ───────────────────────────────
+  const restMatch = full.match(/^Pausa\s*\(([whq0-9]+)\)$/);
+  if (restMatch) {
+    const durName = FULL_DURATION_NAME[restMatch[1]] ?? restMatch[1];
+    return `Pausa de ${durName}`;
+  }
+
+  // ── Sinal de oitava isolado: "Oitava 4" → "Sinal de 4ª Oitava" ─────────────
+  const octMatch = full.match(/^Oitava\s*(\d)$/);
+  if (octMatch) return `Sinal de ${octMatch[1]}ª Oitava`;
+
+  // ── Intervalos: "Intervalo: Quintaª" (formato atual) → "Intervalo de Quinta Diatônica"
+  const intervalMatch = full.match(/^Intervalo:\s*(.+)$/);
+  if (intervalMatch) {
+    const cleanName = intervalMatch[1].replace(/ª$/, '').trim();
+    return `Intervalo de ${cleanName} Diatônico`;
+  }
+
+  // ── Acidentes ───────────────────────────────────────────────────────────────
+  if (full === 'Sustenido')          return 'Sinal de Sustenido';
+  if (full === 'Bemol')              return 'Sinal de Bemol';
+  if (full === 'Bequadro')           return 'Sinal de Bequadro';
+  if (full === 'Dobrado sustenido')  return 'Sinal de Dobrado Sustenido';
+  if (full === 'Dobrado bemol')      return 'Sinal de Dobrado Bemol';
+
+  // ── Ligaduras ───────────────────────────────────────────────────────────────
+  if (full === 'Ligadura de Duração')       return 'Sinal de Ligadura de Duração';
+  if (full === 'Início de Ligadura')        return 'Início de Ligadura de Expressão';
+  if (full === 'Início de Ligadura Longa')  return 'Início de Ligadura de Frase Longa';
+  if (full === 'Fim de Ligadura Longa')     return 'Fim de Ligadura de Frase Longa';
+
+  // ── Articulações ──────────────────────────────────────────────────────────
+  if (full === 'Staccato') return 'Sinal de Staccato';
+
+  // ── Fórmula de compasso ──────────────────────────────────────────────────
+  if (/^\d+\/\d+$/.test(full)) return `Fórmula de compasso ${full}`;
+
+  // ── Claves e mãos ─────────────────────────────────────────────────────────
+  if (full === 'Mão direita') return 'Sinal de Mão Direita — clave de Sol';
+  if (full === 'Mão esquerda') return 'Sinal de Mão Esquerda — clave de Fá';
+
+  if (full === 'Símbolo desconhecido' || !full) {
+    return 'Símbolo Braille não identificado';
+  }
+
+  return full;
+}
+
 // ─── TECLADO PERKINS VIRTUAL ─────────────────────────────────────────────────
 //
 // Suporte completo a:
@@ -1713,12 +1832,17 @@ export default function BrailleEditor() {
               ~Abc
             </button>
           )}
-          {/* Mostrar descrição abreviada sob cada célula Braille */}
+          {/* Mostrar descrição abreviada sob cada célula Braille.
+              Este modo também é a via primária de acessibilidade detalhada:
+              cada célula recebe tabIndex, role="img" e aria-label semântico
+              completo (ex: "Nota Mi da 4ª Oitava com Ligadura de Duração"),
+              navegável célula-a-célula por leitores de tela (JAWS/NVDA). */}
           {inputMode === "braille" && (
             <button
               onClick={() => setShowCellDescriptions(v => !v)}
               className={`text-[9px] px-1.5 py-0.5 rounded transition-colors ${showCellDescriptions ? "bg-primary/20 text-primary" : "text-muted-foreground hover:text-foreground"}`}
-              title="Mostrar descrição abreviada sob cada célula"
+              title="Mostrar descrição abreviada sob cada célula (navegação acessível célula-a-célula)"
+              aria-label="Alternar modo de descrição de células — navegação detalhada para leitores de tela"
               aria-pressed={showCellDescriptions}
             >
               ~Desc
@@ -1786,14 +1910,24 @@ export default function BrailleEditor() {
                       const absoluteIdx = lineOffset + charIdx;
                       const isActive    = absoluteIdx === playingSourceIndex;
                       const desc        = abbreviateCellDescription(char);
+                      // Localizar o ParsedElement real desta posição para enriquecer
+                      // a descrição semântica com contexto (ligadura ativa, oitava
+                      // resolvida, acidente) que o caractere isolado não revela.
+                      const contextEl = parsedElements.find(
+                        e => (e as any).sourceIndex === absoluteIdx
+                      );
+                      const semanticLabel = getBrailleSemanticDescription(char, contextEl);
                       return (
                         <div
                           key={charIdx}
-                          className={`inline-flex flex-col items-center text-center select-none rounded-sm transition-colors ${
+                          tabIndex={0}
+                          role="img"
+                          aria-label={semanticLabel}
+                          className={`inline-flex flex-col items-center text-center select-none rounded-sm transition-colors focus:outline-none focus:ring-2 focus:ring-primary/60 ${
                             isActive ? "bg-blue-200 dark:bg-blue-900/50" : ""
                           }`}
                           style={{ minWidth: Math.max(brailleFontSize * 0.6, 18) }}
-                          title={describeBrailleChar(char)}
+                          title={semanticLabel}
                         >
                           <span style={{ fontSize: brailleFontSize }} className="leading-none">
                             {char === " " ? "\u00A0" : char}
@@ -1834,7 +1968,15 @@ export default function BrailleEditor() {
                 Visível apenas durante a reprodução de áudio.
                 CRÍTICO: classes estruturais/tipográficas IDÊNTICAS ao textarea
                 abaixo (padding, fonte, line-height, wrapping) — qualquer diferença
-                causa desalinhamento de caracteres em telas estreitas ou fontes grandes. */}
+                causa desalinhamento de caracteres em telas estreitas ou fontes grandes.
+                DECISÃO DE ACESSIBILIDADE: esta camada permanece aria-hidden="true"
+                e SEM tabIndex/role/aria-label por célula — é puramente decorativa
+                (sincronização visual do playback). O <textarea> real logo abaixo já
+                é nativamente acessível (leitores de tela leem seu value/seleção
+                normalmente). A navegação analítica célula-a-célula com descrições
+                semânticas completas (ex: "Nota Mi da 4ª Oitava com Ligadura de
+                Duração") é oferecida no modo ~Desc — ver botão na barra de
+                ferramentas — evitando duplicar/conflitar com o textarea nativo. */}
             {playingSourceIndex !== null && (
               <div
                 aria-hidden="true"
