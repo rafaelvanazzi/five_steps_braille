@@ -10,7 +10,7 @@
  *   loadSoundFont(_url?)                                         → Promise<void>  (stub)
  *   setInstrument(inst: InstrumentType)                         → void
  *   setBpm(newBpm)                                              → void
- *   playScore(elements, initialBpm, startIndex, onHighlight?)   → void
+ *   playScore(elements, initialBpm, startIndex, onHighlight?)   → void  (onHighlight recebe number|number[])
  *   stopScore()                                                  → void
  *   pauseScore()                                                 → void
  *   resumeScore()                                                → void
@@ -399,11 +399,244 @@ export function resumeScore(): void {
  *                             0 = reproduzir desde o início.
  * @param onElementHighlight — Callback opcional: sourceIndex da nota atual
  */
+/**
+ * Estado de armadura/acidentes/ligadura para UMA "mão" (trilha de reprodução).
+ * Instâncias independentes por mão garantem que um acidente ou uma ligadura
+ * na mão direita nunca contamine o estado da mão esquerda, e vice-versa.
+ */
+interface HandPlaybackState {
+  measureAccidentals: MeasureAccidentalMap;
+  tieActiveUntil:     Map<string, number>;
+}
+
+function createHandPlaybackState(): HandPlaybackState {
+  return { measureAccidentals: {}, tieActiveUntil: new Map() };
+}
+
+/**
+ * Separa elementos por mão (Mão Direita / Mão Esquerda) agrupando-os por
+ * measureIndex — espelha exatamente a lógica de splitByHand() do
+ * ScoreRenderer.tsx (mesma correção de bug: barlines e notas são atribuídas
+ * à mão em que realmente ocorrem, nunca duplicadas às cegas), garantindo que
+ * a reprodução sonora e a partitura visual permaneçam estruturalmente
+ * consistentes entre si.
+ *
+ * Retorna, por mão, um Map<measureIndex, ParsedElement[]> contendo apenas
+ * notas/pausas/intervalos daquele compasso — pronto para ser percorrido em
+ * paralelo pelo agendador polifônico de playScore.
+ */
+function splitElementsByHandForPlayback(elements: ParsedElement[]): {
+  trebleBuckets: Map<number, ParsedElement[]>;
+  bassBuckets:   Map<number, ParsedElement[]>;
+  maxMeasureIdx: number;
+  hasBothHands:  boolean;
+} {
+  let currentHand: 'right' | 'left' | null = null;
+  let sawRight = false;
+  let sawLeft  = false;
+
+  const trebleBuckets = new Map<number, ParsedElement[]>();
+  const bassBuckets   = new Map<number, ParsedElement[]>();
+  let maxMeasureIdx = -1;
+
+  for (const el of elements) {
+    if (el.type === 'hand') {
+      currentHand = (el as any).hand as 'right' | 'left';
+      if (currentHand === 'right') sawRight = true;
+      else                          sawLeft  = true;
+      continue;
+    }
+
+    // Elementos globais (armadura, compasso, clave) e barlines não entram nos
+    // buckets — são tratados no loop principal via busca direta no array
+    // original 'elements' (currentGlobalKeySignature já cobre a armadura).
+    if (
+      el.type === 'keysignature' ||
+      el.type === 'timesignature' ||
+      el.type === 'clef' ||
+      el.type === 'barline'
+    ) {
+      continue;
+    }
+
+    if (el.type !== 'note' && el.type !== 'rest' && el.type !== 'interval') continue;
+
+    const idx = (el as any).measureIndex as number | undefined ?? 0;
+    if (idx > maxMeasureIdx) maxMeasureIdx = idx;
+
+    if (currentHand === 'left') {
+      if (!bassBuckets.has(idx)) bassBuckets.set(idx, []);
+      bassBuckets.get(idx)!.push(el);
+    } else {
+      if (!trebleBuckets.has(idx)) trebleBuckets.set(idx, []);
+      trebleBuckets.get(idx)!.push(el);
+    }
+  }
+
+  return { trebleBuckets, bassBuckets, maxMeasureIdx, hasBothHands: sawRight && sawLeft };
+}
+
+/**
+ * Agenda a reprodução das notas de UM compasso de UMA mão, a partir de
+ * measureStartTime (compartilhado entre as duas mãos para garantir disparo
+ * simultâneo). Avança e retorna um sub-cursor LOCAL a este compasso/mão;
+ * não afeta o cursor compartilhado entre mãos (isso é feito pelo chamador,
+ * usando a duração do compasso derivada da fórmula de compasso ativa).
+ *
+ * Retorna os sourceIndex das notas cujo highlight deve disparar em cada
+ * instante, para permitir ao chamador agendar o callback combinado das
+ * duas mãos no MESMO setTimeout.
+ */
+function scheduleHandMeasure(
+  ctx:                 AudioContext,
+  bucket:              ParsedElement[] | undefined,
+  measureStartTime:    number,
+  keyAccidentals:      KeyAccidentalMap,
+  handState:           HandPlaybackState,
+  startIndex:          number,
+  highlightSchedule:   Map<number, number[]>, // tempo relativo (ms) → sourceIndexes a destacar
+): void {
+  if (!bucket || bucket.length === 0) return;
+
+  let localCursor = measureStartTime;
+
+  for (let i = 0; i < bucket.length; i++) {
+    const el = bucket[i];
+
+    if (el.type === 'rest') {
+      const rest = el as { type: 'rest'; duration: string; dotted: boolean; dotted2: boolean; sourceIndex?: number };
+      handState.measureAccidentals = {};
+      const restSrcIdx = rest.sourceIndex ?? 0;
+      const durSec = figureDurationSeconds(rest.duration, rest.dotted, rest.dotted2, _currentBpm);
+      if (restSrcIdx >= startIndex) localCursor += durSec;
+      continue;
+    }
+
+    if (el.type !== 'note') continue; // 'interval' é consumido junto da nota-base abaixo
+
+    const note = el as ParsedNote;
+
+    if (note.accidental !== undefined) {
+      if (note.accidental === 'natural') {
+        (handState.measureAccidentals as Record<string, null>)[note.pitch] = null;
+      } else {
+        handState.measureAccidentals[note.pitch] = ACCIDENTAL_SEMITONE[note.accidental];
+      }
+    }
+
+    const metricDur = figureDurationSeconds(note.duration, note.dotted, note.dotted2, _currentBpm);
+    const noteSrcIdx = note.sourceIndex ?? 0;
+
+    if (noteSrcIdx < startIndex) {
+      continue; // atualiza estado (acima) mas não avança tempo nem soa
+    }
+
+    const chordFrequencies: number[] = [];
+    let intervalCount = 0;
+
+    const delta = resolveNoteDelta(note.pitch, handState.measureAccidentals, keyAccidentals);
+    const midi  = pitchToMidi(note.pitch, note.octave, delta);
+    chordFrequencies.push(midiToFrequency(midi));
+
+    for (let j = i + 1; j < bucket.length; j++) {
+      const next = bucket[j];
+      if (next.type !== 'interval') break;
+      intervalCount++;
+
+      const size      = (next as { type: 'interval'; intervalSize: number }).intervalSize;
+      const baseIdx   = DIATONIC_SCALE.indexOf(note.pitch as typeof DIATONIC_SCALE[number]);
+      const rawIdx    = baseIdx + (size - 1);
+      const intPitch  = DIATONIC_SCALE[((rawIdx % 7) + 7) % 7];
+      const intOctave = note.octave + Math.floor(rawIdx / 7);
+
+      const intDelta = resolveNoteDelta(intPitch, handState.measureAccidentals, keyAccidentals);
+      const intMidi  = pitchToMidi(intPitch, intOctave, intDelta);
+      chordFrequencies.push(midiToFrequency(intMidi));
+    }
+
+    const isTie             = !!(note as any).isTie || (note as any).tieRole === 'end';
+    const tieDurationPulses = (note as any).tieDuration as number | undefined;
+    const noteKey           = `${note.pitch.toLowerCase()}/${note.octave}`;
+
+    if (isTie) {
+      handState.tieActiveUntil.delete(noteKey);
+      if (note.sourceIndex !== undefined) {
+        const relMs = (localCursor - ctx.currentTime) * 1000;
+        const arr = highlightSchedule.get(Math.round(relMs)) ?? [];
+        arr.push(note.sourceIndex);
+        highlightSchedule.set(Math.round(relMs), arr);
+      }
+      localCursor += metricDur;
+      continue;
+    }
+
+    let soundDur = metricDur;
+
+    if (tieDurationPulses !== undefined) {
+      soundDur = tieDurationPulses * (60 / _currentBpm);
+      handState.tieActiveUntil.set(noteKey, localCursor + soundDur);
+    } else {
+      let lookAhead = i + 1 + intervalCount;
+      while (lookAhead < bucket.length) {
+        const nextEl = bucket[lookAhead];
+        if (nextEl.type === 'note') {
+          const nextNote = nextEl as ParsedNote;
+          const nextKey  = `${nextNote.pitch.toLowerCase()}/${nextNote.octave}`;
+          if (!!(nextNote as any).isTie && nextKey === noteKey) {
+            const nextTieDur = (nextNote as any).tieDuration as number | undefined;
+            if (nextTieDur !== undefined) {
+              soundDur = nextTieDur * (60 / _currentBpm);
+              handState.tieActiveUntil.set(noteKey, localCursor + soundDur);
+            }
+          }
+          break;
+        }
+        break;
+      }
+    }
+
+    scheduleChord(ctx, chordFrequencies, localCursor, soundDur * 0.96);
+
+    if (note.sourceIndex !== undefined) {
+      const relMs = (localCursor - ctx.currentTime) * 1000;
+      const key = Math.round(relMs);
+      const arr = highlightSchedule.get(key) ?? [];
+      arr.push(note.sourceIndex);
+      highlightSchedule.set(key, arr);
+    }
+
+    localCursor += metricDur;
+  }
+}
+
+/**
+ * Percorre o array de elementos e reproduz a partitura via síntese FM.
+ *
+ * SUPORTE POLIFÔNICO DE PIANO (Grand Staff): quando a partitura contém as
+ * duas mãos (detectado via tokens 'hand'), as notas de cada mão são
+ * agrupadas por measureIndex e reproduzidas em DOIS agendamentos paralelos
+ * e sincronizados — o compasso N da mão direita e o compasso N da mão
+ * esquerda sempre começam no MESMO instante de ctx.currentTime, mesmo que
+ * suas subdivisões rítmicas internas sejam diferentes. Compassos musicais
+ * de instrumento único (sem tokens 'hand') continuam usando o agendamento
+ * linear sequencial original, sem qualquer alteração de comportamento.
+ *
+ * @param elements           — Array de ParsedElement do brailleMusic.ts
+ * @param initialBpm         — BPM inicial (padrão: 120)
+ * @param startIndex         — sourceIndex a partir do qual iniciar a reprodução.
+ *                             Para partituras de duas mãos, o compasso correspondente
+ *                             é identificado e AMBAS as mãos iniciam sincronizadas
+ *                             a partir dele (mesmo que o cursor esteja fisicamente
+ *                             posicionado no texto de apenas uma das mãos).
+ * @param onElementHighlight — Callback: sourceIndex (ou array de sourceIndex,
+ *                             quando duas mãos soam no mesmo instante) da(s)
+ *                             nota(s) atualmente em execução.
+ */
 export function playScore(
   elements:            ParsedElement[],
   initialBpm         = 120,
   startIndex         = 0,
-  onElementHighlight?: (sourceIndex: number) => void,
+  onElementHighlight?: (sourceIndex: number | number[]) => void,
 ): void {
   stopScore();
 
@@ -415,10 +648,13 @@ export function playScore(
   _stopped = false;
   setBpm(initialBpm);
 
-  // ── Estado de armadura de clave ───────────────────────────────────────────
+  const ctx = _ctx;
+
+  // ── Estado de armadura de clave — GLOBAL, compartilhado entre as duas mãos ──
+  // (a armadura de clave é um atributo de partitura inteira, idêntico para
+  // ambas as pautas de um Grand Staff — nunca diverge entre mãos)
   let currentGlobalKeySignature: string | null = null;
-  let keyAccidentals:            KeyAccidentalMap     = {};
-  let measureAccidentals:        MeasureAccidentalMap = {};
+  let keyAccidentals: KeyAccidentalMap = {};
 
   const firstKS = elements.find(el => el.type === 'keysignature') as ParsedKeySignature | undefined;
   if (firstKS) {
@@ -426,158 +662,221 @@ export function playScore(
     keyAccidentals = { ...(KEY_SIGNATURE_MAP[firstKS.vexKey] ?? {}) };
   }
 
-  // ── Cursor de tempo (Web Audio scheduler) ────────────────────────────────
-  let cursor = _ctx.currentTime + 0.05;
-  const ctx  = _ctx;
+  const firstTS = elements.find(el => el.type === 'timesignature') as
+    { type: 'timesignature'; numerator: number; denominator: number } | undefined;
+  const timeSigNum = firstTS?.numerator   ?? 4;
+  const timeSigDen = firstTS?.denominator ?? 4;
 
-  // ── Tie tracking (MIMB 6-2) ───────────────────────────────────────────────
-  const tieActiveUntil = new Map<string, number>();
+  const { trebleBuckets, bassBuckets, maxMeasureIdx, hasBothHands } =
+    splitElementsByHandForPlayback(elements);
 
-  // ── Loop principal ────────────────────────────────────────────────────────
-  for (let i = 0; i < elements.length; i++) {
-    if (_stopped) break;
+  // ── Caminho de instrumento único (sem tokens 'hand') — comportamento ORIGINAL,
+  // sequencial e linear, preservado integralmente sem qualquer alteração. ──────
+  if (!hasBothHands) {
+    let measureAccidentals: MeasureAccidentalMap = {};
+    let cursor = ctx.currentTime + 0.05;
+    const tieActiveUntil = new Map<string, number>();
 
-    const el = elements[i];
+    for (let i = 0; i < elements.length; i++) {
+      if (_stopped) break;
+      const el = elements[i];
 
-    // keysignature → atualiza armadura global (SEMPRE, mesmo antes de startIndex)
-    if (el.type === 'keysignature') {
-      const ks = el as ParsedKeySignature;
-      currentGlobalKeySignature = ks.vexKey;
-      keyAccidentals     = { ...(KEY_SIGNATURE_MAP[ks.vexKey] ?? {}) };
-      measureAccidentals = {};
-      continue;
-    }
-
-    // barline → limpa acidentes locais + reafirma armadura global
-    if (el.type === 'barline') {
-      measureAccidentals = {};
-      if (currentGlobalKeySignature) {
-        keyAccidentals = { ...(KEY_SIGNATURE_MAP[currentGlobalKeySignature] ?? {}) };
+      if (el.type === 'keysignature') {
+        const ks = el as ParsedKeySignature;
+        currentGlobalKeySignature = ks.vexKey;
+        keyAccidentals     = { ...(KEY_SIGNATURE_MAP[ks.vexKey] ?? {}) };
+        measureAccidentals = {};
+        continue;
       }
-      continue;
-    }
-
-    // rest → avança cursor (apenas se >= startIndex) + limpa acidentes locais
-    if (el.type === 'rest') {
-      const rest = el as { type: 'rest'; duration: string; dotted: boolean; dotted2: boolean; sourceIndex?: number };
-      measureAccidentals = {};
-      if (currentGlobalKeySignature) {
-        keyAccidentals = { ...(KEY_SIGNATURE_MAP[currentGlobalKeySignature] ?? {}) };
+      if (el.type === 'barline') {
+        measureAccidentals = {};
+        if (currentGlobalKeySignature) {
+          keyAccidentals = { ...(KEY_SIGNATURE_MAP[currentGlobalKeySignature] ?? {}) };
+        }
+        continue;
       }
-      // Avançar cursor apenas se esta pausa está no trecho a ser reproduzido
-      const restSrcIdx = rest.sourceIndex ?? 0;
-      if (restSrcIdx >= startIndex) {
-        cursor += figureDurationSeconds(rest.duration, rest.dotted, rest.dotted2, _currentBpm);
+      if (el.type === 'rest') {
+        const rest = el as { type: 'rest'; duration: string; dotted: boolean; dotted2: boolean; sourceIndex?: number };
+        measureAccidentals = {};
+        if (currentGlobalKeySignature) {
+          keyAccidentals = { ...(KEY_SIGNATURE_MAP[currentGlobalKeySignature] ?? {}) };
+        }
+        const restSrcIdx = rest.sourceIndex ?? 0;
+        if (restSrcIdx >= startIndex) {
+          cursor += figureDurationSeconds(rest.duration, rest.dotted, rest.dotted2, _currentBpm);
+        }
+        continue;
       }
-      continue;
-    }
+      if (el.type !== 'note') continue;
 
-    if (el.type !== 'note') continue;
+      const note = el as ParsedNote;
 
-    const note = el as ParsedNote;
+      if (note.accidental !== undefined) {
+        if (note.accidental === 'natural') {
+          (measureAccidentals as Record<string, null>)[note.pitch] = null;
+        } else {
+          measureAccidentals[note.pitch] = ACCIDENTAL_SEMITONE[note.accidental];
+        }
+      }
 
-    // Registrar acidente explícito no mapa do compasso (SEMPRE — afeta estado)
-    if (note.accidental !== undefined) {
-      if (note.accidental === 'natural') {
-        (measureAccidentals as Record<string, null>)[note.pitch] = null;
+      const metricDur = figureDurationSeconds(note.duration, note.dotted, note.dotted2, _currentBpm);
+      const noteSrcIdx = note.sourceIndex ?? 0;
+      if (noteSrcIdx < startIndex) continue;
+
+      const chordFrequencies: number[] = [];
+      let intervalCount = 0;
+
+      const delta = resolveNoteDelta(note.pitch, measureAccidentals, keyAccidentals);
+      const midi  = pitchToMidi(note.pitch, note.octave, delta);
+      chordFrequencies.push(midiToFrequency(midi));
+
+      for (let j = i + 1; j < elements.length; j++) {
+        const next = elements[j];
+        if (next.type !== 'interval') break;
+        intervalCount++;
+
+        const size      = (next as { type: 'interval'; intervalSize: number }).intervalSize;
+        const baseIdx   = DIATONIC_SCALE.indexOf(note.pitch as typeof DIATONIC_SCALE[number]);
+        const rawIdx    = baseIdx + (size - 1);
+        const intPitch  = DIATONIC_SCALE[((rawIdx % 7) + 7) % 7];
+        const intOctave = note.octave + Math.floor(rawIdx / 7);
+
+        const intDelta = resolveNoteDelta(intPitch, measureAccidentals, keyAccidentals);
+        const intMidi  = pitchToMidi(intPitch, intOctave, intDelta);
+        chordFrequencies.push(midiToFrequency(intMidi));
+      }
+
+      const isTie             = !!(note as any).isTie || (note as any).tieRole === 'end';
+      const tieDurationPulses = (note as any).tieDuration as number | undefined;
+      const noteKey           = `${note.pitch.toLowerCase()}/${note.octave}`;
+
+      if (isTie) {
+        tieActiveUntil.delete(noteKey);
+        if (onElementHighlight !== undefined && note.sourceIndex !== undefined) {
+          const noteTime = (cursor - ctx.currentTime) * 1000;
+          const srcIdx   = note.sourceIndex;
+          setTimeout(() => { if (!_stopped) onElementHighlight(srcIdx); }, Math.max(0, noteTime));
+        }
+        cursor += metricDur;
+        continue;
+      }
+
+      let soundDur = metricDur;
+
+      if (tieDurationPulses !== undefined) {
+        soundDur = tieDurationPulses * (60 / _currentBpm);
+        tieActiveUntil.set(noteKey, cursor + soundDur);
       } else {
-        measureAccidentals[note.pitch] = ACCIDENTAL_SEMITONE[note.accidental];
+        let lookAhead = i + 1 + intervalCount;
+        while (lookAhead < elements.length) {
+          const nextEl = elements[lookAhead];
+          if (nextEl.type === 'note') {
+            const nextNote = nextEl as ParsedNote;
+            const nextKey  = `${nextNote.pitch.toLowerCase()}/${nextNote.octave}`;
+            if (!!(nextNote as any).isTie && nextKey === noteKey) {
+              const nextTieDur = (nextNote as any).tieDuration as number | undefined;
+              if (nextTieDur !== undefined) {
+                soundDur = nextTieDur * (60 / _currentBpm);
+                tieActiveUntil.set(noteKey, cursor + soundDur);
+              }
+            }
+            break;
+          }
+          if (nextEl.type === 'barline') { lookAhead++; continue; }
+          break;
+        }
       }
-    }
 
-    const metricDur = figureDurationSeconds(note.duration, note.dotted, note.dotted2, _currentBpm);
+      scheduleChord(ctx, chordFrequencies, cursor, soundDur * 0.96);
 
-    // ── Verificar se esta nota está no trecho a reproduzir ────────────────
-    // Notas antes de startIndex: processam estado (acidentes, armadura) mas
-    // não geram som e não avançam o cursor de áudio.
-    const noteSrcIdx = note.sourceIndex ?? 0;
-    if (noteSrcIdx < startIndex) {
-      // Apenas atualizar estado — sem som, sem avanço de cursor
-      continue;
-    }
-
-    // ── Frequências do acorde (nota base + intervalos) ────────────────────
-    const chordFrequencies: number[] = [];
-    let intervalCount = 0;
-
-    const delta = resolveNoteDelta(note.pitch, measureAccidentals, keyAccidentals);
-    const midi  = pitchToMidi(note.pitch, note.octave, delta);
-    chordFrequencies.push(midiToFrequency(midi));
-
-    for (let j = i + 1; j < elements.length; j++) {
-      const next = elements[j];
-      if (next.type !== 'interval') break;
-      intervalCount++;
-
-      const size      = (next as { type: 'interval'; intervalSize: number }).intervalSize;
-      const baseIdx   = DIATONIC_SCALE.indexOf(note.pitch as typeof DIATONIC_SCALE[number]);
-      const rawIdx    = baseIdx + (size - 1);
-      const intPitch  = DIATONIC_SCALE[((rawIdx % 7) + 7) % 7];
-      const intOctave = note.octave + Math.floor(rawIdx / 7);
-
-      const intDelta = resolveNoteDelta(intPitch, measureAccidentals, keyAccidentals);
-      const intMidi  = pitchToMidi(intPitch, intOctave, intDelta);
-      chordFrequencies.push(midiToFrequency(intMidi));
-    }
-
-    // ── Tie MIMB 6-2 (ligadura de prolongação) ────────────────────────────
-    const isTie             = !!(note as any).isTie || (note as any).tieRole === 'end';
-    const tieDurationPulses = (note as any).tieDuration as number | undefined;
-    const noteKey           = `${note.pitch.toLowerCase()}/${note.octave}`;
-
-    if (isTie) {
-      tieActiveUntil.delete(noteKey);
       if (onElementHighlight !== undefined && note.sourceIndex !== undefined) {
         const noteTime = (cursor - ctx.currentTime) * 1000;
         const srcIdx   = note.sourceIndex;
         setTimeout(() => { if (!_stopped) onElementHighlight(srcIdx); }, Math.max(0, noteTime));
       }
+
       cursor += metricDur;
-      continue;
     }
 
-    // Calcular duração do som (pode ser maior que metricDur se for origem de tie)
-    let soundDur = metricDur;
-
-    if (tieDurationPulses !== undefined) {
-      soundDur = tieDurationPulses * (60 / _currentBpm);
-      tieActiveUntil.set(noteKey, cursor + soundDur);
-    } else {
-      let lookAhead = i + 1 + intervalCount;
-      while (lookAhead < elements.length) {
-        const nextEl = elements[lookAhead];
-        if (nextEl.type === 'note') {
-          const nextNote = nextEl as ParsedNote;
-          const nextKey  = `${nextNote.pitch.toLowerCase()}/${nextNote.octave}`;
-          if (!!(nextNote as any).isTie && nextKey === noteKey) {
-            const nextTieDur = (nextNote as any).tieDuration as number | undefined;
-            if (nextTieDur !== undefined) {
-              soundDur = nextTieDur * (60 / _currentBpm);
-              tieActiveUntil.set(noteKey, cursor + soundDur);
-            }
-          }
-          break;
-        }
-        if (nextEl.type === 'barline') { lookAhead++; continue; }
-        break;
-      }
+    if (!_stopped) {
+      const remainingMs = Math.max(0, (cursor - ctx.currentTime) * 1000) + 300;
+      _finishTimer = setTimeout(() => {
+        if (!_stopped) { _stopped = true; ctx.close().catch(() => {}); }
+      }, remainingMs);
     }
-
-    // Agendar som FM com o timbre selecionado
-    scheduleChord(ctx, chordFrequencies, cursor, soundDur * 0.96);
-
-    if (onElementHighlight !== undefined && note.sourceIndex !== undefined) {
-      const noteTime = (cursor - ctx.currentTime) * 1000;
-      const srcIdx   = note.sourceIndex;
-      setTimeout(() => { if (!_stopped) onElementHighlight(srcIdx); }, Math.max(0, noteTime));
-    }
-
-    cursor += metricDur;
+    return;
   }
 
-  // ── Encerramento automático ───────────────────────────────────────────────
+  // ── Caminho POLIFÔNICO de duas mãos (Grand Staff) ─────────────────────────
+  // Cursor COMPARTILHADO: avança pelo mesmo valor para as duas mãos a cada
+  // compasso, garantindo que measureIndex N de ambas comece no MESMO instante.
+  let sharedCursor = ctx.currentTime + 0.05;
+  const secondsPerBeat  = 60 / _currentBpm;
+  const measureDuration = timeSigNum * (4 / timeSigDen) * secondsPerBeat;
+
+  // Estado de acidentes/ligadura INDEPENDENTE por mão — mirror exato do que
+  // já é feito em ScoreRenderer.tsx (trebleTieState/bassTieState), garantindo
+  // que áudio e partitura visual permaneçam semanticamente consistentes.
+  const trebleState = createHandPlaybackState();
+  const bassState   = createHandPlaybackState();
+
+  // Determinar a partir de qual measureIndex a reprodução deve começar —
+  // encontrado pelo sourceIndex mais próximo de startIndex em QUALQUER mão,
+  // já que o cursor pode estar fisicamente no texto de apenas uma delas mas
+  // ambas devem iniciar sincronizadas a partir do mesmo compasso lógico.
+  let startMeasureIdx = 0;
+  if (startIndex > 0) {
+    let bestIdx = 0, bestDist = Infinity;
+    const scanBucket = (bucket: Map<number, ParsedElement[]>) => {
+      for (const [mIdx, notes] of Array.from(bucket.entries())) {
+        for (const el of notes) {
+          const si = (el as any).sourceIndex as number | undefined;
+          if (si === undefined) continue;
+          const dist = Math.abs(si - startIndex);
+          if (si >= startIndex && dist < bestDist) { bestDist = dist; bestIdx = mIdx; }
+        }
+      }
+    };
+    scanBucket(trebleBuckets);
+    scanBucket(bassBuckets);
+    startMeasureIdx = bestIdx;
+  }
+
+  // Combina os destaques agendados de AMBAS as mãos no MESMO instante relativo,
+  // evitando duas chamadas de callback separadas quando as notas coincidem —
+  // uma única chamada com array garante que o estado no BrailleEditor.tsx
+  // possa colorir as duas notas simultaneamente (requer playingSourceIndex
+  // como number[] | null no consumidor — ver nota de acompanhamento).
+  const highlightSchedule = new Map<number, number[]>();
+
+  for (let m = startMeasureIdx; m <= maxMeasureIdx; m++) {
+    if (_stopped) break;
+
+    const measureStartTime = sharedCursor;
+
+    scheduleHandMeasure(
+      ctx, trebleBuckets.get(m), measureStartTime,
+      keyAccidentals, trebleState, startIndex, highlightSchedule,
+    );
+    scheduleHandMeasure(
+      ctx, bassBuckets.get(m), measureStartTime,
+      keyAccidentals, bassState, startIndex, highlightSchedule,
+    );
+
+    sharedCursor = measureStartTime + measureDuration;
+  }
+
+  // Disparar os callbacks de highlight combinados — uma chamada por instante,
+  // com array quando duas notas (uma de cada mão) coincidem no mesmo tempo.
+  if (onElementHighlight !== undefined) {
+    for (const [relMs, srcIndexes] of Array.from(highlightSchedule.entries())) {
+      const payload = srcIndexes.length === 1 ? srcIndexes[0] : srcIndexes;
+      setTimeout(() => { if (!_stopped) onElementHighlight(payload); }, Math.max(0, relMs));
+    }
+  }
+
   if (!_stopped) {
-    const remainingMs = Math.max(0, (cursor - ctx.currentTime) * 1000) + 300;
+    const remainingMs = Math.max(0, (sharedCursor - ctx.currentTime) * 1000) + 300;
     _finishTimer = setTimeout(() => {
       if (!_stopped) { _stopped = true; ctx.close().catch(() => {}); }
     }, remainingMs);

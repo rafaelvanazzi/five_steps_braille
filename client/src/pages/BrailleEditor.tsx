@@ -1213,7 +1213,7 @@ export default function BrailleEditor() {
     // Callback onElementHighlight: sincroniza destaque visual (nota + texto Braille)
     // com o scheduler de áudio. Chamado a cada nota reproduzida.
     playScore(parsedElements, playerBpm, activeSourceIndex, (srcIdx) => {
-      setPlayingSourceIndex(srcIdx);
+      setPlayingSourceIndex(Array.isArray(srcIdx) ? srcIdx[0] : srcIdx);
     });
     setIsPlaying(true);
     setIsPaused(false);
