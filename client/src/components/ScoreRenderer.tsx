@@ -53,11 +53,13 @@ interface ScoreRendererProps {
    */
   scaleRatio?: number;
   /**
-   * sourceIndex da nota atualmente ativa no playback.
-   * A StaveNote correspondente recebe fillStyle/strokeStyle azul (#3b82f6).
-   * null ou undefined = nenhum destaque.
+   * sourceIndex(es) da(s) nota(s) atualmente ativa(s) no playback.
+   * Pode ser um único número (instrumento monofônico) ou um array de dois
+   * números (Grand Staff — mão direita e mão esquerda soando no mesmo
+   * instante). A(s) StaveNote(s) correspondente(s) recebe(m) fillStyle/
+   * strokeStyle azul (#3b82f6). null ou undefined = nenhum destaque.
    */
-  activeSourceIndex?: number | null;
+  activeSourceIndex?: number | number[] | null;
   /** Chamado quando o usuário clica em uma nota — recebe sourceIndex */
   onNoteClick?: (sourceIndex: number) => void;
   /** @deprecated Use onNoteClick */
@@ -570,6 +572,23 @@ function createTieRenderState(): TieRenderState {
  * Retorna false se o compasso não pôde ser formatado (erro de Voice/Formatter),
  * permitindo ao chamador decidir como avançar o cursor X mesmo assim.
  */
+/**
+ * Verifica se um sourceIndex está entre os índices ativos do playback.
+ * activeSourceIndex pode ser um único número (instrumento monofônico) ou
+ * um array de números (Grand Staff — duas mãos soando simultaneamente).
+ */
+function isSourceIndexActive(
+  sourceIndex:       number | undefined,
+  activeSourceIndex: number | number[] | null | undefined,
+): boolean {
+  if (sourceIndex === undefined || activeSourceIndex === null || activeSourceIndex === undefined) {
+    return false;
+  }
+  return Array.isArray(activeSourceIndex)
+    ? activeSourceIndex.includes(sourceIndex)
+    : sourceIndex === activeSourceIndex;
+}
+
 function renderMeasureNotesIntoStave(
   ctx:              ReturnType<Renderer['getContext']>,
   stave:            Stave,
@@ -579,7 +598,7 @@ function renderMeasureNotesIntoStave(
   keySignature:     string | null,
   timeSignature:    { numerator: number; denominator: number },
   hitAreas:         NoteHitArea[],
-  activeSourceIndex: number | null | undefined,
+  activeSourceIndex: number | number[] | null | undefined,
   tieState:         TieRenderState,
   staveY:           number,
   staveW:           number,
@@ -654,11 +673,9 @@ function renderMeasureNotesIntoStave(
       if (noteEl.dotted) Dot.buildAndAttach([vn], { all: true });
 
       // ── Destaque visual da nota ativa no playback ─────────────────────
-      if (
-        activeSourceIndex !== null &&
-        activeSourceIndex !== undefined &&
-        (noteEl as any).sourceIndex === activeSourceIndex
-      ) {
+      // Aceita tanto um único sourceIndex (instrumento monofônico) quanto
+      // um array de dois (Grand Staff — mão direita e esquerda simultâneas).
+      if (isSourceIndexActive((noteEl as any).sourceIndex, activeSourceIndex)) {
         try {
           vn.setStyle({ fillStyle: '#3b82f6', strokeStyle: '#3b82f6' });
         } catch { /* VexFlow version sem setStyle — ignorar */ }
@@ -735,11 +752,15 @@ function renderMeasureNotesIntoStave(
     beams.forEach(b => b.setContext(ctx));
 
     if (activeSourceIndex !== null && activeSourceIndex !== undefined) {
-      const activeVexNote = vexNotes.find((_, idx) => srcIdxs[idx] === activeSourceIndex);
-      if (activeVexNote) {
+      // Localizar TODAS as notas ativas neste conjunto (pode haver mais de
+      // uma quando activeSourceIndex é um array — Grand Staff com ambas as
+      // mãos soando no mesmo instante, embora dentro desta chamada específica
+      // apenas as notas da mão atual sejam candidatas).
+      const activeVexNotes = vexNotes.filter((_, idx) => isSourceIndexActive(srcIdxs[idx], activeSourceIndex));
+      if (activeVexNotes.length > 0) {
         beams.forEach(b => {
           const beamNotes = (b as any).notes as StaveNote[] | undefined;
-          if (beamNotes?.includes(activeVexNote)) {
+          if (beamNotes?.some(bn => activeVexNotes.includes(bn))) {
             try {
               b.setStyle({ fillStyle: '#3b82f6', strokeStyle: '#3b82f6' });
             } catch { /* VexFlow version sem setStyle em Beam — ignorar */ }
@@ -856,7 +877,7 @@ function renderStaveSystem(
   showMeasureNumbers: boolean = false,
   availableWidth:  number = 900,
   systemHeight:    number = 110,
-  activeSourceIndex?: number | null,
+  activeSourceIndex?: number | number[] | null,
 ): { staves: Stave[]; totalHeight: number } {
   const staves: Stave[] = [];
   const MARGIN_RIGHT = 20;
@@ -949,7 +970,7 @@ function renderGrandStaffSystem(
   hitAreas:        NoteHitArea[],
   availableWidth:  number,
   systemHeight:    number,
-  activeSourceIndex: number | null | undefined,
+  activeSourceIndex: number | number[] | null | undefined,
   staveGap:        number,   // distância vertical entre a pauta treble e a bass DENTRO do mesmo sistema
   staveBlockH:     number,   // altura nominal de uma única pauta (para avançar Y corretamente)
 ): { trebleStaves: Stave[]; bassStaves: Stave[]; totalHeight: number } {

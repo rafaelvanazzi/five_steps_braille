@@ -318,9 +318,36 @@ const FULL_ACCIDENTAL_NAME: Record<string, string> = {
   'double-sharp': 'dobrado sustenido', 'double-flat': 'dobrado bemol',
 };
 
+/**
+ * Determina a direção de leitura de um intervalo (Ascendente/Descendente)
+ * pela convenção MIMB: intervalos em mão direita/clave de Sol são lidos
+ * ASCENDENTES (de baixo para cima a partir da nota-base); intervalos em
+ * mão esquerda/clave de Fá são lidos DESCENDENTES. Escaneia allElements
+ * retroativamente a partir da posição do intervalo para achar a última
+ * clave/mão ativa. Sem contexto de clave anterior (ou se allElements não
+ * for fornecido), usa Ascendente — convenção padrão/mais comum do MIMB.
+ */
+function resolveIntervalDirection(
+  contextEl:    ParsedElement,
+  allElements?: ParsedElement[],
+): 'Ascendente' | 'Descendente' {
+  if (!allElements) return 'Ascendente';
+  const idx = allElements.indexOf(contextEl);
+  if (idx < 0) return 'Ascendente';
+  for (let i = idx - 1; i >= 0; i--) {
+    const el = allElements[i];
+    if (el.type === 'clef' || el.type === 'hand') {
+      const clefType = (el as any).clefType as string | undefined;
+      return clefType === 'bass' ? 'Descendente' : 'Ascendente';
+    }
+  }
+  return 'Ascendente'; // nenhuma clave anterior encontrada — padrão MIMB
+}
+
 function getBrailleSemanticDescription(
   char: string,
   contextEl?: ParsedElement,
+  allElements?: ParsedElement[],
 ): string {
   if (!char || !char.trim()) {
     return 'Espaço — separador de compasso';
@@ -376,11 +403,12 @@ function getBrailleSemanticDescription(
   const octMatch = full.match(/^Oitava\s*(\d)$/);
   if (octMatch) return `Sinal de ${octMatch[1]}ª Oitava`;
 
-  // ── Intervalos: "Intervalo: Quintaª" (formato atual) → "Intervalo de Quinta Diatônica"
+  // ── Intervalos: "Intervalo: Quintaª" (formato atual) → "Intervalo de Quinta Diatônica Ascendente/Descendente"
   const intervalMatch = full.match(/^Intervalo:\s*(.+)$/);
   if (intervalMatch) {
-    const cleanName = intervalMatch[1].replace(/ª$/, '').trim();
-    return `Intervalo de ${cleanName} Diatônico`;
+    const cleanName  = intervalMatch[1].replace(/ª$/, '').trim();
+    const direction   = contextEl ? resolveIntervalDirection(contextEl, allElements) : 'Ascendente';
+    return `Intervalo de ${cleanName} Diatônica ${direction}`;
   }
 
   // ── Acidentes ───────────────────────────────────────────────────────────────
@@ -1029,7 +1057,13 @@ export default function BrailleEditor() {
   const [isPaused,           setIsPaused]           = useState(false);
   const [instrument,         setInstrumentState]    = useState<InstrumentType>('piano');
   /** sourceIndex da nota ativa no playback — null quando parado. */
-  const [playingSourceIndex, setPlayingSourceIndex] = useState<number | null>(null);
+  /**
+   * sourceIndex(es) da(s) nota(s) ativa(s) no playback. Pode ser um único
+   * número (instrumento monofônico) ou um array de dois números (Grand
+   * Staff — mão direita e mão esquerda soando simultaneamente no mesmo
+   * instante, vindo do scheduler polifônico de scoreAudioPlayer.ts).
+   */
+  const [playingSourceIndex, setPlayingSourceIndex] = useState<number | number[] | null>(null);
   const [playerBpm,     setPlayerBpm]     = useState(120);
   const [bpmInputValue, setBpmInputValue] = useState("120");
   const [soundOnType,   setSoundOnType]   = useState(true);
@@ -1213,7 +1247,7 @@ export default function BrailleEditor() {
     // Callback onElementHighlight: sincroniza destaque visual (nota + texto Braille)
     // com o scheduler de áudio. Chamado a cada nota reproduzida.
     playScore(parsedElements, playerBpm, activeSourceIndex, (srcIdx) => {
-      setPlayingSourceIndex(Array.isArray(srcIdx) ? srcIdx[0] : srcIdx);
+      setPlayingSourceIndex(srcIdx);
     });
     setIsPlaying(true);
     setIsPaused(false);
@@ -1943,7 +1977,9 @@ export default function BrailleEditor() {
                   <div key={lineIdx} className="flex flex-wrap items-start gap-0.5 mb-1">
                     {Array.from(line).map((char, charIdx) => {
                       const absoluteIdx = lineOffset + charIdx;
-                      const isActive    = absoluteIdx === playingSourceIndex;
+                      const isActive    = Array.isArray(playingSourceIndex)
+                        ? playingSourceIndex.includes(absoluteIdx)
+                        : absoluteIdx === playingSourceIndex;
                       const desc        = abbreviateCellDescription(char);
                       // Localizar o ParsedElement real desta posição para enriquecer
                       // a descrição semântica com contexto (ligadura ativa, oitava
@@ -1951,7 +1987,7 @@ export default function BrailleEditor() {
                       const contextEl = parsedElements.find(
                         e => (e as any).sourceIndex === absoluteIdx
                       );
-                      const semanticLabel = getBrailleSemanticDescription(char, contextEl);
+                      const semanticLabel = getBrailleSemanticDescription(char, contextEl, parsedElements);
                       return (
                         <div
                           key={charIdx}
@@ -2018,18 +2054,23 @@ export default function BrailleEditor() {
                 style={{ fontSize: brailleFontSize }}
                 className="absolute inset-0 w-full h-full p-3 font-mono leading-relaxed pointer-events-none whitespace-pre-wrap z-10 overflow-hidden border border-transparent bg-transparent"
               >
-                {Array.from(brailleContent).map((char, idx) => (
+                {Array.from(brailleContent).map((char, idx) => {
+                  const isActive = Array.isArray(playingSourceIndex)
+                    ? playingSourceIndex.includes(idx)
+                    : idx === playingSourceIndex;
+                  return (
                   <span
                     key={idx}
                     className={
-                      idx === playingSourceIndex
+                      isActive
                         ? "bg-blue-200 dark:bg-blue-900/50 rounded-sm transition-colors"
                         : undefined
                     }
                   >
                     {char}
                   </span>
-                ))}
+                  );
+                })}
               </div>
             )}
             <textarea
