@@ -2239,10 +2239,24 @@ export function importMusicXML(
     fifthsChanged: boolean; fifths: number;
     timeChanged: boolean; timeNum: number; timeDen: number;
     clefChanged: boolean; clefSign: string;
+    /** true quando o compasso traz metrical="no"/implicit="no" (anacruse
+     *  sinalizada explicitamente pelo XML) — tratamento simétrico ao export,
+     *  que injeta esses mesmos atributos no primeiro compasso incompleto. */
+    isExplicitAnacrusis: boolean;
   }> = [];
 
   measureNodes.forEach((measureEl, measureIdx) => {
     const eventsRH: XmlNoteEvent[] = [];
+
+    // ── Leitura simétrica de metrical/implicit (anacruse explícita) ─────────
+    // exportToMusicXML() injeta implicit="no" metrical="no" no primeiro
+    // compasso incompleto. Na importação, lemos esses mesmos atributos para
+    // reconhecer explicitamente a anacruse vinda de Finale/MuseScore/Sibelius,
+    // em vez de depender apenas da contagem de pulsos (que já funciona como
+    // fallback, mas a leitura explícita é mais robusta e simétrica).
+    const metricalAttr = measureEl.getAttribute('metrical');
+    const implicitAttr = measureEl.getAttribute('implicit');
+    const isExplicitAnacrusis = metricalAttr === 'no' || implicitAttr === 'no';
     const eventsLH: XmlNoteEvent[] = [];
 
     let fifthsChanged = false, timeChanged = false, clefChanged = false;
@@ -2280,6 +2294,7 @@ export function importMusicXML(
       fifthsChanged, fifths: currentFifths ?? 0,
       timeChanged, timeNum: currentTimeNum, timeDen: currentTimeDen,
       clefChanged, clefSign: currentClefSign,
+      isExplicitAnacrusis,
     });
 
     // Percorrer <note> na ordem do documento
@@ -2389,6 +2404,12 @@ export function importMusicXML(
       lastNoteRef.octave = ev.octave!;
 
       // ── Acordes: notas subsequentes com <chord/> viram intervalos (Grau 4) ──
+      // BLINDAGEM: cada nota do acorde carrega seu PRÓPRIO estado de tie/slur
+      // (uma voz interna do acorde pode ligar independentemente da voz base).
+      // Emitir o ⠉ de cada nota de intervalo IMEDIATAMENTE após seu próprio
+      // glifo evita tanto a perda silenciosa dessa informação (nota "fantasma"
+      // sem ligadura representada) quanto qualquer duplicação — cada evento
+      // emite exatamente um ⠉ no ponto exato em que ocorre, nunca mais de uma vez.
       let j = i + 1;
       while (j < events.length && events[j].isChord) {
         const chordEv = events[j];
@@ -2403,10 +2424,17 @@ export function importMusicXML(
         const chordAcc = chordEv.alterSemis !== undefined ? alterToAccidental(chordEv.alterSemis) : undefined;
         if (chordAcc && REVERSE_ACCIDENTAL_MAP[chordAcc]) out += REVERSE_ACCIDENTAL_MAP[chordAcc];
 
+        // Ligadura própria desta nota do acorde (independente da nota-base)
+        if (chordEv.tieStart || chordEv.slurStart) {
+          out += SLUR_SIMPLE;
+        }
+
         j++;
       }
 
-      // ── Ligadura: tie/slur "start" nesta nota → emitir ⠉ após a nota atual ──
+      // ── Ligadura: tie/slur "start" na nota-BASE → emitir ⠉ após a nota atual ──
+      // (emitido aqui, depois do acorde, para preservar a ordem de leitura
+      // Braille: nota-base → intervalos → ligadura da nota-base, se houver)
       if (ev.tieStart || ev.slurStart) {
         out += SLUR_SIMPLE; // '⠉' — "Ligadura de Duração" (mesma altura) ou expressão
       }
@@ -2444,6 +2472,20 @@ export function importMusicXML(
     if (idx === 0) {
       // Fórmula de compasso sempre explícita no primeiro compasso
       header += `${NUMBER_SIGN}${numberToBrailleDigits(info.timeNum)}${AUGMENTATION_DOT}${numberToBrailleDigits(info.timeDen)}`;
+
+      // Tratamento simétrico da anacruse: quando o XML sinaliza explicitamente
+      // metrical="no"/implicit="no" no primeiro compasso, confirmamos que
+      // NENHUM preenchimento de silêncio é injetado — o compasso é transcrito
+      // com exatamente os pulsos presentes, deixando-o naturalmente mais curto
+      // que a fórmula de compasso ativa (comportamento idêntico ao caso em
+      // que a anacruse é detectada apenas por contagem de pulsos, sem o
+      // atributo explícito — aqui apenas confirmamos/documentamos a intenção).
+      // isExplicitAnacrusis fica disponível em measureHeaderInfo para quem
+      // consumir importMusicXML precisar diferenciar anacruse explícita
+      // (vinda do atributo XML) de anacruse inferida por contagem de pulsos.
+      // Nenhum log é emitido aqui — este arquivo é mantido livre de
+      // dependências de ambiente (sem 'process', sem Node) por design,
+      // já que é um módulo de parsing portátil e independente de runtime.
     }
     return header;
   }
