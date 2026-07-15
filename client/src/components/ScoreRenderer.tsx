@@ -372,61 +372,117 @@ interface HandSplit {
  * LÓGICA DO LEITOR BRAILLE:
  * Na partitura de piano em braille, a mão direita é escrita primeiro com seus
  * compassos (0, 1, 2...). Ao encontrar o sinal de Mão Esquerda, o contador de
- * compassos RESETA para 0 e a mão esquerda preenche os mesmos compassos em
- * paralelo. O ScoreRenderer usa measureIndex para alinhar verticalmente.
+ * compassos RESETA para 0 (ver brailleMusic.ts: trebleMeasureIndex/bassMeasureIndex)
+ * e a mão esquerda preenche os mesmos compassos em paralelo — cada nota, pausa,
+ * intervalo e barline já carrega o measureIndex CORRETO e RELATIVO à sua própria
+ * mão, atribuído pelo parser no momento da emissão.
  *
- * Barlines são propagadas para AMBAS as pautas para que groupIntoMeasures
- * produza o mesmo número de compassos em cada pauta.
+ * BUG CORRIGIDO: a implementação anterior empurrava barlines indiscriminadamente
+ * para AMBOS os arrays (treble E bass) sempre que uma barline aparecia no fluxo
+ * linear do documento — independente de qual mão estava ativa naquele ponto.
+ * Como a convenção Braille de piano escreve TODA a mão direita primeiro (com
+ * suas N barlines) e só DEPOIS toda a mão esquerda (com suas próprias N
+ * barlines), isso fazia o array 'bass' acumular N barlines "fantasma" vindas
+ * da seção da mão direita ANTES de qualquer nota real da esquerda aparecer —
+ * resultando em compassos vazios no início da pauta bass e o conteúdo real da
+ * mão esquerda só aparecendo a partir do compasso N (deslocamento temporal).
+ *
+ * CORREÇÃO: em vez de depender da ordem sequencial linear e duplicar barlines
+ * às cegas, os elementos são agrupados em "baldes" (buckets) indexados
+ * ESTRITAMENTE pelo measureIndex real de cada elemento — que já reflete a
+ * posição correta e independente de cada mão, não a posição no texto linear.
+ * Barlines são atribuídas apenas à mão em que realmente ocorreram, indexadas
+ * pelo measureIndex do compasso que estão fechando. Isso garante que
+ * trebleMeasures[i] e bassMeasures[i] sempre correspondam ao MESMO compasso
+ * lógico, com correspondência direta de índice.
  */
 function splitByHand(elements: ParsedElement[]): HandSplit {
-  const treble: ParsedElement[] = [];
-  const bass:   ParsedElement[] = [];
   let currentHand: 'right' | 'left' | null = null;
   let sawRight = false;
   let sawLeft  = false;
 
-  // Elementos globais (armadura, TS, clave) → registrados antes de qualquer mão
-  // Serão propagados para ambas as pautas
+  // Elementos globais (armadura, TS, clave) → aplicados a ambas as pautas,
+  // sempre no início do stream reconstruído de cada mão.
   const globalEls: ParsedElement[] = [];
 
+  // Buckets por mão: measureIndex → lista de notas/pausas/intervalos daquele compasso
+  const trebleBuckets = new Map<number, ParsedElement[]>();
+  const bassBuckets   = new Map<number, ParsedElement[]>();
+
+  // Tipo de barline que FECHA cada compasso, indexado por measureIndex, por mão
+  const trebleBarlineType = new Map<number, string>();
+  const bassBarlineType   = new Map<number, string>();
+
   for (const el of elements) {
-    // Sinal de mão: trocar o fluxo ativo
+    // Sinal de mão: trocar o fluxo ativo (não entra nos buckets de compasso)
     if (el.type === 'hand') {
       currentHand = (el as any).hand as 'right' | 'left';
-      if (currentHand === 'right') {
-        sawRight = true;
-        treble.push(el);
-        bass.push(el); // contexto de clave para a pauta bass também
-      } else {
-        sawLeft = true;
-        bass.push(el);
-        treble.push(el); // contexto de clave para a pauta treble também
-      }
+      if (currentHand === 'right') sawRight = true;
+      else                          sawLeft  = true;
       continue;
     }
 
     // Elementos globais → ambas as pautas (independente da mão atual)
     if (el.type === 'keysignature' || el.type === 'timesignature' || el.type === 'clef') {
-      treble.push(el);
-      bass.push(el);
       globalEls.push(el);
       continue;
     }
 
-    // Barlines → AMBAS as pautas para manter compassos sincronizados
+    // Barlines → atribuídas SOMENTE à mão ativa no momento em que ocorreram,
+    // indexadas pelo measureIndex do compasso que estão fechando (nunca às
+    // cegas para ambas as pautas — essa era a causa raiz do deslocamento).
     if (el.type === 'barline') {
-      treble.push(el);
-      bass.push(el);
+      const idx   = (el as any).measureIndex as number | undefined ?? 0;
+      const bType = ((el as any).barlineType as string | undefined) ?? 'single';
+      if (currentHand === 'left') bassBarlineType.set(idx, bType);
+      else                        trebleBarlineType.set(idx, bType);
       continue;
     }
 
-    // Notas, pausas, intervalos → mão atual
+    // Notas, pausas, intervalos → bucketed pelo measureIndex REAL do elemento
+    // (atribuído pelo parser, relativo à mão ativa — não à posição linear no texto)
+    const idx = (el as any).measureIndex as number | undefined ?? 0;
     if (currentHand === 'left') {
-      bass.push(el);
+      if (!bassBuckets.has(idx)) bassBuckets.set(idx, []);
+      bassBuckets.get(idx)!.push(el);
     } else {
-      treble.push(el); // null ou 'right'
+      if (!trebleBuckets.has(idx)) trebleBuckets.set(idx, []);
+      trebleBuckets.get(idx)!.push(el);
     }
   }
+
+  /**
+   * Reconstrói o stream linear de UMA mão a partir de seus buckets por
+   * measureIndex, sintetizando a barline correta na posição exata de cada
+   * compasso. O resultado é consumido, sem nenhuma outra alteração, pela
+   * função groupIntoMeasures() já existente — preservando toda a lógica
+   * downstream de agrupamento de compassos intacta.
+   */
+  function buildLinearStreamForHand(
+    buckets:      Map<number, ParsedElement[]>,
+    barlineTypes: Map<number, string>,
+  ): ParsedElement[] {
+    const allIdxs = [...Array.from(buckets.keys()), ...Array.from(barlineTypes.keys())];
+    const maxIdx  = allIdxs.length > 0 ? Math.max(...allIdxs) : -1;
+    const out: ParsedElement[] = [...globalEls];
+    for (let i = 0; i <= maxIdx; i++) {
+      const notesForMeasure = buckets.get(i) ?? [];
+      out.push(...notesForMeasure);
+      const bType = barlineTypes.get(i) ?? 'single';
+      out.push({
+        type: 'barline',
+        barlineType: bType as any,
+        sourceIndex: 0,
+        measureIndex: i,
+        level: 1 as const,
+        isPremium: false,
+      } as any);
+    }
+    return out;
+  }
+
+  const treble = buildLinearStreamForHand(trebleBuckets, trebleBarlineType);
+  const bass   = buildLinearStreamForHand(bassBuckets,   bassBarlineType);
 
   return {
     trebleEls:    sawRight && sawLeft ? treble   : elements,
