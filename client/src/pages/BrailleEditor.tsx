@@ -10,6 +10,7 @@ import {
   getQuickReference,
   describeBrailleChar,
   exportToMusicXML,
+  unicodeToDots,
   type ParsedElement,
   type ParsedNote,
   type PerkinsKeyState,
@@ -37,6 +38,7 @@ import {
   Square,
   Volume2,
   VolumeX,
+  MessageSquareText,
   LayoutTemplate,
   FlipHorizontal2,
   FlipVertical2,
@@ -317,6 +319,101 @@ const FULL_ACCIDENTAL_NAME: Record<string, string> = {
   sharp: 'sustenido', flat: 'bemol', natural: 'bequadro',
   'double-sharp': 'dobrado sustenido', 'double-flat': 'dobrado bemol',
 };
+
+// ─── FEEDBACK FALADO (Web Speech API) ────────────────────────────────────────
+//
+// Vocaliza cada célula Braille digitada, para uso por pessoas com baixa visão
+// residual ou como reforço de aprendizagem — independente do feedback sonoro
+// musical (tecla soa a nota) e da descrição visual em tela (~Desc).
+//
+// Regra: células com significado ambíguo/incompleto (prefixos preparatórios
+// de sinais de duas celas — sinal numérico, prefixos de oitava/hífen musical,
+// mão/clave, início de ligadura longa) são faladas pelos NÚMEROS DOS PONTOS
+// (ex: "pontos três, quatro, cinco, seis"), já que sua descrição semântica só
+// se resolve quando a célula seguinte for lida — falar uma descrição
+// prematura (ex: "Oitava 4" para um ⠐ que na verdade é hífen musical de
+// quebra de linha) seria enganoso. Células reconhecidas (notas, pausas)
+// são faladas por sua descrição semântica reduzida.
+
+/**
+ * Glifos de UMA cela que são, por natureza, a PRIMEIRA metade de um sinal de
+ * duas celas (sinal numérico ⠼, oitava/hífen ⠐, início de frase ⠰⠃/⠉⠉, mão
+ * direita ⠨⠜, mão esquerda ⠸⠜, fim de frase ⠘⠆) — sempre falados por pontos,
+ * nunca por uma descrição semântica isolada e potencialmente prematura.
+ */
+const PREPARATORY_PREFIX_CHARS = new Set<string>([
+  '\u283C', // ⠼ sinal numérico (compasso / armadura / intervalo — depende do que segue)
+  '\u2810', // ⠐ oitava 4 / hífen musical (ambíguo — depende do próximo caractere)
+  '\u2830', // ⠰ primeira metade de ⠰⠃ (início de ligadura longa de frase)
+  '\u2828', // ⠨ primeira metade de ⠨⠜ (mão direita)
+  '\u2838', // ⠸ primeira metade de ⠸⠜ (mão esquerda)
+  '\u2809', // ⠉ ligadura simples — pode ser início de ⠉⠉ (dupla) até a próxima cela confirmar
+  '\u2818', // ⠘ primeira metade de ⠘⠆ (fim de ligadura longa de frase)
+  '\u2803', // ⠃ segunda metade de ⠰⠃ / início de frase pedagógica isolado
+]);
+
+const NUMBER_WORDS_PT: Record<number, string> = {
+  1: 'um', 2: 'dois', 3: 'três', 4: 'quatro', 5: 'cinco', 6: 'seis',
+};
+
+/** Converte os pontos de uma cela em uma frase falada: "pontos três, quatro". */
+function spokenDotsDescription(char: string): string {
+  const dots = unicodeToDots(char);
+  if (dots.length === 0) return 'célula vazia';
+  const words = dots.map(d => NUMBER_WORDS_PT[d] ?? String(d));
+  return words.length === 1 ? `ponto ${words[0]}` : `pontos ${words.join(', ')}`;
+}
+
+/**
+ * Descrição semântica REDUZIDA para fala (mais curta que a descrição ARIA
+ * completa) — ex: "Dó colcheia", "Pausa de mínima".
+ */
+function spokenShortDescription(char: string): string {
+  const full = describeBrailleChar(char);
+
+  const noteMatch = full.match(/^([A-G])\s*\(([whq0-9]+)\)$/);
+  if (noteMatch) {
+    const [, letter, durCode] = noteMatch;
+    const pitchName = PITCH_ABBR[letter] ?? letter.toLowerCase();
+    const cap = pitchName.charAt(0).toUpperCase() + pitchName.slice(1);
+    const durName = FULL_DURATION_NAME[durCode] ?? durCode;
+    return `${cap} ${durName.toLowerCase()}`;
+  }
+
+  const restMatch = full.match(/^Pausa\s*\(([whq0-9]+)\)$/);
+  if (restMatch) {
+    const durName = FULL_DURATION_NAME[restMatch[1]] ?? restMatch[1];
+    return `Pausa de ${durName.toLowerCase()}`;
+  }
+
+  return full;
+}
+
+/**
+ * Dispara a fala (SpeechSynthesis) para o caractere recém-digitado.
+ * Cancela qualquer fala pendente antes de iniciar a nova, evitando acúmulo
+ * de fila quando o usuário digita rapidamente.
+ */
+function speakBrailleFeedback(char: string): void {
+  if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+  if (!char || !char.trim()) return;
+
+  const full = describeBrailleChar(char);
+  const isUnknown     = full === 'Símbolo desconhecido';
+  const isPreparatory = PREPARATORY_PREFIX_CHARS.has(char);
+
+  const textToSpeak = (isUnknown || isPreparatory)
+    ? spokenDotsDescription(char)
+    : spokenShortDescription(char);
+
+  try {
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(textToSpeak);
+    utterance.lang = 'pt-BR';
+    utterance.rate = 1.15;
+    window.speechSynthesis.speak(utterance);
+  } catch { /* fala é best-effort — falha silenciosa */ }
+}
 
 /**
  * Determina a direção de leitura de um intervalo (Ascendente/Descendente)
@@ -1067,6 +1164,8 @@ export default function BrailleEditor() {
   const [playerBpm,     setPlayerBpm]     = useState(120);
   const [bpmInputValue, setBpmInputValue] = useState("120");
   const [soundOnType,   setSoundOnType]   = useState(true);
+  /** Vocaliza o sinal digitado via Web Speech API (SpeechSynthesis). */
+  const [speechFeedback, setSpeechFeedback] = useState(false);
   const audioCtxRef = useRef<AudioContext | null>(null);
 
   // ── Score ─────────────────────────────────────────────────────────────────
@@ -1291,37 +1390,68 @@ export default function BrailleEditor() {
   }, [setScoreBpm]);
 
   // ── Feedback sonoro ───────────────────────────────────────────────────────
-  const tryPlayFeedback = useCallback((char: string) => {
-    if (!soundOnType) return;
-    try {
-      // ── Mod 3: Resolver acidente correto ─────────────────────────────────
-      // Parsear o caractere isolado NÃO resolve acidentes: a armadura de clave
-      // e os acidentes acumulados no compasso (measureAccidentals do parser)
-      // precisam ser considerados para calcular a frequência correta.
-      //
-      // Estratégia: parsear o conteúdo completo do editor (que já contém armadura
-      // e contexto de compasso) e extrair a última nota emitida.
-      // Se tiver o mesmo pitch que o caractere digitado, usa o acidente resolvido.
-      const fullResult  = parseBrailleMusic(brailleContent, parseOptions);
-      const allNotes    = fullResult.elements.filter(e => e.type === "note") as ParsedNote[];
-      const charResult  = parseBrailleMusic(char, parseOptions);
-      const charNote    = charResult.elements.find(e => e.type === "note") as ParsedNote | undefined;
-      if (!charNote) return;
+  /**
+   * Feedback em tempo real ao digitar: toca a nota correspondente (áudio) e/ou
+   * fala o sinal digitado (Web Speech API), conforme os toggles ativos.
+   *
+   * CORREÇÃO DE CONDIÇÃO DE CORRIDA: a versão anterior parseava o `char`
+   * isolado como fallback quando o pitch não batia com o `brailleContent`
+   * (desatualizado, vindo do closure do React antes do re-render). Como o
+   * parse isolado de um único caractere não tem contexto de oitava anterior,
+   * a inferência de oitava caía sempre no valor padrão — travando o som na
+   * 4ª oitava de forma incorreta sempre que a nota mudava de altura.
+   *
+   * Agora `insertCharAtCursor` calcula o texto COMPLETO E JÁ ATUALIZADO
+   * (`fullText`) ANTES de chamar esta função, e o parseia UMA ÚNICA VEZ.
+   * A última nota desse parse é sempre a fonte de verdade — nunca há fallback
+   * para um parse isolado do caractere, eliminando a condição de corrida e o
+   * bug de oitava por completo.
+   *
+   * @param fullText       — Texto Braille completo, já incluindo o caractere
+   *                         recém-inserido (calculado localmente, não vindo
+   *                         do estado React ainda não commitado).
+   * @param insertedChar   — O caractere específico que acabou de ser digitado
+   *                         (usado para a fala, que descreve a CÉLULA digitada,
+   *                         não necessariamente a última nota completa).
+   * @param insertionStart — Posição (índice) onde o caractere foi inserido —
+   *                         usado para garantir que só toquemos som se uma
+   *                         nota REALMENTE nova foi formada nesta digitação
+   *                         (evita repetir uma nota antiga quando o caractere
+   *                         digitado foi apenas um prefixo/modificador ainda
+   *                         incompleto, como um sinal de oitava isolado).
+   */
+  const tryPlayFeedback = useCallback((
+    fullText:       string,
+    insertedChar:   string,
+    insertionStart: number,
+  ) => {
+    // ── FALA: sempre baseada no caractere digitado, independente do áudio ────
+    if (speechFeedback) {
+      speakBrailleFeedback(insertedChar);
+    }
 
-      // Preferir contexto completo se a última nota tem o mesmo pitch
-      const ctxNote = allNotes.length > 0 ? allNotes[allNotes.length - 1] : undefined;
-      const noteEl  = (ctxNote?.pitch === charNote.pitch) ? ctxNote : charNote;
+    if (!soundOnType) return;
+
+    try {
+      // ── Fonte ÚNICA de verdade: o texto completo e atualizado ─────────────
+      // Nunca há fallback para parse isolado do caractere — elimina o bug de
+      // oitava travada e a condição de corrida com o estado React.
+      const fullResult = parseBrailleMusic(fullText, parseOptions);
+      const allNotes    = fullResult.elements.filter(e => e.type === "note") as ParsedNote[];
+      const noteEl      = allNotes.length > 0 ? allNotes[allNotes.length - 1] : undefined;
+
+      // Só tocar se a última nota corresponde a algo formado NESTA digitação
+      // (sourceIndex na posição de inserção ou depois) — se o caractere
+      // digitado foi apenas um prefixo/modificador (ex: sinal de oitava
+      // isolado aguardando a próxima nota), não há som novo a tocar ainda.
+      if (!noteEl || (noteEl.sourceIndex ?? -1) < insertionStart) return;
 
       // ── MIDI com acidente resolvido ───────────────────────────────────────
-      // Bug fix: quando a nota não tem acidente explícito, aplicar o da armadura.
-      // Antes: accDelta = noteEl.accidental ? ACC_DELTA[...] : 0
-      //        → Dó sem acidente em Ré Maior soava natural (0 em vez de +1)
-      // Agora: usar KEY_SIGNATURE_MAP[activeKeySignature] para resolver o delta
+      // Prioridade: acidente explícito da nota > armadura de clave > natural (0)
       const PITCH_CLASS: Record<string, number> = { C:0, D:2, E:4, F:5, G:7, A:9, B:11 };
       const ACC_DELTA: Record<string, number>    = {
         sharp: 1, flat: -1, natural: 0, 'double-sharp': 2, 'double-flat': -2,
       };
-      // Mapa de delta por pitch para a armadura ativa
       const KEY_SIG_DELTAS: Record<string, Record<string, number>> = {
         'G':  { F: 1 },
         'D':  { F: 1, C: 1 },
@@ -1339,7 +1469,6 @@ export default function BrailleEditor() {
         'Cb': { B: -1, E: -1, A: -1, D: -1, G: -1, C: -1, F: -1 },
       };
       const baseMidi = 12 * (noteEl.octave + 1) + (PITCH_CLASS[noteEl.pitch] ?? 0);
-      // Prioridade: acidente explícito da nota > armadura de clave > natural (0)
       const accDelta = noteEl.accidental !== undefined
         ? (ACC_DELTA[noteEl.accidental] ?? 0)
         : ((activeKeySignature ? (KEY_SIG_DELTAS[activeKeySignature]?.[noteEl.pitch] ?? 0) : 0));
@@ -1362,7 +1491,7 @@ export default function BrailleEditor() {
         }
       });
     } catch { /* feedback é best-effort — falha silenciosa */ }
-  }, [soundOnType, parseOptions, playerBpm, brailleContent, activeKeySignature]);
+  }, [soundOnType, speechFeedback, parseOptions, playerBpm, activeKeySignature]);
 
   // ── Save ──────────────────────────────────────────────────────────────────
   const handleSave = useCallback(() => {
@@ -1454,11 +1583,16 @@ export default function BrailleEditor() {
           brailleTextareaRef.current.focus();
         }
       });
+      // Passar o texto COMPLETO já atualizado (newContent) — não o estado
+      // React brailleContent, que só será commitado no próximo render —
+      // elimina a condição de corrida na resolução de oitava do feedback.
+      tryPlayFeedback(newContent, char, start);
     } else {
       syncSourceRef.current = "braille";
+      const fallbackContent = brailleContent + char;
       setBrailleContent(prev => prev + char);
+      tryPlayFeedback(fallbackContent, char, brailleContent.length);
     }
-    tryPlayFeedback(char);
   }, [brailleContent, tryPlayFeedback]);
 
   const handleBrailleChange = useCallback((newContent: string) => {
@@ -1858,6 +1992,19 @@ export default function BrailleEditor() {
               <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-transform ${soundOnType ? "translate-x-3.5" : "translate-x-0.5"}`} />
             </div>
           </label>
+          {/* Vocalizar sinal ao digitar (Web Speech API) */}
+          <button
+            type="button"
+            onClick={() => setSpeechFeedback(v => !v)}
+            className={`p-1 rounded transition-colors ${
+              speechFeedback ? "text-primary" : "text-muted-foreground hover:text-foreground"
+            }`}
+            title="Vocalizar sinal ao digitar"
+            aria-label="Vocalizar sinal ao digitar"
+            aria-pressed={speechFeedback}
+          >
+            <MessageSquareText className="w-3.5 h-3.5" />
+          </button>
           {/* Toggle Abc — troca entre modo Braille e Romano */}
           <button
             onClick={() => setInputMode(v => v === "braille" ? "romano" : "braille")}
