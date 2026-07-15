@@ -1413,84 +1413,97 @@ export default function BrailleEditor() {
    * @param insertedChar   — O caractere específico que acabou de ser digitado
    *                         (usado para a fala, que descreve a CÉLULA digitada,
    *                         não necessariamente a última nota completa).
-   * @param insertionStart — Posição (índice) onde o caractere foi inserido —
-   *                         usado para garantir que só toquemos som se uma
-   *                         nota REALMENTE nova foi formada nesta digitação
-   *                         (evita repetir uma nota antiga quando o caractere
-   *                         digitado foi apenas um prefixo/modificador ainda
-   *                         incompleto, como um sinal de oitava isolado).
+   * @param insertionStart — Posição (índice) onde o caractere foi inserido.
+   *                         Mantido apenas por compatibilidade de assinatura
+   *                         com insertCharAtCursor — NÃO é mais usado para
+   *                         restringir qual nota soa (a guarda baseada nessa
+   *                         posição foi removida por travar o som em digitações
+   *                         via teclado Perkins). O feedback sonoro agora usa
+   *                         sempre a última nota válida encontrada no documento
+   *                         atualizado, independente de sua posição exata.
    */
   const tryPlayFeedback = useCallback((
     fullText:       string,
     insertedChar:   string,
     insertionStart: number,
   ) => {
-    // ── FALA: sempre baseada no caractere digitado, independente do áudio ────
+    // ── EVENTO 1 — SOM: disparado PRIMEIRO, antes da fala ────────────────────
+    if (soundOnType) {
+      try {
+        // ── Fonte ÚNICA de verdade: o texto completo e atualizado ─────────────
+        // Nunca há fallback para parse isolado do caractere — elimina o bug de
+        // oitava travada e a condição de corrida com o estado React.
+        const fullResult = parseBrailleMusic(fullText, parseOptions);
+
+        // ── Localizador de proximidade contextual por cursor ──────────────────
+        // BUG CORRIGIDO: usar allNotes[allNotes.length - 1] (última nota do
+        // DOCUMENTO INTEIRO) fazia o feedback tocar sempre a nota do FINAL da
+        // partitura, mesmo editando no meio do texto — resultando em repetição
+        // da mesma nota ou silêncio dependendo de onde o cursor estava.
+        // Agora: filtra as notas cujo sourceIndex é <= insertionStart e pega a
+        // de MAIOR índice dentre essas — a nota mais próxima (e anterior ou
+        // igual) à posição real de edição, refletindo o que foi digitado ali.
+        const validNotes = fullResult.elements.filter(
+          e => e.type === "note" && (e as any).sourceIndex <= insertionStart
+        ) as ParsedNote[];
+        const noteEl = validNotes.length > 0 ? validNotes[validNotes.length - 1] : undefined;
+
+        if (noteEl) {
+          // ── MIDI com acidente resolvido ─────────────────────────────────────
+          // Prioridade: acidente explícito da nota > armadura de clave > natural (0)
+          const PITCH_CLASS: Record<string, number> = { C:0, D:2, E:4, F:5, G:7, A:9, B:11 };
+          const ACC_DELTA: Record<string, number>    = {
+            sharp: 1, flat: -1, natural: 0, 'double-sharp': 2, 'double-flat': -2,
+          };
+          const KEY_SIG_DELTAS: Record<string, Record<string, number>> = {
+            'G':  { F: 1 },
+            'D':  { F: 1, C: 1 },
+            'A':  { F: 1, C: 1, G: 1 },
+            'E':  { F: 1, C: 1, G: 1, D: 1 },
+            'B':  { F: 1, C: 1, G: 1, D: 1, A: 1 },
+            'F#': { F: 1, C: 1, G: 1, D: 1, A: 1, E: 1 },
+            'C#': { F: 1, C: 1, G: 1, D: 1, A: 1, E: 1, B: 1 },
+            'F':  { B: -1 },
+            'Bb': { B: -1, E: -1 },
+            'Eb': { B: -1, E: -1, A: -1 },
+            'Ab': { B: -1, E: -1, A: -1, D: -1 },
+            'Db': { B: -1, E: -1, A: -1, D: -1, G: -1 },
+            'Gb': { B: -1, E: -1, A: -1, D: -1, G: -1, C: -1 },
+            'Cb': { B: -1, E: -1, A: -1, D: -1, G: -1, C: -1, F: -1 },
+          };
+          const baseMidi = 12 * (noteEl.octave + 1) + (PITCH_CLASS[noteEl.pitch] ?? 0);
+          const accDelta = noteEl.accidental !== undefined
+            ? (ACC_DELTA[noteEl.accidental] ?? 0)
+            : ((activeKeySignature ? (KEY_SIG_DELTAS[activeKeySignature]?.[noteEl.pitch] ?? 0) : 0));
+          const midi     = baseMidi + accDelta;
+
+          const ctx = getAudioCtx();
+          const t0  = ctx.currentTime + 0.01;
+
+          loadPianoSample(ctx, midi).then(result => {
+            if (result) {
+              playPianoBuffer(ctx, result.buffer, midi, result.closestMidi, t0, 0.28, {
+                velocity:    0.7,
+                staccato:    !!noteEl.staccato,
+                isTie:       (noteEl as any).tieRole === 'end',
+                tieDuration: noteEl.tieDuration,
+                bpm:         playerBpm,
+              });
+            } else {
+              playFallbackOscillator(ctx, midi, t0, 0.28, !!noteEl.staccato, 0.3);
+            }
+          });
+        }
+      } catch { /* feedback sonoro é best-effort — falha silenciosa */ }
+    }
+
+    // ── EVENTO 2 — FALA: disparada DEPOIS do som, independente dele ──────────
+    // speakBrailleFeedback() já chama window.speechSynthesis.cancel() em seu
+    // próprio corpo antes de falar, limpando qualquer fala pendente e evitando
+    // atraso acumulado ao digitar rapidamente.
     if (speechFeedback) {
       speakBrailleFeedback(insertedChar);
     }
-
-    if (!soundOnType) return;
-
-    try {
-      // ── Fonte ÚNICA de verdade: o texto completo e atualizado ─────────────
-      // Nunca há fallback para parse isolado do caractere — elimina o bug de
-      // oitava travada e a condição de corrida com o estado React.
-      const fullResult = parseBrailleMusic(fullText, parseOptions);
-      const allNotes    = fullResult.elements.filter(e => e.type === "note") as ParsedNote[];
-      const noteEl      = allNotes.length > 0 ? allNotes[allNotes.length - 1] : undefined;
-
-      // Só tocar se a última nota corresponde a algo formado NESTA digitação
-      // (sourceIndex na posição de inserção ou depois) — se o caractere
-      // digitado foi apenas um prefixo/modificador (ex: sinal de oitava
-      // isolado aguardando a próxima nota), não há som novo a tocar ainda.
-      if (!noteEl || (noteEl.sourceIndex ?? -1) < insertionStart) return;
-
-      // ── MIDI com acidente resolvido ───────────────────────────────────────
-      // Prioridade: acidente explícito da nota > armadura de clave > natural (0)
-      const PITCH_CLASS: Record<string, number> = { C:0, D:2, E:4, F:5, G:7, A:9, B:11 };
-      const ACC_DELTA: Record<string, number>    = {
-        sharp: 1, flat: -1, natural: 0, 'double-sharp': 2, 'double-flat': -2,
-      };
-      const KEY_SIG_DELTAS: Record<string, Record<string, number>> = {
-        'G':  { F: 1 },
-        'D':  { F: 1, C: 1 },
-        'A':  { F: 1, C: 1, G: 1 },
-        'E':  { F: 1, C: 1, G: 1, D: 1 },
-        'B':  { F: 1, C: 1, G: 1, D: 1, A: 1 },
-        'F#': { F: 1, C: 1, G: 1, D: 1, A: 1, E: 1 },
-        'C#': { F: 1, C: 1, G: 1, D: 1, A: 1, E: 1, B: 1 },
-        'F':  { B: -1 },
-        'Bb': { B: -1, E: -1 },
-        'Eb': { B: -1, E: -1, A: -1 },
-        'Ab': { B: -1, E: -1, A: -1, D: -1 },
-        'Db': { B: -1, E: -1, A: -1, D: -1, G: -1 },
-        'Gb': { B: -1, E: -1, A: -1, D: -1, G: -1, C: -1 },
-        'Cb': { B: -1, E: -1, A: -1, D: -1, G: -1, C: -1, F: -1 },
-      };
-      const baseMidi = 12 * (noteEl.octave + 1) + (PITCH_CLASS[noteEl.pitch] ?? 0);
-      const accDelta = noteEl.accidental !== undefined
-        ? (ACC_DELTA[noteEl.accidental] ?? 0)
-        : ((activeKeySignature ? (KEY_SIG_DELTAS[activeKeySignature]?.[noteEl.pitch] ?? 0) : 0));
-      const midi     = baseMidi + accDelta;
-
-      const ctx = getAudioCtx();
-      const t0  = ctx.currentTime + 0.01;
-
-      loadPianoSample(ctx, midi).then(result => {
-        if (result) {
-          playPianoBuffer(ctx, result.buffer, midi, result.closestMidi, t0, 0.28, {
-            velocity:    0.7,
-            staccato:    !!noteEl.staccato,
-            isTie:       (noteEl as any).tieRole === 'end',
-            tieDuration: noteEl.tieDuration,
-            bpm:         playerBpm,
-          });
-        } else {
-          playFallbackOscillator(ctx, midi, t0, 0.28, !!noteEl.staccato, 0.3);
-        }
-      });
-    } catch { /* feedback é best-effort — falha silenciosa */ }
   }, [soundOnType, speechFeedback, parseOptions, playerBpm, activeKeySignature]);
 
   // ── Save ──────────────────────────────────────────────────────────────────
