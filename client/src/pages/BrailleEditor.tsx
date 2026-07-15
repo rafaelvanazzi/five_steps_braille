@@ -9,6 +9,7 @@ import {
   perkinsDotsToUnicode,
   getQuickReference,
   describeBrailleChar,
+  exportToMusicXML,
   type ParsedElement,
   type ParsedNote,
   type PerkinsKeyState,
@@ -1482,10 +1483,44 @@ export default function BrailleEditor() {
     } catch { toast.error("Erro ao exportar BRF"); }
   }, [currentProjectId, exportMutation]);
 
+  /**
+   * Exporta os elementos parseados para MusicXML e dispara o download.
+   * Usa exportToMusicXML(elements) diretamente — sem reparsear o texto.
+   */
+  const handleExportMusicXML = useCallback(() => {
+    if (parsedElements.length === 0) {
+      toast.error("Nada para exportar — digite alguma música primeiro");
+      return;
+    }
+    try {
+      const xml  = exportToMusicXML(parsedElements);
+      const blob = new Blob([xml], { type: "application/vnd.recordare.musicxml+xml" });
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement("a");
+      const safeName = (projectTitle || "partitura").replace(/[^\w\-]+/g, "_");
+      a.href = url; a.download = `${safeName}.musicxml`;
+      document.body.appendChild(a); a.click();
+      document.body.removeChild(a); URL.revokeObjectURL(url);
+      toast.success("Exportado como MusicXML");
+    } catch (err: any) {
+      toast.error(err?.message || "Erro ao exportar MusicXML");
+    }
+  }, [parsedElements, projectTitle]);
+
+  /**
+   * Imprime a partitura via window.print() nativo. A folha de estilos
+   * @media print (injetada globalmente, ver <style> no final do componente)
+   * isola o container do VexFlow (#vexflow-print-area), ocultando o resto
+   * da interface (editor Braille, teclado Perkins, barra de ferramentas).
+   */
   const handleExportPDF = useCallback(() => {
     if (isExportLocked) { toast.error("Exportar PDF requer plano PRO"); return; }
-    toast.info("Exportação de PDF em desenvolvimento");
-  }, [isExportLocked]);
+    if (parsedElements.length === 0) {
+      toast.error("Nada para imprimir — digite alguma música primeiro");
+      return;
+    }
+    window.print();
+  }, [isExportLocked, parsedElements]);
 
   const handleExportAudio = useCallback(() => {
     if (isExportLocked) { toast.error("Exportar áudio requer plano PRO"); return; }
@@ -1741,7 +1776,7 @@ export default function BrailleEditor() {
         </div>
       </div>
       {/* Área da partitura */}
-      <div ref={scoreContainerRef} className="flex-1 overflow-auto p-1 min-h-[140px]">
+      <div ref={scoreContainerRef} id="vexflow-print-area" className="flex-1 overflow-auto p-1 min-h-[140px]">
         {parsedElements.length > 0 ? (
           <ScoreRenderer
             elements={parsedElements}
@@ -2068,6 +2103,26 @@ export default function BrailleEditor() {
 
   return (
     <SiteLayout>
+      {/* ── Folha de estilos @media print — isola o container do VexFlow ──────
+          Ao chamar window.print() (handleExportPDF), esta regra global oculta
+          TUDO na página exceto #vexflow-print-area, garantindo que a versão
+          impressa/PDF contenha apenas a partitura renderizada, sem editor
+          Braille, teclado Perkins, barra de ferramentas ou navegação. */}
+      <style>{`
+        @media print {
+          body * { visibility: hidden; }
+          #vexflow-print-area, #vexflow-print-area * { visibility: visible; }
+          #vexflow-print-area {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: auto;
+            overflow: visible !important;
+          }
+          @page { margin: 1.5cm; }
+        }
+      `}</style>
       <div className="flex flex-col h-screen overflow-hidden">
 
         {/* ── BARRA DE FERRAMENTAS ─────────────────────────────────────────── */}
@@ -2251,7 +2306,8 @@ export default function BrailleEditor() {
               icon={<Download className="w-3.5 h-3.5" />}
               items={[
                 { label: "Impressora Braille (BRF)",  icon: <FileText className="w-3 h-3" />, onClick: handleExportBRF },
-                { label: "PDF com Tradução Síncrona", icon: <FileText className="w-3 h-3" />, onClick: handleExportPDF,   locked: isExportLocked },
+                { label: "MusicXML (.musicxml)",       icon: <FileText className="w-3 h-3" />, onClick: handleExportMusicXML },
+                { label: "Imprimir Partitura (PDF)",  icon: <FileText className="w-3 h-3" />, onClick: handleExportPDF,   locked: isExportLocked },
                 { label: "Áudio MIDI / WAV",          icon: <Volume2  className="w-3 h-3" />, onClick: handleExportAudio, locked: isExportLocked },
               ]}
             />

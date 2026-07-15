@@ -2507,14 +2507,13 @@ function xmlEscape(s: string): string {
 }
 
 /**
- * Exporta o texto Braille musical do editor para uma string MusicXML válida
+ * Exporta um array de ParsedElement já processado (vindo de parseBrailleMusic
+ * ou do estado parsedElements do editor) para uma string MusicXML válida
  * (<score-partwise version="4.0">), compatível com Finale/MuseScore/Sibelius.
  *
- * @param brailleText — Conteúdo do editor (texto Braille musical)
+ * @param elements — Array de ParsedElement já parseado (ex: parsedElements do BrailleEditor)
  */
-export function exportToMusicXML(brailleText: string): string {
-  const { elements } = parseBrailleMusic(brailleText);
-
+export function exportToMusicXML(elements: ParsedElement[]): string {
   // Agrupar elements em compassos, delimitados por 'barline'
   const measures: ParsedElement[][] = [];
   let currentMeasure: ParsedElement[] = [];
@@ -2656,4 +2655,17 @@ export function exportToMusicXML(brailleText: string): string {
   xml += '</score-partwise>\n';
 
   return xml;
+}
+
+/**
+ * Conveniência: exporta diretamente a partir do texto Braille bruto,
+ * parseando internamente antes de chamar exportToMusicXML(elements).
+ * Use esta função quando você só tem a string do editor, não o array
+ * de ParsedElement já processado.
+ *
+ * @param brailleText — Conteúdo bruto do editor (texto Braille musical)
+ */
+export function exportBrailleTextToMusicXML(brailleText: string): string {
+  const { elements } = parseBrailleMusic(brailleText);
+  return exportToMusicXML(elements);
 }
