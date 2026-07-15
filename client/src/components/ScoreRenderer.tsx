@@ -438,10 +438,6 @@ function splitByHand(elements: ParsedElement[]): HandSplit {
 // ─── ENGINE DE RENDERIZAÇÃO DE UMA PAUTA ─────────────────────────────────────
 
 /**
- * Renderiza uma sequência de compassos em um contexto VexFlow.
- * Retorna o array de Stave criados (para StaveConnector do grand staff).
- */
-/**
  * Empilha um StaveTie (ou par de StaveTies parciais) conectando duas notas.
  *
  * Se ambas as notas estão no MESMO sistema (Y aproximadamente igual), desenha
@@ -482,6 +478,313 @@ function pushTieOrPartial(
   } catch { /* ignora */ }
 }
 
+/**
+ * Estado de ligaduras/prolongações para UMA sequência de pauta (uma "mão").
+ * Extraído em objeto mutável para permitir instâncias INDEPENDENTES por mão
+ * no Grand Staff — uma tie na mão direita nunca interfere no estado da
+ * mão esquerda, e vice-versa.
+ */
+interface TieRenderState {
+  activeTieStartNote:  StaveNote | null;
+  activeTieStartY:     number;
+  activeSlurMap:       Map<string, StaveNote>;
+  activeSlurYMap:      Map<string, number>;
+  activePedagogicMap:  Map<string, StaveNote>;
+  activePedagogicYMap: Map<string, number>;
+}
+
+function createTieRenderState(): TieRenderState {
+  return {
+    activeTieStartNote:  null,
+    activeTieStartY:     0,
+    activeSlurMap:       new Map(),
+    activeSlurYMap:      new Map(),
+    activePedagogicMap:  new Map(),
+    activePedagogicYMap: new Map(),
+  };
+}
+
+/**
+ * Renderiza as StaveNotes de UM compasso dentro de UMA stave já criada.
+ * Extraído de renderStaveSystem para ser reutilizado tanto pelo caminho de
+ * pauta única quanto pelo Grand Staff sincronizado (renderGrandStaffSystem) —
+ * garante que ambos os caminhos usem EXATAMENTE a mesma lógica de acordes,
+ * ligaduras, beaming e destaque de playback, sem divergência de comportamento.
+ *
+ * Retorna false se o compasso não pôde ser formatado (erro de Voice/Formatter),
+ * permitindo ao chamador decidir como avançar o cursor X mesmo assim.
+ */
+function renderMeasureNotesIntoStave(
+  ctx:              ReturnType<Renderer['getContext']>,
+  stave:            Stave,
+  mNotes:           ParsedElement[],
+  clef:             string,
+  intervalDir:      'ascending' | 'descending',
+  keySignature:     string | null,
+  timeSignature:    { numerator: number; denominator: number },
+  hitAreas:         NoteHitArea[],
+  activeSourceIndex: number | null | undefined,
+  tieState:         TieRenderState,
+  staveY:           number,
+  staveW:           number,
+  extraW:           number,
+  measureIdx:       number,
+): void {
+  const vexNotes:  StaveNote[]             = [];
+  const srcIdxs:   (number | undefined)[]  = [];
+  const skipSet = new Set<number>();
+
+  const tiesToDraw: StaveTie[] = [];
+
+  // ── measureAccidentalsTrack: persistência visual de acidentes por compasso ──
+  // Regra MIMB/teoria tradicional: acidente impresso uma vez persiste até a barline.
+  // Reinicializado a cada chamada (= cada compasso), local a esta invocação.
+  const measureAccidentalsTrack = new Map<string, string>();
+
+  for (let ni = 0; ni < mNotes.length; ni++) {
+    if (skipSet.has(ni)) continue;
+    const el = mNotes[ni];
+
+    // Pausas
+    if (el.type === 'rest') {
+      const restEl  = el as ParsedRest;
+      const restDur = noteToVexDuration(restEl) + 'r';
+      const vr = new StaveNote({ keys: [clef === 'bass' ? 'd/3' : 'b/4'], duration: restDur, clef });
+      if (restEl.dotted) Dot.buildAndAttach([vr], { all: true });
+      vexNotes.push(vr);
+      srcIdxs.push((restEl as any).sourceIndex);
+      continue;
+    }
+
+    // Notas (com possíveis intervalos)
+    if (el.type === 'note') {
+      const noteEl = el as ParsedNote;
+
+      const intervalEls: Array<{
+        intervalSize:    number;
+        accidental?:     string;
+        explicitOctave?: number;
+        staccato?:       boolean;
+        slur?:           boolean;
+      }> = [];
+      for (let ji = ni + 1; ji < mNotes.length; ji++) {
+        const nxt = mNotes[ji];
+        if (nxt.type !== 'interval') break;
+        const intAny = nxt as any;
+        intervalEls.push({
+          intervalSize:   intAny.intervalSize as number,
+          accidental:     intAny.accidental ? accidentalToVex(String(intAny.accidental)) : undefined,
+          explicitOctave: intAny.explicitOctave as number | undefined,
+          staccato:       intAny.staccato as boolean | undefined,
+          slur:           intAny.slur as boolean | undefined,
+        });
+        skipSet.add(ji);
+      }
+
+      const { keys, accMods } = buildChordKeys(noteEl, intervalEls, intervalDir, keySignature);
+      const vn = new StaveNote({ keys, duration: noteToVexDuration(noteEl), clef });
+
+      accMods.forEach((vexAcc, keyIdx) => {
+        const keyPitch = keys[keyIdx] ?? '?';
+        const prevAcc  = measureAccidentalsTrack.get(keyPitch);
+        if (prevAcc !== vexAcc) {
+          try {
+            vn.addModifier(new Accidental(vexAcc), keyIdx);
+            measureAccidentalsTrack.set(keyPitch, vexAcc);
+          } catch { /* ignora falha de API */ }
+        }
+      });
+
+      if (noteEl.dotted) Dot.buildAndAttach([vn], { all: true });
+
+      // ── Destaque visual da nota ativa no playback ─────────────────────
+      if (
+        activeSourceIndex !== null &&
+        activeSourceIndex !== undefined &&
+        (noteEl as any).sourceIndex === activeSourceIndex
+      ) {
+        try {
+          vn.setStyle({ fillStyle: '#3b82f6', strokeStyle: '#3b82f6' });
+        } catch { /* VexFlow version sem setStyle — ignorar */ }
+      }
+
+      // ── Ligaduras e Prolongações — Modelo Neutro (Cérebro) ───────────────
+      const noteTieRole  = (noteEl as any).tieRole   as 'start' | 'end' | undefined;
+      const noteSlurRole = (noteEl as any).slurRole  as 'start' | 'end' | undefined;
+      const noteLongId   = (noteEl as any).slurLongId as string | undefined;
+      const notePedRole  = (noteEl as any).slurRolePedagogic   as 'start' | 'end' | undefined;
+      const notePedId    = (noteEl as any).slurLongIdPedagogic as string | undefined;
+
+      // Canal 1: Tie de Prolongação
+      if (noteTieRole === 'start') {
+        tieState.activeTieStartNote = vn;
+        tieState.activeTieStartY    = staveY;
+      }
+      if (noteTieRole === 'end' && tieState.activeTieStartNote !== null) {
+        pushTieOrPartial(tiesToDraw, tieState.activeTieStartNote, tieState.activeTieStartY, vn, staveY);
+        tieState.activeTieStartNote = null;
+      }
+
+      // Canal 2: Slur de Expressão / Fraseio
+      if (noteSlurRole === 'start' && noteLongId) {
+        tieState.activeSlurMap.set(noteLongId, vn);
+        tieState.activeSlurYMap.set(noteLongId, staveY);
+      }
+      if (noteSlurRole === 'end' && noteLongId) {
+        const startVn = tieState.activeSlurMap.get(noteLongId);
+        const startY  = tieState.activeSlurYMap.get(noteLongId);
+        if (startVn !== undefined && startY !== undefined) {
+          pushTieOrPartial(tiesToDraw, startVn, startY, vn, staveY);
+          tieState.activeSlurMap.delete(noteLongId);
+          tieState.activeSlurYMap.delete(noteLongId);
+        }
+      }
+
+      // Canal 3: Ligadura Longa Pedagógica
+      if (notePedRole === 'start' && notePedId) {
+        tieState.activePedagogicMap.set(notePedId, vn);
+        tieState.activePedagogicYMap.set(notePedId, staveY);
+      }
+      if (notePedRole === 'end' && notePedId) {
+        const startVn = tieState.activePedagogicMap.get(notePedId);
+        const startY  = tieState.activePedagogicYMap.get(notePedId);
+        if (startVn !== undefined && startY !== undefined) {
+          pushTieOrPartial(tiesToDraw, startVn, startY, vn, staveY);
+          tieState.activePedagogicMap.delete(notePedId);
+          tieState.activePedagogicYMap.delete(notePedId);
+        }
+      }
+
+      vexNotes.push(vn);
+      srcIdxs.push((noteEl as any).sourceIndex);
+    }
+  }
+
+  if (vexNotes.length === 0) return;
+
+  // ── Voice ────────────────────────────────────────────────────────────
+  const voice = new Voice({ numBeats: timeSignature.numerator, beatValue: timeSignature.denominator });
+  voice.setMode(2); // SOFT
+
+  const isCompound = (
+    timeSignature.denominator === 8 &&
+    [6, 9, 12].includes(timeSignature.numerator)
+  );
+
+  let beams: Beam[] = [];
+  try {
+    beams = isCompound
+      ? Beam.generateBeams(vexNotes, { groups: [new Fraction(3, 8)] })
+      : Beam.generateBeams(vexNotes);
+    beams.forEach(b => b.setContext(ctx));
+
+    if (activeSourceIndex !== null && activeSourceIndex !== undefined) {
+      const activeVexNote = vexNotes.find((_, idx) => srcIdxs[idx] === activeSourceIndex);
+      if (activeVexNote) {
+        beams.forEach(b => {
+          const beamNotes = (b as any).notes as StaveNote[] | undefined;
+          if (beamNotes?.includes(activeVexNote)) {
+            try {
+              b.setStyle({ fillStyle: '#3b82f6', strokeStyle: '#3b82f6' });
+            } catch { /* VexFlow version sem setStyle em Beam — ignorar */ }
+          }
+        });
+      }
+    }
+  } catch {
+    beams = [];
+  }
+
+  voice.addTickables(vexNotes);
+
+  try {
+    const notesArea = Math.max(staveW - extraW - 20, 60);
+    new Formatter().joinVoices([voice]).format([voice], notesArea);
+    voice.draw(ctx, stave);
+    beams.forEach(b => { try { b.draw(); } catch { /* ignora — beam pode não ter notas */ } });
+    tiesToDraw.forEach(t => { try { t.setContext(ctx).draw(); } catch { /* ignora */ } });
+  } catch (e) {
+    console.warn(`[ScoreRenderer] format/draw error (measure ${measureIdx}):`, e);
+    return;
+  }
+
+  // ── Hit areas para click ─────────────────────────────────────────────
+  for (let j = 0; j < vexNotes.length; j++) {
+    const srcIdx = srcIdxs[j];
+    if (srcIdx === undefined) continue;
+    try {
+      const bb = vexNotes[j].getBoundingBox();
+      if (bb) hitAreas.push({ x: bb.getX(), y: bb.getY(), w: bb.getW(), h: bb.getH(), sourceIndex: srcIdx });
+    } catch {
+      try {
+        const nx = vexNotes[j].getAbsoluteX();
+        hitAreas.push({ x: nx - 10, y: staveY - 10, w: 30, h: 90, sourceIndex: srcIdx });
+      } catch { /* ignora */ }
+    }
+  }
+}
+
+/**
+ * Cria a Stave de UM compasso (aplicando cabeçalho de sistema, barlines) sem
+ * ainda renderizar as notas — separado para ser chamado de forma sincronizada
+ * por renderGrandStaffSystem (treble e bass da MESMA posição X e do MESMO
+ * sistema visual).
+ */
+function createMeasureStave(
+  ctx:             ReturnType<Renderer['getContext']>,
+  x:               number,
+  y:               number,
+  staveW:          number,
+  measure:         MeasureInfo,
+  clef:            string,
+  keySignature:    string | null,
+  timeSignatureEl: any,
+  isSystem:        boolean,
+  isFirst:         boolean,
+  showMeasureNumbers: boolean,
+  measureIdx:      number,
+): Stave {
+  const stave = new Stave(x, y, staveW);
+  stave.setContext(ctx);
+
+  // Reinjetar clave e armadura no início de CADA SISTEMA (não só no primeiro compasso global)
+  if (isSystem) {
+    stave.addClef(clef);
+    if (keySignature && (VALID_KEYS as readonly string[]).includes(keySignature)) {
+      try { stave.addKeySignature(keySignature); } catch { /* ignora */ }
+    }
+    // Fórmula de compasso: apenas no primeiro compasso global (início da música)
+    if (isFirst && timeSignatureEl) {
+      const abbr = timeSignatureEl._abbreviated;
+      const num  = timeSignatureEl.numerator as number;
+      const den  = timeSignatureEl.denominator as number;
+      try {
+        if      (abbr === 'C')  stave.addTimeSignature('C');
+        else if (abbr === 'C|') stave.addTimeSignature('C|');
+        else if (num && den)    stave.addTimeSignature(`${num}/${den}`);
+      } catch { /* ignora */ }
+    }
+  }
+
+  if (measure.begBarlineType === 'repeat-begin') stave.setBegBarType(4);
+  if      (measure.barlineType === 'end')          stave.setEndBarType(3);
+  else if (measure.barlineType === 'end-section')  stave.setEndBarType(3);
+  else if (measure.barlineType === 'repeat-end')   stave.setEndBarType(5);
+  else if (measure.barlineType === 'repeat-begin') stave.setEndBarType(4);
+  else if (measure.barlineType === 'repeat-both')  stave.setEndBarType(6);
+
+  stave.draw();
+  if (showMeasureNumbers) {
+    addMeasureNumber(ctx, stave, measureIdx);
+  }
+
+  return stave;
+}
+
+/**
+ * Renderiza uma sequência de compassos em UMA ÚNICA pauta (sem Grand Staff).
+ * Retorna o array de Stave criados.
+ */
 function renderStaveSystem(
   ctx:            ReturnType<Renderer['getContext']>,
   measures:       MeasureInfo[],
@@ -505,56 +808,28 @@ function renderStaveSystem(
   let y = startY;
   let systemIdx = 0;
 
-  // ── Estado de ligaduras (persiste entre compassos) ───────────────────────
-  //
-  // Canal 1 — Ties de prolongação (tieRole: 'start'/'end')
-  // Modelo: nota com tieRole='start' guarda a StaveNote. A próxima com tieRole='end'
-  // fecha o arco. Separado por pitch/octave para suportar acordes (múltiplos ties).
-  let activeTieStartNote: StaveNote | null = null;  // tie simples (nota única)
-  let activeTieStartY:    number           = 0;     // Y de origem (para decidir arco único vs. parcial)
+  const tieState = createTieRenderState();
 
-  // Canal 2 — Slurs de expressão / frase (slurRole: 'start'/'end' + slurLongId)
-  // O Cérebro gera slurLongId único para cada arco, curto ou longo.
-  // O mapa persiste entre compassos — um slur pode cruzar barlines.
-  const activeSlurMap:  Map<string, StaveNote> = new Map(); // slurLongId → StaveNote de início
-  const activeSlurYMap: Map<string, number>    = new Map(); // slurLongId → Y de origem
-
-  // Canal 3 — Ligadura Longa PEDAGÓGICA (slurRolePedagogic + slurLongIdPedagogic)
-  // Totalmente independente do Canal 2: usa seu próprio mapa e seus próprios
-  // campos vindos do parser, permitindo coexistência/sobreposição sem conflito.
-  const activePedagogicMap:  Map<string, StaveNote> = new Map(); // id → StaveNote de início
-  const activePedagogicYMap: Map<string, number>    = new Map(); // id → Y de origem
-
-  // Construir mapa matricial para acesso por índice real
   const measureTrack = buildMeasureTrack(measures);
   const maxIdx = Math.max(measures.length - 1, 0);
 
   for (let i = 0; i <= maxIdx; i++) {
     const measure = measureTrack.get(i) ?? { notes: [], barlineType: 'single' as const };
     let staveW  = staveWidths[i] ?? 200;
-    // Verificar se o próximo compasso cabe na linha atual ou precisa quebrar
     const isFirstOfSystem = (i === 0) || (x + staveW > availableWidth - MARGIN_RIGHT);
     if (isFirstOfSystem && i > 0) {
-      // Quebra de linha: descer para o próximo sistema
       x = startX;
       y = startY + (++systemIdx) * systemHeight;
     }
     const isFirst  = i === 0;
-    const isSystem = isFirstOfSystem; // primeiro compasso deste sistema
+    const isSystem = isFirstOfSystem;
     const ksN      = ksAccidentalCount(keySignature);
-    // Cabeçalho extra: sempre no início de cada sistema (não só no primeiro compasso global)
     const extraW   = isSystem ? firstMeasureExtra(ksN, isFirst && !!timeSignatureEl) : 0;
     if (isSystem) staveW = Math.max(staveW, staveW + extraW);
 
-    // Elementos a renderizar (note, rest; interval é consumido com a nota-base)
-    // 'text' e outros não-musicais são filtrados aqui para evitar pautas fantasmas
     const mNotes = measure.notes.filter(n =>
       n.type === 'note' || n.type === 'rest' || n.type === 'interval'
     );
-    // Compasso sem notas: ignorar (não criar stave vazio) exceto:
-    //   (a) barra final — sempre renderizar
-    //   (b) primeiro compasso com tokens de cabeçalho (keysignature/timesignature)
-    //       — renderizar pauta estéril para mostrar clave/armadura/compasso imediatamente
     const hasRealNotes  = mNotes.some(n => n.type === 'note' || n.type === 'rest');
     const hasHeaderOnly = !hasRealNotes && measure.notes.some(
       n => n.type === 'keysignature' || n.type === 'timesignature' || n.type === 'clef'
@@ -565,290 +840,20 @@ function renderStaveSystem(
       x += staveW; continue;
     }
 
-    // ── Stave ─────────────────────────────────────────────────────────────
-    const stave = new Stave(x, y, staveW);
-    stave.setContext(ctx);
-
-    // Reinjetar clave e armadura no início de CADA SISTEMA (não só no primeiro compasso global)
-    if (isSystem) {
-      stave.addClef(clef);
-      if (keySignature && (VALID_KEYS as readonly string[]).includes(keySignature)) {
-        try { stave.addKeySignature(keySignature); } catch { /* ignora */ }
-      }
-      // Fórmula de compasso: apenas no primeiro compasso global (início da música)
-      if (isFirst && timeSignatureEl) {
-        const abbr = timeSignatureEl._abbreviated;
-        const num  = timeSignatureEl.numerator as number;
-        const den  = timeSignatureEl.denominator as number;
-        try {
-          if      (abbr === 'C')  stave.addTimeSignature('C');
-          else if (abbr === 'C|') stave.addTimeSignature('C|');
-          else if (num && den)    stave.addTimeSignature(`${num}/${den}`);
-        } catch { /* ignora */ }
-      }
-    }
-
-    if (measure.begBarlineType === 'repeat-begin') stave.setBegBarType(4);
-    // Barra final: aplica o tipo correto na pauta atual (treble ou bass)
-    // A sincronização é garantida pois splitByHand propaga barlines para ambas as pautas
-    if      (measure.barlineType === 'end')          stave.setEndBarType(3); // barra dupla final
-    else if (measure.barlineType === 'end-section')  stave.setEndBarType(3); // barra dupla de seção
-    else if (measure.barlineType === 'repeat-end')   stave.setEndBarType(5);
-    else if (measure.barlineType === 'repeat-begin') stave.setEndBarType(4);
-    else if (measure.barlineType === 'repeat-both')  stave.setEndBarType(6);
-
-    stave.draw();
+    const stave = createMeasureStave(
+      ctx, x, y, staveW, measure, clef, keySignature, timeSignatureEl,
+      isSystem, isFirst, showMeasureNumbers, i,
+    );
     staves.push(stave);
 
-    // Numeração visual de compassos no topo da pauta superior (primeiro sistema)
-    if (showMeasureNumbers) {
-      addMeasureNumber(ctx, stave, i);
-    }
-
-    // Compasso com só tokens de cabeçalho (sem notas/pausas): pauta já desenhada,
-    // pular criação de Voice/Formatter para não gerar erro de voz vazia.
     if (mNotes.length === 0 || (hasHeaderOnly && !hasRealNotes)) {
       x += staveW; continue;
     }
 
-    // ── Construir StaveNotes ─────────────────────────────────────────────
-    const vexNotes:  StaveNote[]             = [];
-    const srcIdxs:   (number | undefined)[]  = [];
-    const skipSet = new Set<number>();
-
-    // Lista de arcos a desenhar APÓS o Formatter — coordenadas X definidas pelo format()
-    // StaveTie cobre: ties de prolongação (tieRole) e slurs de expressão (slurRole)
-    const tiesToDraw: StaveTie[] = [];
-
-    // ── measureAccidentalsTrack: persistência visual de acidentes por compasso ──
-    // Regra MIMB/teoria tradicional: acidente impresso uma vez persiste até a barline.
-    // Este mapa é REINICIALIZADO a cada iteração do for(i) (= cada compasso/barline).
-    // Chave: "pitch/octave"  →  último token Accidental VexFlow aplicado neste compasso.
-    // Efeito: segundo Fá# no mesmo compasso não recebe novo glifo visual.
-    const measureAccidentalsTrack = new Map<string, string>();
-
-    for (let ni = 0; ni < mNotes.length; ni++) {
-      if (skipSet.has(ni)) continue;
-      const el = mNotes[ni];
-
-      // Pausas
-      if (el.type === 'rest') {
-        const restEl  = el as ParsedRest;
-        const restDur = noteToVexDuration(restEl) + 'r';
-        const vr = new StaveNote({ keys: [clef === 'bass' ? 'd/3' : 'b/4'], duration: restDur, clef });
-        if (restEl.dotted) Dot.buildAndAttach([vr], { all: true });
-        vexNotes.push(vr);
-        srcIdxs.push((restEl as any).sourceIndex);
-        continue;
-      }
-
-      // Notas (com possíveis intervalos)
-      if (el.type === 'note') {
-        const noteEl = el as ParsedNote;
-
-        const intervalEls: Array<{
-          intervalSize:    number;
-          accidental?:     string;
-          explicitOctave?: number;
-          staccato?:       boolean;
-          slur?:           boolean;
-        }> = [];
-        for (let ji = ni + 1; ji < mNotes.length; ji++) {
-          const nxt = mNotes[ji];
-          if (nxt.type !== 'interval') break;
-          const intAny = nxt as any;
-          intervalEls.push({
-            intervalSize:   intAny.intervalSize as number,
-            accidental:     intAny.accidental ? accidentalToVex(String(intAny.accidental)) : undefined,
-            explicitOctave: intAny.explicitOctave as number | undefined,
-            staccato:       intAny.staccato as boolean | undefined,
-            slur:           intAny.slur as boolean | undefined,
-          });
-          skipSet.add(ji);
-        }
-
-        const { keys, accMods } = buildChordKeys(noteEl, intervalEls, intervalDir, keySignature);
-        const vn = new StaveNote({ keys, duration: noteToVexDuration(noteEl), clef });
-
-        accMods.forEach((vexAcc, keyIdx) => {
-          // Recuperar o pitch real para a chave de rastreamento
-          const keyPitch = keys[keyIdx] ?? '?';
-          const prevAcc  = measureAccidentalsTrack.get(keyPitch);
-          // Só adicionar o modificador visual se:
-          // (a) Nunca houve acidente para este pitch neste compasso, OU
-          // (b) O acidente mudou em relação ao anterior (ex: # → ♮)
-          if (prevAcc !== vexAcc) {
-            try {
-              vn.addModifier(new Accidental(vexAcc), keyIdx);
-              measureAccidentalsTrack.set(keyPitch, vexAcc); // registrar
-            } catch { /* ignora falha de API */ }
-          }
-          // prevAcc === vexAcc: acidente idêntico já impresso → suprimir visual
-        });
-
-        if (noteEl.dotted) Dot.buildAndAttach([vn], { all: true });
-
-        // ── Destaque visual da nota ativa no playback ─────────────────────
-        // activeSourceIndex vem do BrailleEditor via prop; sincronizado
-        // com o callback onElementHighlight do scoreAudioPlayer.
-        if (
-          activeSourceIndex !== null &&
-          activeSourceIndex !== undefined &&
-          (noteEl as any).sourceIndex === activeSourceIndex
-        ) {
-          try {
-            vn.setStyle({ fillStyle: '#3b82f6', strokeStyle: '#3b82f6' });
-          } catch { /* VexFlow version sem setStyle — ignorar */ }
-        }
-
-        // ── Ligaduras e Prolongações — Modelo Neutro (Cérebro) ───────────────
-        // O parser (brailleMusic.ts) marcou cada nota com papéis exatos:
-        //   tieRole:   'start' | 'end'          → prolongação (mesma altura)
-        //   slurRole:  'start' | 'end'          → expressão/fraseio
-        //   slurLongId: string                  → ID único do arco curto ou longo
-        //
-        // O renderer apenas conecta os pares — sem lógica de decisão.
-        // Salvaguarda de Y: se início e fim estiverem em sistemas diferentes
-        // (quebra de linha vertical), o arco é cancelado para evitar diagonal.
-
-        const noteTieRole  = (noteEl as any).tieRole   as 'start' | 'end' | undefined;
-        const noteSlurRole = (noteEl as any).slurRole  as 'start' | 'end' | undefined;
-        const noteLongId   = (noteEl as any).slurLongId as string | undefined;
-        const notePedRole  = (noteEl as any).slurRolePedagogic   as 'start' | 'end' | undefined;
-        const notePedId    = (noteEl as any).slurLongIdPedagogic as string | undefined;
-
-        // ── Canal 1: Tie de Prolongação (tieRole) ────────────────────────────
-        // Sem salvaguarda restritiva de Y — pushTieOrPartial decide nativamente
-        // entre arco único (mesmo sistema) ou par de arcos parciais (sistemas
-        // diferentes), usando o suporte nativo do VexFlow para ties abertas.
-        if (noteTieRole === 'start') {
-          activeTieStartNote = vn;
-          activeTieStartY    = y;
-        }
-        if (noteTieRole === 'end' && activeTieStartNote !== null) {
-          pushTieOrPartial(tiesToDraw, activeTieStartNote, activeTieStartY, vn, y);
-          activeTieStartNote = null;
-        }
-
-        // ── Canal 2: Slur de Expressão / Fraseio (slurRole + slurLongId) ─────
-        // O slurLongId é gerado pelo Cérebro para TODOS os slurs (curtos e longos),
-        // portanto basta usar o ID como chave do mapa — comportamento uniforme.
-        if (noteSlurRole === 'start' && noteLongId) {
-          activeSlurMap.set(noteLongId, vn);
-          activeSlurYMap.set(noteLongId, y);
-        }
-        if (noteSlurRole === 'end' && noteLongId) {
-          const startVn = activeSlurMap.get(noteLongId);
-          const startY  = activeSlurYMap.get(noteLongId);
-          if (startVn !== undefined && startY !== undefined) {
-            pushTieOrPartial(tiesToDraw, startVn, startY, vn, y);
-            activeSlurMap.delete(noteLongId);
-            activeSlurYMap.delete(noteLongId);
-          }
-        }
-
-        // ── Canal 3: Ligadura Longa PEDAGÓGICA (slurRolePedagogic + slurLongIdPedagogic) ──
-        // Canal totalmente independente do Canal 2 — usa seu próprio mapa,
-        // permitindo que uma frase pedagógica e uma ligadura de frase comum
-        // coexistam e se sobreponham sem interferência mútua.
-        if (notePedRole === 'start' && notePedId) {
-          activePedagogicMap.set(notePedId, vn);
-          activePedagogicYMap.set(notePedId, y);
-        }
-        if (notePedRole === 'end' && notePedId) {
-          const startVn = activePedagogicMap.get(notePedId);
-          const startY  = activePedagogicYMap.get(notePedId);
-          if (startVn !== undefined && startY !== undefined) {
-            pushTieOrPartial(tiesToDraw, startVn, startY, vn, y);
-            activePedagogicMap.delete(notePedId);
-            activePedagogicYMap.delete(notePedId);
-          }
-        }
-
-        vexNotes.push(vn);
-        srcIdxs.push((noteEl as any).sourceIndex);
-      }
-    }
-
-    if (vexNotes.length === 0) { x += staveW; continue; }
-
-    // ── Voice ────────────────────────────────────────────────────────────
-    const voice = new Voice({ numBeats: timeSignature.numerator, beatValue: timeSignature.denominator });
-    voice.setMode(2); // SOFT
-
-    // ── Beaming: gerador nativo do VexFlow ──────────────────────────────
-    // Beam.generateBeams() detecta pausas automaticamente e interrompe vigas
-    // no ponto correto — eliminando as linhas diagonais entre pausas do MarioBro.
-    //
-    // Casos:
-    //   Compasso simples (4/4, 2/4, 3/4, etc.): sem 'groups' → VexFlow usa
-    //     subdivisão por batida. Colcheias isoladas entre pausas recebem flag.
-    //   Compasso composto (6/8, 9/8, 12/8): groups=[Fraction(3,8)] → agrupa
-    //     colcheias de 3 em 3 (tempo pontuado da semínima pontuada).
-    const isCompound = (
-      timeSignature.denominator === 8 &&
-      [6, 9, 12].includes(timeSignature.numerator)
+    renderMeasureNotesIntoStave(
+      ctx, stave, mNotes, clef, intervalDir, keySignature, timeSignature,
+      hitAreas, activeSourceIndex, tieState, y, staveW, extraW, i,
     );
-
-    let beams: Beam[] = [];
-    try {
-      beams = isCompound
-        ? Beam.generateBeams(vexNotes, { groups: [new Fraction(3, 8)] })
-        : Beam.generateBeams(vexNotes);
-      // Definir contexto de desenho em cada viga
-      beams.forEach(b => b.setContext(ctx));
-
-      // ── Destaque de viga: se a nota ativa pertence a este beam ────────────
-      // Evita o artefato visual de nota azul + viga preta desconectada.
-      // Beam.notes contém as StaveNotes agrupadas; comparamos por referência
-      // com vexNotes[idx] cujo srcIdxs[idx] === activeSourceIndex.
-      if (activeSourceIndex !== null && activeSourceIndex !== undefined) {
-        const activeVexNote = vexNotes.find((_, idx) => srcIdxs[idx] === activeSourceIndex);
-        if (activeVexNote) {
-          beams.forEach(b => {
-            const beamNotes = (b as any).notes as StaveNote[] | undefined;
-            if (beamNotes?.includes(activeVexNote)) {
-              try {
-                b.setStyle({ fillStyle: '#3b82f6', strokeStyle: '#3b82f6' });
-              } catch { /* VexFlow version sem setStyle em Beam — ignorar */ }
-            }
-          });
-        }
-      }
-    } catch {
-      // Fallback silencioso: vexNotes sem beamáveis ou erro de API
-      beams = [];
-    }
-
-    voice.addTickables(vexNotes);
-
-    try {
-      const notesArea = Math.max(staveW - extraW - 20, 60);
-      new Formatter().joinVoices([voice]).format([voice], notesArea);
-      voice.draw(ctx, stave);
-      beams.forEach(b => { try { b.draw(); } catch { /* ignora — beam pode não ter notas */ } });
-      // Desenhar ligaduras APÓS format/draw (coordenadas X das notas já estão definidas)
-      // Desenhar slurs simples e ties após o Formatter
-      tiesToDraw.forEach(t => { try { t.setContext(ctx).draw(); } catch { /* ignora */ } });
-    } catch (e) {
-      console.warn(`[ScoreRenderer] format/draw error (measure ${i}):`, e);
-      x += staveW; continue;
-    }
-
-    // ── Hit areas para click ─────────────────────────────────────────────
-    for (let j = 0; j < vexNotes.length; j++) {
-      const srcIdx = srcIdxs[j];
-      if (srcIdx === undefined) continue;
-      try {
-        const bb = vexNotes[j].getBoundingBox();
-        if (bb) hitAreas.push({ x: bb.getX(), y: bb.getY(), w: bb.getW(), h: bb.getH(), sourceIndex: srcIdx });
-      } catch {
-        try {
-          const nx = vexNotes[j].getAbsoluteX();
-          hitAreas.push({ x: nx - 10, y: startY - 10, w: 30, h: 90, sourceIndex: srcIdx });
-        } catch { /* ignora */ }
-      }
-    }
 
     x += staveW;
   }
@@ -857,6 +862,149 @@ function renderStaveSystem(
     ? (systemIdx + 1) * systemHeight
     : systemHeight;
   return { staves, totalHeight };
+}
+
+/**
+ * Renderiza o GRAND STAFF (pauta dupla de piano) com PAGINAÇÃO UNIFICADA:
+ * treble e bass são processados em um ÚNICO loop, compasso a compasso,
+ * decidindo a quebra de sistema pela largura MÁXIMA entre as duas mãos
+ * (já pré-computada em staveWidths[i] = max(trebleWidth[i], bassWidth[i])).
+ *
+ * Isso elimina o bug estrutural em que treble e bass eram renderizados como
+ * dois blocos INDEPENDENTES e sequenciais (todo o treble primeiro, depois
+ * todo o bass abaixo) — causando desalinhamento crônico assim que qualquer
+ * um dos dois lados precisasse de um número diferente de sistemas.
+ *
+ * Cada sistema agora é uma unidade atômica: treble[i] e bass[i] nascem no
+ * MESMO x, o cabeçalho (clave+armadura) é reinjetado SIMULTANEAMENTE em
+ * ambas as pautas, e o StaveConnector (BRACE+DOUBLE) é desenhado
+ * imediatamente para aquele par — nunca apenas no primeiro compasso global.
+ */
+function renderGrandStaffSystem(
+  ctx:             ReturnType<Renderer['getContext']>,
+  trebleMeasures:  MeasureInfo[],
+  bassMeasures:    MeasureInfo[],
+  startX:          number,
+  startY:          number,
+  staveWidths:     number[],
+  keySignature:    string | null,
+  timeSignatureEl: any,
+  timeSignature:   { numerator: number; denominator: number },
+  hitAreas:        NoteHitArea[],
+  availableWidth:  number,
+  systemHeight:    number,
+  activeSourceIndex: number | null | undefined,
+  staveGap:        number,   // distância vertical entre a pauta treble e a bass DENTRO do mesmo sistema
+  staveBlockH:     number,   // altura nominal de uma única pauta (para avançar Y corretamente)
+): { trebleStaves: Stave[]; bassStaves: Stave[]; totalHeight: number } {
+  const trebleStaves: Stave[] = [];
+  const bassStaves:   Stave[] = [];
+  const MARGIN_RIGHT = 20;
+  let x = startX;
+  let systemIdx = 0;
+
+  // Estado de ligaduras SEPARADO por mão — uma tie na mão direita nunca
+  // interfere no estado de ligadura da mão esquerda.
+  const trebleTieState = createTieRenderState();
+  const bassTieState   = createTieRenderState();
+
+  const trebleTrack = buildMeasureTrack(trebleMeasures);
+  const bassTrack   = buildMeasureTrack(bassMeasures);
+
+  // ── Paginação UNIFICADA: usa o MAIOR número de compassos entre as duas mãos ──
+  const maxMeasures = Math.max(trebleMeasures.length, bassMeasures.length, 1);
+  const maxIdx = maxMeasures - 1;
+
+  const ksN = ksAccidentalCount(keySignature);
+
+  for (let i = 0; i <= maxIdx; i++) {
+    const tMeasure = trebleTrack.get(i) ?? { notes: [], barlineType: 'single' as const };
+    const bMeasure = bassTrack.get(i)   ?? { notes: [], barlineType: 'single' as const };
+
+    // Largura já unificada (staveWidths[i] = max(trebleWidth[i], bassWidth[i]))
+    let staveW = staveWidths[i] ?? 200;
+
+    // ── Decisão de quebra de sistema — UMA ÚNICA decisão para ambas as mãos ──
+    const isFirstOfSystem = (i === 0) || (x + staveW > availableWidth - MARGIN_RIGHT);
+    if (isFirstOfSystem && i > 0) {
+      x = startX;
+      systemIdx++;
+    }
+
+    const isFirst  = i === 0;
+    const isSystem = isFirstOfSystem;
+    const extraW   = isSystem ? firstMeasureExtra(ksN, isFirst && !!timeSignatureEl) : 0;
+    if (isSystem) staveW = Math.max(staveW, staveW + extraW);
+
+    // ── Coordenadas Y deste sistema — treble e bass sempre no MESMO sistema ──
+    const yTreble = startY + systemIdx * systemHeight;
+    const yBass   = yTreble + staveBlockH + staveGap;
+
+    const tNotes = tMeasure.notes.filter(n => n.type === 'note' || n.type === 'rest' || n.type === 'interval');
+    const bNotes = bMeasure.notes.filter(n => n.type === 'note' || n.type === 'rest' || n.type === 'interval');
+
+    const tHasReal = tNotes.some(n => n.type === 'note' || n.type === 'rest');
+    const bHasReal = bNotes.some(n => n.type === 'note' || n.type === 'rest');
+    const tHeaderOnly = !tHasReal && tMeasure.notes.some(n => n.type === 'keysignature' || n.type === 'timesignature' || n.type === 'clef');
+    const bHeaderOnly = !bHasReal && bMeasure.notes.some(n => n.type === 'keysignature' || n.type === 'timesignature' || n.type === 'clef');
+    const tFinalBar = tMeasure.barlineType === 'end' || tMeasure.barlineType === 'end-section';
+    const bFinalBar = bMeasure.barlineType === 'end' || bMeasure.barlineType === 'end-section';
+
+    // Se NENHUMA das duas mãos tem conteúdo relevante neste índice, pular o slot inteiro
+    const tSkip = !tHasReal && !tHeaderOnly && !tFinalBar;
+    const bSkip = !bHasReal && !bHeaderOnly && !bFinalBar;
+    if (tSkip && bSkip) { x += staveW; continue; }
+
+    // ── Criar AMBAS as staves deste sistema, SEMPRE no mesmo x ─────────────
+    // (mesmo que uma das mãos esteja "vazia" neste índice, desenhamos uma
+    // stave estéril para preservar o alinhamento vertical rigoroso — evita
+    // que uma clave fique "flutuando" sem sua contraparte embaixo/em cima).
+    const staveTreble = createMeasureStave(
+      ctx, x, yTreble, staveW, tMeasure, 'treble', keySignature, timeSignatureEl,
+      isSystem, isFirst, true, i,
+    );
+    trebleStaves.push(staveTreble);
+
+    const staveBass = createMeasureStave(
+      ctx, x, yBass, staveW, bMeasure, 'bass', keySignature, timeSignatureEl,
+      isSystem, isFirst, false, i,
+    );
+    bassStaves.push(staveBass);
+
+    // ── StaveConnector (BRACE + DOUBLE) — desenhado para CADA sistema, não só o primeiro ──
+    if (isSystem) {
+      try {
+        const brace = new StaveConnector(staveTreble, staveBass);
+        brace.setType(StaveConnector.type.BRACE);
+        brace.setContext(ctx).draw();
+
+        const lineL = new StaveConnector(staveTreble, staveBass);
+        lineL.setType(StaveConnector.type.DOUBLE);
+        lineL.setContext(ctx).draw();
+      } catch (e) {
+        console.warn(`[ScoreRenderer] StaveConnector error (sistema ${systemIdx}):`, e);
+      }
+    }
+
+    // ── Renderizar notas de cada mão em sua stave, com estado de ligadura próprio ──
+    if (!tSkip && tNotes.length > 0) {
+      renderMeasureNotesIntoStave(
+        ctx, staveTreble, tNotes, 'treble', 'descending', keySignature, timeSignature,
+        hitAreas, activeSourceIndex, trebleTieState, yTreble, staveW, extraW, i,
+      );
+    }
+    if (!bSkip && bNotes.length > 0) {
+      renderMeasureNotesIntoStave(
+        ctx, staveBass, bNotes, 'bass', 'ascending', keySignature, timeSignature,
+        hitAreas, activeSourceIndex, bassTieState, yBass, staveW, extraW, i,
+      );
+    }
+
+    x += staveW;
+  }
+
+  const totalHeight = (systemIdx + 1) * systemHeight;
+  return { trebleStaves, bassStaves, totalHeight };
 }
 
 // ─── COMPONENTE PRINCIPAL ─────────────────────────────────────────────────────
@@ -971,6 +1119,19 @@ export default function ScoreRenderer({
     });
   }, [trebleMeasures, bassMeasures, keySignature, timeSignatureEl]);
 
+  // hasHeaderTokens: elevado para useMemo em escopo de componente — precisa
+  // ser acessível tanto dentro do corpo do useEffect (para a checagem de
+  // pauta estéril) quanto no array de dependências desse mesmo efeito.
+  // BUG CORRIGIDO: estava declarado como 'const' dentro do próprio useEffect,
+  // mas referenciado no array de deps — escopo inválido que nunca compilaria
+  // sob verificação real de TypeScript (só não fora pego por checagens
+  // heurísticas anteriores em vez de tsc de fato).
+  const hasHeaderTokens = useMemo(() =>
+    filteredElements.some(
+      e => e.type === 'keysignature' || e.type === 'timesignature' || e.type === 'clef'
+    ),
+  [filteredElements]);
+
   // ── Efeito principal de renderização ──────────────────────────────────────
   // Renderizar mesmo quando trebleMeasures está vazio (só há tokens de cabeçalho:
   // keysignature, timesignature, clef). Nesse caso, desenhamos a pauta estéril
@@ -978,17 +1139,19 @@ export default function ScoreRenderer({
   useEffect(() => {
     if (!containerRef.current) return;
     // Se não há compassos E não há elementos de cabeçalho, não há nada a desenhar
-    const hasHeaderTokens = filteredElements.some(
-      e => e.type === 'keysignature' || e.type === 'timesignature' || e.type === 'clef'
-    );
     if (trebleMeasures.length === 0 && !hasHeaderTokens) return;
     containerRef.current.innerHTML = '';
     noteHitAreas.current = [];
 
     // +30 de offset inicial (margem para StaveConnector BRACE) + 20 de padding direito
     // Largura disponível para cada sistema (excluindo margem inicial de 30px)
-    const AVAIL_WIDTH = Math.max(width - 10, 400);
-    const SYSTEM_H    = hasBothHands ? GRAND_GAP * 2 + 80 : 110;
+    const AVAIL_WIDTH   = Math.max(width - 10, 400);
+    // STAVE_BLOCK_H: altura nominal de UMA única pauta (5 linhas + margem de segurança)
+    const STAVE_BLOCK_H = 80;
+    // SYSTEM_H: distância entre o início de um sistema e o início do próximo.
+    // Grand Staff: 2 pautas (treble+bass) + 2 gaps (entre elas e após o sistema).
+    // Pauta simples: valor histórico de 110 preservado sem alteração.
+    const SYSTEM_H    = hasBothHands ? (STAVE_BLOCK_H * 2 + GRAND_GAP * 2) : 110;
     const totalWidth  = AVAIL_WIDTH;
 
     // ── Pauta estéril: só tokens de cabeçalho (sem notas ainda) ────────────
@@ -1071,8 +1234,10 @@ export default function ScoreRenderer({
       lineX += sw;
     }
 
-    const trebleTotalH = nSystems * SYSTEM_H;
-    const totalHeight  = hasBothHands ? trebleTotalH * 2 + GRAND_GAP : trebleTotalH;
+    // totalHeight = nSystems * SYSTEM_H em AMBOS os casos agora: no Grand Staff,
+    // cada "sistema" já representa o par treble+bass completo (paginação unificada),
+    // então não há mais necessidade de duplicar/somar blocos separados.
+    const totalHeight = nSystems * SYSTEM_H;
 
     const renderer = new Renderer(containerRef.current, Renderer.Backends.SVG);
     renderer.resize(totalWidth, Math.max(totalHeight, 160));
@@ -1085,58 +1250,43 @@ export default function ScoreRenderer({
     ctx.scale(scaleRatio, scaleRatio);
     renderer.resize(Math.ceil(totalWidth * invScale), Math.ceil(Math.max(totalHeight * invScale, 160)));
 
-    const logicAvailW = AVAIL_WIDTH * invScale;
-    const logicSysH   = SYSTEM_H   * invScale;
+    const logicAvailW    = AVAIL_WIDTH   * invScale;
+    const logicSysH      = SYSTEM_H      * invScale;
+    const logicStaveGap  = GRAND_GAP     * invScale;
+    const logicStaveBlkH = STAVE_BLOCK_H * invScale;
 
-    // ── Pauta treble ──────────────────────────────────────────────────────
-    const { staves: trebleStaves } = renderStaveSystem(
-      ctx, trebleMeasures, 30, 40, staveWidths,
-      hasBothHands ? 'treble' : activeClef,
-      hasBothHands ? 'descending' : intervalDirection,
-      keySignature, timeSignatureEl, timeSignature,
-            noteHitAreas.current,
-      true,
-      logicAvailW,
-      logicSysH,
-      activeSourceIndex,
-    );
-    // ── Pauta bass (grand staff) ──────────────────────────────────────────
-    let bassStaves: Stave[] = [];
-    if (hasBothHands && bassMeasures.length > 0) {
-      const bassY0 = trebleTotalH * invScale + GRAND_GAP;
-      const { staves: bs } = renderStaveSystem(
-        ctx, bassMeasures, 30, bassY0, staveWidths,
-        'bass', 'ascending',
+    if (hasBothHands) {
+      // ── Grand Staff: paginação unificada treble+bass em UMA única passada ──
+      // Elimina o bug de blocos sequenciais desalinhados: cada sistema agora
+      // nasce com treble e bass no MESMO x, cabeçalho reinjetado simultaneamente
+      // e StaveConnector desenhado por sistema (não só no primeiro compasso).
+      renderGrandStaffSystem(
+        ctx, trebleMeasures, bassMeasures, 30, 40, staveWidths,
         keySignature, timeSignatureEl, timeSignature,
         noteHitAreas.current,
-        false,
+        logicAvailW, logicSysH,
+        activeSourceIndex,
+        logicStaveGap, logicStaveBlkH,
+      );
+    } else {
+      // ── Pauta única (sem Grand Staff) ───────────────────────────────────
+      renderStaveSystem(
+        ctx, trebleMeasures, 30, 40, staveWidths,
+        activeClef, intervalDirection,
+        keySignature, timeSignatureEl, timeSignature,
+        noteHitAreas.current,
+        true,
         logicAvailW,
         logicSysH,
         activeSourceIndex,
       );
-      bassStaves = bs;
-    }
-
-    // ── StaveConnector: BRACE (chave de piano) + linha dupla esquerda ─────
-    if (hasBothHands && trebleStaves[0] && bassStaves[0]) {
-      try {
-        const brace = new StaveConnector(trebleStaves[0], bassStaves[0]);
-        brace.setType(StaveConnector.type.BRACE);
-        brace.setContext(ctx).draw();
-
-        const lineL = new StaveConnector(trebleStaves[0], bassStaves[0]);
-        lineL.setType(StaveConnector.type.DOUBLE);
-        lineL.setContext(ctx).draw();
-      } catch (e) {
-        console.warn('[ScoreRenderer] StaveConnector error:', e);
-      }
     }
 
   }, [
     elements, filteredElements, trebleMeasures, bassMeasures, staveWidths,
     width, height, activeClef, intervalDirection, hasBothHands,
     keySignature, timeSignatureEl, timeSignature, bassStartY, grandStaffProp, maxLevel, scaleRatio,
-    activeSourceIndex,
+    hasHeaderTokens, activeSourceIndex,
   ]);
 
   // ── Click listener ────────────────────────────────────────────────────────
