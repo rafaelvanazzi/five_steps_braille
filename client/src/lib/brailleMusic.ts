@@ -2711,3 +2711,180 @@ export function exportBrailleTextToMusicXML(brailleText: string): string {
   const { elements } = parseBrailleMusic(brailleText);
   return exportToMusicXML(elements);
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MOTOR DE VALIDAÇÃO RÍTMICA — detectMeasureErrors
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Analisa um documento já parseado e verifica se a soma de pulsos de cada
+// compasso corresponde exatamente à fórmula de compasso ativa. Roda
+// inteiramente no cliente — latência zero, sem chamada ao servidor — já que
+// a regra "soma de pulsos == fórmula de compasso" é teoria musical básica e
+// pública, sem relação com as heurísticas proprietárias de transcrição.
+//
+// NOTA DE ARQUITETURA: ParsedRest não carrega measureIndex próprio (só
+// ParsedNote e ParsedBarline carregam). Para não alterar parseBrailleMusic
+// (função mestre, fora do escopo desta tarefa), o agrupamento por compasso
+// aqui é feito por INFERÊNCIA CONTEXTUAL: cada elemento herda o measureIndex
+// do último 'note' ou 'barline' visto antes dele no documento — como pausas
+// sempre aparecem entre uma nota/barline e a próxima, essa inferência é
+// exata na prática, sem precisar tocar no parser mestre.
+
+/**
+ * Agrupa elementos (note/rest/interval) por measureIndex, inferindo o índice
+ * de compasso de pausas via contexto (última nota/barline vista), já que
+ * ParsedRest não carrega measureIndex próprio.
+ */
+function groupElementsByMeasureIndex(
+  elements: ParsedElement[],
+): Map<number, ParsedElement[]> {
+  const buckets = new Map<number, ParsedElement[]>();
+  let currentMeasureIdx = 0;
+
+  for (const el of elements) {
+    if (el.type === 'note' || el.type === 'barline') {
+      const idx = (el as any).measureIndex as number | undefined;
+      if (idx !== undefined) currentMeasureIdx = idx;
+    }
+
+    if (el.type === 'note' || el.type === 'rest') {
+      if (!buckets.has(currentMeasureIdx)) buckets.set(currentMeasureIdx, []);
+      buckets.get(currentMeasureIdx)!.push(el);
+    }
+  }
+
+  return buckets;
+}
+
+/**
+ * Fator de compressão rítmica de quiálteras (tercinas e famílias correlatas).
+ *
+ * ⚠️ NOTA DE PRECISÃO: sem um marcador explícito de FIM de quiáltera no
+ * modelo atual do parser (ParsedQuialtera não delimita quantas notas afeta),
+ * adotamos a convenção de que o número já presente no próprio nome do
+ * marcador ('quialtera-3' → 3) indica quantas notas/pausas IMEDIATAMENTE
+ * seguintes são compression. O fator de compressão padrão (N notas no
+ * tempo da potência de 2 mais próxima abaixo de N) cobre corretamente o
+ * caso mais comum (tercina, quialtera-3 → 3 notas no tempo de 2 → fator
+ * 2/3). Para duplas/quínteis (quialtera-2/quialtera-5), a convenção pode
+ * variar conforme o compasso simples/composto — este é um valor de
+ * trabalho documentado, não uma afirmação musicográfica definitiva.
+ */
+const QUIALTERA_COMPRESSION_FACTOR: Record<string, number> = {
+  'quialtera-2': 3 / 2, // dupla: 2 notas no tempo de 3 (comum em compasso composto)
+  'quialtera-3': 2 / 3, // tercina: 3 notas no tempo de 2
+  'quialtera-4': 3 / 4, // quatro notas no tempo de 3
+  'quialtera-5': 4 / 5, // quíntupla: 5 notas no tempo de 4
+};
+
+/** Extrai quantas notas um marcador de quiáltera afeta, a partir do próprio nome. */
+function quialteraNoteCount(name: string): number {
+  const match = name.match(/quialtera-(\d+)/);
+  return match ? parseInt(match[1], 10) : 0;
+}
+
+/**
+ * Calcula a soma de pulsos (semínima = 1.0) de um compasso, aplicando pontos
+ * de aumento (dotted ×1.5, dotted2 ×1.75) e compressão de quiálteras quando
+ * presentes na sequência original de tokens do compasso.
+ *
+ * @param measureElements — elementos (note/rest) já filtrados para este compasso
+ * @param rawMeasureTokens — sequência ORIGINAL de elementos do documento inteiro,
+ *                           usada para localizar marcadores 'quialtera' que
+ *                           precedem as notas deste compasso especificamente
+ */
+function sumMeasurePulses(
+  measureElements: ParsedElement[],
+  allElements:     ParsedElement[],
+): number {
+  // Mapear quais sourceIndex estão sob compressão de quiáltera, escaneando
+  // o documento completo uma única vez (fora do loop de compassos, mas
+  // reconstruído aqui por simplicidade/isolamento desta função pura).
+  const compressedSourceIndexes = new Map<number, number>(); // sourceIndex → fator
+
+  for (let i = 0; i < allElements.length; i++) {
+    const el = allElements[i];
+    if (el.type !== 'quialtera') continue;
+    const factor = QUIALTERA_COMPRESSION_FACTOR[(el as any).name] ?? 1;
+    const noteCount = quialteraNoteCount((el as any).name);
+    let consumed = 0;
+    for (let j = i + 1; j < allElements.length && consumed < noteCount; j++) {
+      const nxt = allElements[j];
+      if (nxt.type === 'note' || nxt.type === 'rest') {
+        compressedSourceIndexes.set((nxt as any).sourceIndex, factor);
+        consumed++;
+      }
+    }
+  }
+
+  let totalPulses = 0;
+
+  for (const el of measureElements) {
+    const duration = (el as any).duration as Duration;
+    const dotted   = (el as any).dotted  as boolean ?? false;
+    const dotted2  = (el as any).dotted2 as boolean ?? false;
+    const sourceIdx = (el as any).sourceIndex as number;
+
+    const basePulses = BRAILLE_DURATION_PULSES[duration as BrailleDuration] ?? 1;
+    const dotMultiplier = dotted2 ? 1.75 : dotted ? 1.5 : 1;
+    const tupletFactor = compressedSourceIndexes.get(sourceIdx) ?? 1;
+
+    totalPulses += basePulses * dotMultiplier * tupletFactor;
+  }
+
+  return totalPulses;
+}
+
+/**
+ * Analisa o array de elementos parseados e detecta compassos rítmicamente
+ * incompletos ou excedentes em relação à fórmula de compasso ativa.
+ *
+ * Roda inteiramente no cliente (latência zero) — reaproveita BRAILLE_DURATION_PULSES
+ * (semínima=1, mínima=2, colcheia=0.5, semibreve=4) já usado pelo módulo de
+ * exportação MusicXML, sem duplicar tabelas.
+ *
+ * @param elements        — ParsedElement[] já processado por parseBrailleMusic
+ * @param beatsPerMeasure — pulsos esperados por compasso (numerador × 4/denominador
+ *                          da fórmula de compasso ativa)
+ * @returns                 array de avisos em português plano, ex:
+ *                          "Erro: compasso 2 incompleto, faltam 0.5 pulsos"
+ */
+export function detectMeasureErrors(
+  elements:        ParsedElement[],
+  beatsPerMeasure: number,
+): string[] {
+  const errors: string[] = [];
+  const buckets = groupElementsByMeasureIndex(elements);
+
+  const sortedIndexes = Array.from(buckets.keys()).sort((a, b) => a - b);
+
+  for (const measureIdx of sortedIndexes) {
+    const measureElements = buckets.get(measureIdx)!;
+    const totalPulses = sumMeasurePulses(measureElements, elements);
+
+    // Tolerância de ponto flutuante — evita falsos positivos por arredondamento
+    const EPSILON = 0.001;
+    const diff = totalPulses - beatsPerMeasure;
+
+    const displayMeasureNumber = measureIdx + 1; // numeração 1-based para o usuário
+
+    if (diff > EPSILON) {
+      errors.push(
+        `Erro: compasso ${displayMeasureNumber} excede a fórmula de compasso em ${diff.toFixed(2)} pulsos`
+      );
+    } else if (diff < -EPSILON) {
+      const missing = Math.abs(diff);
+      if (measureIdx === 0) {
+        // Primeiro compasso global: incompletude é esperada (anacruse) —
+        // aviso suave, não erro crítico.
+        errors.push(`Compasso 1 incompleto — provável anacruse`);
+      } else {
+        errors.push(
+          `Erro: compasso ${displayMeasureNumber} incompleto, faltam ${missing.toFixed(2)} pulsos`
+        );
+      }
+    }
+  }
+
+  return errors;
+}
