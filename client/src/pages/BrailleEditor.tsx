@@ -2148,12 +2148,28 @@ export default function BrailleEditor() {
                         e => (e as any).sourceIndex === absoluteIdx
                       );
                       const semanticLabel = getBrailleSemanticDescription(char, contextEl, parsedElements);
+                      // Ao focar esta célula (Tab) e pressionar Espaço ou Enter,
+                      // posiciona o cursor do textarea real nesta posição exata —
+                      // permite navegação e edição por leitores de tela sem
+                      // precisar sair do modo ~Desc para localizar o ponto certo.
+                      const handleCellKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+                        if (e.key === " " || e.key === "Enter") {
+                          e.preventDefault();
+                          const ta = brailleTextareaRef.current;
+                          if (ta) {
+                            ta.focus();
+                            ta.setSelectionRange(absoluteIdx, absoluteIdx);
+                            updateCursor(ta);
+                          }
+                        }
+                      };
                       return (
                         <div
                           key={charIdx}
                           tabIndex={0}
                           role="img"
                           aria-label={semanticLabel}
+                          onKeyDown={handleCellKeyDown}
                           className={`inline-flex flex-col items-center text-center select-none rounded-sm transition-colors focus:outline-none focus:ring-2 focus:ring-primary/60 ${
                             isActive ? "bg-blue-200 dark:bg-blue-900/50" : ""
                           }`}
@@ -2177,7 +2193,14 @@ export default function BrailleEditor() {
                 );
               })}
             </div>
-            {/* Textarea real — invisível mas funcional, captura toda a edição */}
+            {/* Textarea real — invisível mas funcional, captura toda a edição.
+                aria-live="off": evita que o leitor de tela interrompa a
+                digitação Perkins narrando cada mudança de valor a cada tecla.
+                role="textbox" + aria-multiline="true": declara explicitamente
+                a semântica de campo de texto multilinha nativo, necessária
+                para que displays Braille físicos (Focus/BrailleNote via Web
+                Braille API do Chrome) recebam a posição do cursor e atualizem
+                seus pinos táteis corretamente. */}
             <textarea
               ref={brailleTextareaRef}
               value={brailleContent}
@@ -2189,6 +2212,9 @@ export default function BrailleEditor() {
               className="absolute inset-0 w-full h-full p-3 font-mono leading-relaxed resize-none focus:outline-none bg-transparent opacity-0 z-20"
               placeholder="⠐⠹⠱⠫⠻⠳⠪⠺"
               aria-label="Área de entrada em Braille musical — modo descrição de células"
+              aria-live="off"
+              aria-multiline="true"
+              role="textbox"
               spellCheck={false}
             />
           </div>
@@ -2233,6 +2259,10 @@ export default function BrailleEditor() {
                 })}
               </div>
             )}
+            {/* aria-live="off": evita interrupção da narração do leitor de tela
+                durante a digitação Perkins. role="textbox" + aria-multiline:
+                sinaliza semântica de campo multilinha nativo para displays
+                Braille físicos (Focus/BrailleNote via Web Braille API). */}
             <textarea
               ref={brailleTextareaRef}
               value={brailleContent}
@@ -2250,6 +2280,9 @@ export default function BrailleEditor() {
               className="absolute inset-0 w-full h-full p-3 font-mono leading-relaxed resize-none focus:outline-none bg-transparent z-20 caret-primary border border-transparent"
               placeholder="⠐⠹⠱⠫⠻⠳⠪⠺"
               aria-label="Área de entrada em Braille musical"
+              aria-live="off"
+              aria-multiline="true"
+              role="textbox"
               spellCheck={false}
             />
           </div>
