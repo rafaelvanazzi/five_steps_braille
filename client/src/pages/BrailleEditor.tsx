@@ -11,6 +11,7 @@ import {
   describeBrailleChar,
   exportToMusicXML,
   unicodeToDots,
+  detectMeasureErrors,
   type ParsedElement,
   type ParsedNote,
   type PerkinsKeyState,
@@ -46,6 +47,8 @@ import {
   ChevronDown,
   ZoomIn,
   ZoomOut,
+  CheckCircle2,
+  AlertTriangle,
 } from "lucide-react";
 
 // ─── TIPOS ────────────────────────────────────────────────────────────────────
@@ -1177,6 +1180,22 @@ export default function BrailleEditor() {
     const ks = parsedElements.find(e => e.type === 'keysignature') as any;
     return ks?.vexKey ?? null;
   }, [parsedElements]);
+
+  // ── Validação rítmica em tempo real (detectMeasureErrors) ──────────────────
+  // Fórmula de compasso ativa: extraída do primeiro ParsedTimeSignature do
+  // documento, com fallback para 4/4 (beatsPerMeasure = numerator * (4/denominator)).
+  const activeBeatsPerMeasure = useMemo<number>(() => {
+    const ts = parsedElements.find(e => e.type === 'timesignature') as any;
+    if (!ts) return 4;
+    return ts.numerator * (4 / ts.denominator);
+  }, [parsedElements]);
+
+  const measureErrors = useMemo(
+    () => detectMeasureErrors(parsedElements, activeBeatsPerMeasure),
+    [parsedElements, activeBeatsPerMeasure],
+  );
+
+  const [showMeasureErrorsPopover, setShowMeasureErrorsPopover] = useState(false);
   const [cursorPos,      setCursorPos]      = useState(0);
   const [selectionRange, setSelectionRange] = useState<[number, number] | null>(null);
   const [scoreWidth,     setScoreWidth]     = useState(800);
@@ -2018,6 +2037,75 @@ export default function BrailleEditor() {
           >
             <MessageSquareText className="w-3.5 h-3.5" />
           </button>
+          {/* ── Badge de saúde rítmica (detectMeasureErrors) ──────────────────
+              Verde "Ritmo correto" quando measureErrors está vazio; amarelo/
+              vermelho com contagem quando há avisos/erros. Clique abre um
+              popover colapsável listando cada mensagem em português plano. */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setShowMeasureErrorsPopover(v => !v)}
+              className={`flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-md border transition-colors ${
+                measureErrors.length === 0
+                  ? "bg-green-500/10 text-green-700 dark:text-green-400 border-green-500/30 hover:bg-green-500/20"
+                  : "bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/30 hover:bg-amber-500/20"
+              }`}
+              title={
+                measureErrors.length === 0
+                  ? "Ritmo correto — nenhum compasso incompleto ou excedente"
+                  : `${measureErrors.length} aviso(s) rítmico(s) — clique para ver detalhes`
+              }
+              aria-label={
+                measureErrors.length === 0
+                  ? "Ritmo correto"
+                  : `${measureErrors.length} avisos rítmicos — clique para ver detalhes`
+              }
+              aria-expanded={showMeasureErrorsPopover}
+              aria-haspopup="true"
+            >
+              {measureErrors.length === 0 ? (
+                <>
+                  <CheckCircle2 className="w-3 h-3" />
+                  Ritmo correto
+                </>
+              ) : (
+                <>
+                  <AlertTriangle className="w-3 h-3" />
+                  {measureErrors.length} aviso{measureErrors.length > 1 ? "s" : ""} rítmico{measureErrors.length > 1 ? "s" : ""}
+                </>
+              )}
+            </button>
+
+            {showMeasureErrorsPopover && (
+              <div
+                role="region"
+                aria-live="polite"
+                aria-label="Lista de avisos rítmicos por compasso"
+                className="absolute top-full left-0 mt-1 z-30 w-72 max-h-64 overflow-y-auto rounded-md border border-border bg-card shadow-lg p-2"
+              >
+                {measureErrors.length === 0 ? (
+                  <p className="text-xs text-muted-foreground px-1 py-1">
+                    Nenhum problema rítmico detectado.
+                  </p>
+                ) : (
+                  <ul className="space-y-1">
+                    {measureErrors.map((msg, idx) => (
+                      <li
+                        key={idx}
+                        className={`text-xs px-2 py-1 rounded ${
+                          msg.startsWith("Erro:")
+                            ? "bg-red-500/10 text-red-700 dark:text-red-400"
+                            : "bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                        }`}
+                      >
+                        {msg}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+          </div>
           {/* Toggle Abc — troca entre modo Braille e Romano */}
           <button
             onClick={() => setInputMode(v => v === "braille" ? "romano" : "braille")}
