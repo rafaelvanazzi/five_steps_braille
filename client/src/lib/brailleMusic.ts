@@ -1099,6 +1099,18 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
       inNoteContext = false;
       i += 3; continue;
     }
+    // Clave de Dó 3ª linha (viola/alto) — 3 células
+    // GAP ENCONTRADO E CORRIGIDO: CLEF_DO_3 estava declarada e documentada na
+    // tabela de referência rápida, mas nunca era reconhecida pelo tokenizer —
+    // a sequência de celas simplesmente caía como texto não reconhecido.
+    // Clave de Dó comporta-se como bass: intervalos ASCENDENTES (mesma regra
+    // aplicada à Clave de Dó 4ª linha abaixo).
+    if (three === CLEF_DO_3) {
+      curTokens.push({ kind: 'clef', clefType: 'alto', intervalDirection: 'ascending', idx: i });
+      inNoteContext = false;
+      i += 3; continue;
+    }
+
     // Clave de Dó 4ª linha (violoncelo/tenor) — 4 células
     // Clave de Dó na 4ª linha comporta-se como bass: intervalos ASCENDENTES
     {

@@ -16,6 +16,7 @@ import {
   type ParsedNote,
   type PerkinsKeyState,
   type ParseOptions,
+  type Accidental,
 } from "@/lib/brailleMusic";
 import { brailleToRoman } from "@/lib/brailleRomano";
 import { playScore, stopScore, pauseScore, resumeScore, setBpm as setScoreBpmFn, loadSoundFont, setInstrument, type InstrumentType } from "@/lib/scoreAudioPlayer";
@@ -1490,15 +1491,74 @@ export default function BrailleEditor() {
             'Gb': { B: -1, E: -1, A: -1, D: -1, G: -1, C: -1 },
             'Cb': { B: -1, E: -1, A: -1, D: -1, G: -1, C: -1, F: -1 },
           };
+          const resolveAccDelta = (pitch: string, accidental: Accidental | undefined): number =>
+            accidental !== undefined
+              ? (ACC_DELTA[accidental] ?? 0)
+              : ((activeKeySignature ? (KEY_SIG_DELTAS[activeKeySignature]?.[pitch] ?? 0) : 0));
+
           const baseMidi = 12 * (noteEl.octave + 1) + (PITCH_CLASS[noteEl.pitch] ?? 0);
-          const accDelta = noteEl.accidental !== undefined
-            ? (ACC_DELTA[noteEl.accidental] ?? 0)
-            : ((activeKeySignature ? (KEY_SIG_DELTAS[activeKeySignature]?.[noteEl.pitch] ?? 0) : 0));
+          const accDelta = resolveAccDelta(noteEl.pitch, noteEl.accidental);
           const midi     = baseMidi + accDelta;
+
+          // ── Intervalos (acorde Grau 4) associados a esta nota-base ───────────
+          // BUG CORRIGIDO: o feedback ao digitar tocava apenas a nota-base,
+          // ignorando silenciosamente qualquer intervalo (⠌, ⠬, ⠔, ⠴, ⠒, ⠤)
+          // associado a ela — mesmo que a cela de intervalo fosse exatamente o
+          // caractere recém-digitado. Agora, notas de intervalo consecutivas
+          // (imediatamente após a nota-base em fullResult.elements) são
+          // localizadas e tocadas SIMULTANEAMENTE com a nota-base.
+          const noteElIdx = fullResult.elements.indexOf(noteEl);
+          const intervalMidis: number[] = [];
+          if (noteElIdx >= 0) {
+            // Direção diatônica ativa: escaneia retroativamente pela última
+            // clave/mão explícita antes da nota-base. Default 'descending'
+            // (Clave de Sol) — mesmo padrão usado em scoreAudioPlayer.ts.
+            let direction: 'ascending' | 'descending' = 'descending';
+            for (let k = noteElIdx - 1; k >= 0; k--) {
+              const prevEl = fullResult.elements[k];
+              if (prevEl.type === 'clef' || prevEl.type === 'hand') {
+                const dir = (prevEl as any).intervalDirection as 'ascending' | 'descending' | undefined;
+                if (dir) direction = dir;
+                break;
+              }
+            }
+
+            const DIATONIC_ORDER: Array<'C' | 'D' | 'E' | 'F' | 'G' | 'A' | 'B'> = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
+            const baseIdx = DIATONIC_ORDER.indexOf(noteEl.pitch);
+
+            for (let k = noteElIdx + 1; k < fullResult.elements.length; k++) {
+              const nextEl = fullResult.elements[k];
+              if (nextEl.type !== 'interval') break;
+              const intEl = nextEl as any;
+              const steps = (intEl.intervalSize as number) - 1;
+
+              let rawIdx: number;
+              let intOctave: number;
+              if (direction === 'descending') {
+                rawIdx    = baseIdx - steps;
+                intOctave = rawIdx < 0
+                  ? noteEl.octave - Math.ceil(Math.abs(rawIdx) / 7)
+                  : noteEl.octave;
+              } else {
+                rawIdx    = baseIdx + steps;
+                intOctave = rawIdx >= 7
+                  ? noteEl.octave + Math.floor(rawIdx / 7)
+                  : noteEl.octave;
+              }
+              const intPitch = DIATONIC_ORDER[((rawIdx % 7) + 7) % 7];
+              const intAccDelta = intEl.explicitOctave !== undefined
+                ? resolveAccDelta(intPitch, intEl.accidental)
+                : resolveAccDelta(intPitch, intEl.accidental);
+              const intOctaveResolved = intEl.explicitOctave !== undefined ? intEl.explicitOctave : intOctave;
+              const intMidi = 12 * (intOctaveResolved + 1) + (PITCH_CLASS[intPitch] ?? 0) + intAccDelta;
+              intervalMidis.push(intMidi);
+            }
+          }
 
           const ctx = getAudioCtx();
           const t0  = ctx.currentTime + 0.01;
 
+          // Nota-base
           loadPianoSample(ctx, midi).then(result => {
             if (result) {
               playPianoBuffer(ctx, result.buffer, midi, result.closestMidi, t0, 0.28, {
@@ -1512,6 +1572,21 @@ export default function BrailleEditor() {
               playFallbackOscillator(ctx, midi, t0, 0.28, !!noteEl.staccato, 0.3);
             }
           });
+
+          // Notas de intervalo — mesmo t0, soando simultaneamente com a nota-base
+          for (const intMidi of intervalMidis) {
+            loadPianoSample(ctx, intMidi).then(result => {
+              if (result) {
+                playPianoBuffer(ctx, result.buffer, intMidi, result.closestMidi, t0, 0.28, {
+                  velocity: 0.6,
+                  staccato: !!noteEl.staccato,
+                  bpm:      playerBpm,
+                });
+              } else {
+                playFallbackOscillator(ctx, intMidi, t0, 0.28, !!noteEl.staccato, 0.25);
+              }
+            });
+          }
         }
       } catch { /* feedback sonoro é best-effort — falha silenciosa */ }
     }

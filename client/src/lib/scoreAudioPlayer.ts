@@ -495,6 +495,7 @@ function scheduleHandMeasure(
   handState:           HandPlaybackState,
   startIndex:          number,
   highlightSchedule:   Map<number, number[]>, // tempo relativo (ms) → sourceIndexes a destacar
+  direction:           'ascending' | 'descending',
 ): void {
   if (!bucket || bucket.length === 0) return;
 
@@ -543,11 +544,31 @@ function scheduleHandMeasure(
       if (next.type !== 'interval') break;
       intervalCount++;
 
-      const size      = (next as { type: 'interval'; intervalSize: number }).intervalSize;
-      const baseIdx   = DIATONIC_SCALE.indexOf(note.pitch as typeof DIATONIC_SCALE[number]);
-      const rawIdx    = baseIdx + (size - 1);
-      const intPitch  = DIATONIC_SCALE[((rawIdx % 7) + 7) % 7];
-      const intOctave = note.octave + Math.floor(rawIdx / 7);
+      const size    = (next as { type: 'interval'; intervalSize: number }).intervalSize;
+      const baseIdx = DIATONIC_SCALE.indexOf(note.pitch as typeof DIATONIC_SCALE[number]);
+      const steps   = size - 1;
+
+      // ── Direção diatônica (MIMB / Dissertação Vanazzi) ────────────────────
+      // 'descending' (Clave de Sol / Mão Direita): SUBTRAI a distância a
+      // partir da nota base (ex: Dó4 + 3ª descendente = Lá3).
+      // 'ascending' (Clave de Fá, Clave de Dó, Mão Esquerda): SOMA a
+      // distância (ex: Dó4 + 3ª ascendente = Mi4).
+      // Espelha exatamente a lógica já validada em buildChordKeys()
+      // (ScoreRenderer.tsx) — áudio e visual devem soar/mostrar o mesmo tom.
+      let rawIdx: number;
+      let intOctave: number;
+      if (direction === 'descending') {
+        rawIdx    = baseIdx - steps;
+        intOctave = rawIdx < 0
+          ? note.octave - Math.ceil(Math.abs(rawIdx) / 7)
+          : note.octave;
+      } else {
+        rawIdx    = baseIdx + steps;
+        intOctave = rawIdx >= 7
+          ? note.octave + Math.floor(rawIdx / 7)
+          : note.octave;
+      }
+      const intPitch = DIATONIC_SCALE[((rawIdx % 7) + 7) % 7];
 
       const intDelta = resolveNoteDelta(intPitch, handState.measureAccidentals, keyAccidentals);
       const intMidi  = pitchToMidi(intPitch, intOctave, intDelta);
@@ -676,10 +697,21 @@ export function playScore(
     let measureAccidentals: MeasureAccidentalMap = {};
     let cursor = ctx.currentTime + 0.05;
     const tieActiveUntil = new Map<string, number>();
+    // Direção diatônica ativa (clave/mão) — rastreada ao longo do loop linear,
+    // já que este caminho monofônico não tem buckets separados por mão como
+    // scheduleHandMeasure. Default 'descending' (Clave de Sol), atualizada ao
+    // encontrar um elemento 'clef' ou 'hand' explícito no documento.
+    let activeIntervalDirection: 'ascending' | 'descending' = 'descending';
 
     for (let i = 0; i < elements.length; i++) {
       if (_stopped) break;
       const el = elements[i];
+
+      if (el.type === 'clef' || el.type === 'hand') {
+        const dir = (el as any).intervalDirection as 'ascending' | 'descending' | undefined;
+        if (dir) activeIntervalDirection = dir;
+        continue;
+      }
 
       if (el.type === 'keysignature') {
         const ks = el as ParsedKeySignature;
@@ -735,11 +767,25 @@ export function playScore(
         if (next.type !== 'interval') break;
         intervalCount++;
 
-        const size      = (next as { type: 'interval'; intervalSize: number }).intervalSize;
-        const baseIdx   = DIATONIC_SCALE.indexOf(note.pitch as typeof DIATONIC_SCALE[number]);
-        const rawIdx    = baseIdx + (size - 1);
-        const intPitch  = DIATONIC_SCALE[((rawIdx % 7) + 7) % 7];
-        const intOctave = note.octave + Math.floor(rawIdx / 7);
+        const size    = (next as { type: 'interval'; intervalSize: number }).intervalSize;
+        const baseIdx = DIATONIC_SCALE.indexOf(note.pitch as typeof DIATONIC_SCALE[number]);
+        const steps   = size - 1;
+
+        // Mesma lógica de direção de scheduleHandMeasure — ver comentário lá.
+        let rawIdx: number;
+        let intOctave: number;
+        if (activeIntervalDirection === 'descending') {
+          rawIdx    = baseIdx - steps;
+          intOctave = rawIdx < 0
+            ? note.octave - Math.ceil(Math.abs(rawIdx) / 7)
+            : note.octave;
+        } else {
+          rawIdx    = baseIdx + steps;
+          intOctave = rawIdx >= 7
+            ? note.octave + Math.floor(rawIdx / 7)
+            : note.octave;
+        }
+        const intPitch = DIATONIC_SCALE[((rawIdx % 7) + 7) % 7];
 
         const intDelta = resolveNoteDelta(intPitch, measureAccidentals, keyAccidentals);
         const intMidi  = pitchToMidi(intPitch, intOctave, intDelta);
@@ -857,10 +903,12 @@ export function playScore(
     scheduleHandMeasure(
       ctx, trebleBuckets.get(m), measureStartTime,
       keyAccidentals, trebleState, startIndex, highlightSchedule,
+      'descending', // Clave de Sol / Mão Direita — intervalos contam para baixo
     );
     scheduleHandMeasure(
       ctx, bassBuckets.get(m), measureStartTime,
       keyAccidentals, bassState, startIndex, highlightSchedule,
+      'ascending', // Clave de Fá / Mão Esquerda — intervalos contam para cima
     );
 
     sharedCursor = measureStartTime + measureDuration;
