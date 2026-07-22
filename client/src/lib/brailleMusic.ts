@@ -1332,6 +1332,22 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
   let trebleMeasureIndex = 0;
   let bassMeasureIndex   = 0;
   let activeMeasureHand: 'right' | 'left' | null = null;
+  // ── Contador Matricial Dinâmico de Bloco (correção de bug) ────────────────
+  // BUG CORRIGIDO: trebleMeasureIndex/bassMeasureIndex eram resetados para 0
+  // INCONDICIONALMENTE a cada token de mão, mesmo quando já havia um bloco
+  // anterior daquela mesma mão processado. Em documentos que alternam mãos
+  // em blocos pequenos (1-2 compassos, ou linha a linha), isso fazia o
+  // SEGUNDO bloco da mão direita voltar a measureIndex=0, colidindo com o
+  // PRIMEIRO bloco — e como splitByHand()/scoreAudioPlayer.ts usam
+  // measureIndex como chave de agrupamento (bucket), blocos diferentes
+  // acabavam se fundindo no mesmo compasso, quebrando VexFlow e áudio.
+  //
+  // currentBlockStartMeasure: measureIndex em que o bloco atual de
+  // alternância começa — avança apenas quando a MÃO DIREITA reaparece após
+  // a esquerda (ou no início do documento), preservando a numeração
+  // sequencial contínua através de qualquer número de alternâncias.
+  let currentBlockStartMeasure = 0;
+  let lastHand: 'right' | 'left' | null = null;
   // measureIndex: índice efetivo da mão ativa (alias para o índice correto)
   let measureIndex = 0;
   for (const measure of measures) {
@@ -1389,15 +1405,26 @@ export function parseBrailleMusic(input: string, options?: ParseOptions): ParseR
       if (tk.kind === 'fermata')       { elements.push({ type: 'fermata', sourceIndex: (tk as any).idx, level: 1 as const, isPremium: true }); continue; }
       if (tk.kind === 'hand') {
         const handTk = tk as { kind: 'hand'; hand: 'right' | 'left'; impliedClef: 'treble' | 'bass'; intervalDirection: 'ascending' | 'descending'; idx: number };
-        // Resetar o índice de compasso para a mão que está começando
-        // Isso implementa a lógica do leitor braille: mão direita começa do compasso 0,
-        // mão esquerda também começa do compasso 0 (alinhamento matricial)
+        // ── Contador Matricial Dinâmico ───────────────────────────────────
+        // Mão direita: se vem depois da esquerda (ou é a primeira mão do
+        // documento), avança currentBlockStartMeasure para o maior índice já
+        // alcançado por qualquer uma das mãos — isto é, o próximo bloco
+        // continua de onde o alinhamento parou, nunca reinicia em 0.
         if (handTk.hand === 'right') {
-          trebleMeasureIndex = 0;
-          measureIndex       = 0;
+          if (lastHand === 'left' || lastHand === null) {
+            currentBlockStartMeasure = Math.max(trebleMeasureIndex, bassMeasureIndex);
+          }
+          trebleMeasureIndex = currentBlockStartMeasure;
+          measureIndex       = trebleMeasureIndex;
+          lastHand           = 'right';
         } else {
-          bassMeasureIndex = 0;
-          measureIndex     = 0;
+          // Mão esquerda sempre começa no MESMO compasso em que o bloco
+          // atual da mão direita começou — preserva o alinhamento matricial
+          // (trebleTrack[N] ↔ bassTrack[N]) através de qualquer número de
+          // alternâncias de blocos.
+          bassMeasureIndex = currentBlockStartMeasure;
+          measureIndex     = bassMeasureIndex;
+          lastHand         = 'left';
         }
         activeMeasureHand = handTk.hand;
         elements.push({
