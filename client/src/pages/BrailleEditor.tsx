@@ -390,6 +390,14 @@ function spokenShortDescription(char: string): string {
     return `Pausa de ${durName.toLowerCase()}`;
   }
 
+  // ── Intervalos: falar estritamente só o nome (ex: "Terça") ────────────────
+  // Sem "intervalo de", "diatônica" ou adjetivo de direção — a fala ao
+  // digitar deve ser o mais sucinta possível.
+  const intervalMatch = full.match(/^Intervalo:\s*(.+)$/);
+  if (intervalMatch) {
+    return intervalMatch[1].replace(/ª$/, '').trim();
+  }
+
   return full;
 }
 
@@ -504,12 +512,16 @@ function getBrailleSemanticDescription(
   const octMatch = full.match(/^Oitava\s*(\d)$/);
   if (octMatch) return `Sinal de ${octMatch[1]}ª Oitava`;
 
-  // ── Intervalos: "Intervalo: Quintaª" (formato atual) → "Intervalo de Quinta Diatônica Ascendente/Descendente"
+  // ── Intervalos: "Intervalo: Quintaª" (formato atual) → nome direto e limpo ──
+  // Simplificado a pedido: apenas o nome do intervalo, sem "Intervalo de",
+  // "Diatônica" ou o adjetivo de direção (Ascendente/Descendente).
+  // resolveIntervalDirection() permanece definida no arquivo, intacta, para
+  // uso futuro caso a descrição completa volte a ser necessária em outro
+  // contexto — apenas não é mais chamada aqui.
   const intervalMatch = full.match(/^Intervalo:\s*(.+)$/);
   if (intervalMatch) {
-    const cleanName  = intervalMatch[1].replace(/ª$/, '').trim();
-    const direction   = contextEl ? resolveIntervalDirection(contextEl, allElements) : 'Ascendente';
-    return `Intervalo de ${cleanName} Diatônica ${direction}`;
+    const cleanName = intervalMatch[1].replace(/ª$/, '').trim();
+    return cleanName;
   }
 
   // ── Acidentes ───────────────────────────────────────────────────────────────
